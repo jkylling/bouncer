@@ -1,0 +1,77 @@
+---
+# Google Docs API v1 — https://developers.google.com/docs/api/reference/rest
+#
+# Docs has a single `documents` resource. Everything else (body content,
+# suggestions, lists, headers/footers, footnotes, named styles) lives
+# inside the document and is manipulated via `documents.batchUpdate`
+# sub-requests — there's no separate endpoint to authorize on.
+
+name: docs
+base_url: "https://docs.googleapis.com"
+path_prefixes:
+- /v1/documents
+
+meta:
+- name: document
+  kind: endpoint
+  input:
+  # `id` rather than `document_id` — proto would normalize to `documentId`
+  # and collide with the output field.
+  - name: id
+  request: get('/v1/documents/' + string(input.id))
+  output:
+  - name: documentId
+    expr: response.body.documentId
+  - name: title
+    expr: response.body.title
+  - name: revisionId
+    expr: response.body.revisionId
+  - name: body
+    expr: response.body.body
+  - name: suggestionsViewMode
+    expr: response.body.?suggestionsViewMode
+  - name: documentStyle
+    expr: response.body.?documentStyle
+  - name: suggestedDocumentStyleChanges
+    expr: response.body.?suggestedDocumentStyleChanges
+  - name: namedStyles
+    expr: response.body.?namedStyles
+  - name: suggestedNamedStylesChanges
+    expr: response.body.?suggestedNamedStylesChanges
+  - name: lists
+    expr: response.body.?lists
+  - name: namedRanges
+    expr: response.body.?namedRanges
+  - name: inlineObjects
+    expr: response.body.?inlineObjects
+  - name: positionedObjects
+    expr: response.body.?positionedObjects
+  - name: headers
+    expr: response.body.?headers
+  - name: footers
+    expr: response.body.?footers
+  - name: footnotes
+    expr: response.body.?footnotes
+
+actions:
+- name: create_document
+  method: POST
+  path: /v1/documents
+
+- name: get_document
+  method: GET
+  path: /v1/documents/{id}
+  binds:
+    - |
+      document{ id: match.id }
+    - |
+      drive.file{ file_id: match.id }
+
+- name: batch_update_document
+  method: POST
+  path: /v1/documents/{id}/batchUpdate
+  binds:
+    - |
+      document{ id: match.id }
+    - |
+      drive.file{ file_id: match.id }

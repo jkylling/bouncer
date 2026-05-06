@@ -1,0 +1,40 @@
+# Lima config wrapping template://alpine (musl) with the tooling
+# `make e2e` needs at the version pinned in go.mod.
+#
+# Used by `make e2e-vms-up` for alpine-{amd64,arm64}. The whole
+# point of this VM is to catch the day a glibc-only dep sneaks
+# into the binary — pure-Go sqlite + CGO_ENABLED=0 means it
+# *should* run on musl, and we want the regression to be loud.
+#
+# Why we build Go from source instead of downloading the tarball:
+# go.dev/dl ships glibc-linked toolchains. They run on Alpine
+# only with gcompat shims, which is fragile across Go releases
+# (the runtime touches enough of libc that "it works today" is
+# not "it works after the next bump"). Bootstrapping from
+# Alpine's apk-installed Go gives us a musl-linked toolchain in
+# ~3–5 min on first boot, then provisioning is a no-op.
+
+base:
+- template:alpine
+
+provision:
+- mode: system
+  script: |
+    #!/bin/sh
+    set -eux
+    apk add --no-cache make bash ca-certificates curl go
+
+    GO_VERSION=1.25.0
+    if ! /usr/local/go/bin/go version 2>/dev/null | grep -q "go${GO_VERSION} "; then
+      rm -rf /usr/local/go /tmp/go
+      curl -fsSL "https://go.dev/dl/go${GO_VERSION}.src.tar.gz" \
+        | tar -C /tmp -xz
+      mv /tmp/go /usr/local/go
+      cd /usr/local/go/src
+      GOROOT_BOOTSTRAP="$(go env GOROOT)" ./make.bash
+    fi
+    mkdir -p /etc/profile.d
+    cat >/etc/profile.d/go.sh <<'EOF'
+    export PATH=/usr/local/go/bin:$PATH
+    EOF
+    chmod 0644 /etc/profile.d/go.sh

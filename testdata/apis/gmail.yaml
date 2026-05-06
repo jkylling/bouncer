@@ -1,0 +1,942 @@
+---
+# Gmail API v1 — https://developers.google.com/gmail/api/reference/rest
+#
+# Resources covered:
+#   mailbox                     (users.getProfile)         — scope for per-user ops
+#   message                     (users.messages.*)
+#   thread                      (users.threads.*)
+#   draft                       (users.drafts.*)
+#   label                       (users.labels.*)
+#   settings_filter             (users.settings.filters.*)
+#   settings_send_as            (users.settings.sendAs.*)
+#   settings_vacation           (users.settings.getVacation/updateVacation)
+#
+# Settings-shaped resources (those served under `users.settings.*`) carry
+# a `settings_` prefix on both the meta name and every action that targets
+# them, so the action list groups together when sorted alphabetically.
+#
+# Meta output fields use the real Gmail JSON field names, so policies can
+# read them directly (e.g. `message.labelIds`, `message.payload.headers`).
+# `format=metadata` is used on reads so we don't pull full message bodies
+# for every policy check.
+
+name: gmail
+base_url: "https://gmail.googleapis.com"
+path_prefixes:
+- /gmail/v1
+
+meta:
+# Per-user scope. Useful for actions that don't target a single resource
+# (list / send / insert).
+- name: mailbox
+  kind: endpoint
+  input:
+  - name: user_id
+  request: get('/gmail/v1/users/' + string(input.user_id) + '/profile')
+  output:
+  - name: emailAddress
+    expr: response.body.emailAddress
+  - name: messagesTotal
+    expr: response.body.messagesTotal
+  - name: threadsTotal
+    expr: response.body.threadsTotal
+  - name: historyId
+    expr: response.body.historyId
+
+- name: message
+  kind: endpoint
+  input:
+  - name: user_id
+  - name: message_id
+  request: get('/gmail/v1/users/' + string(input.user_id) + '/messages/' + string(input.message_id) + '?format=metadata')
+  output:
+  - name: id
+    expr: response.body.id
+  - name: threadId
+    expr: response.body.threadId
+  - name: labelIds
+    expr: response.body.labelIds
+  - name: historyId
+    expr: response.body.historyId
+  - name: internalDate
+    expr: response.body.internalDate
+  - name: sizeEstimate
+    expr: response.body.sizeEstimate
+  - name: snippet
+    expr: response.body.?snippet
+  # `payload` is always present but may lack sub-fields depending on
+  # message kind (e.g. drafts, some imported messages).
+  - name: headers
+    expr: response.body.payload.?headers
+  - name: mimeType
+    expr: response.body.payload.?mimeType
+  # Cross-resource ref: the parent thread, by the threadId in this
+  # message's body. Resolved lazily on access (the .thread.X traversal
+  # triggers the thread meta's GET). Lets policies on get_message reason
+  # about sibling messages without an extra explicit bind on the action.
+  - name: thread
+    expr: 'thread{ user_id: input.user_id, thread_id: response.body.threadId }'
+
+- name: thread
+  kind: endpoint
+  input:
+  - name: user_id
+  - name: thread_id
+  request: get('/gmail/v1/users/' + string(input.user_id) + '/threads/' + string(input.thread_id) + '?format=metadata')
+  output:
+  - name: id
+    expr: response.body.id
+  - name: historyId
+    expr: response.body.historyId
+  - name: messages
+    expr: response.body.messages
+  - name: snippet
+    expr: response.body.?snippet
+
+- name: draft
+  kind: endpoint
+  input:
+  - name: user_id
+  - name: draft_id
+  request: get('/gmail/v1/users/' + string(input.user_id) + '/drafts/' + string(input.draft_id) + '?format=metadata')
+  output:
+  - name: id
+    expr: response.body.id
+  - name: message
+    expr: response.body.message
+  # Reply target — only present when the draft is a reply within an
+  # existing thread. `?thread_id:` makes the bind a no-op when threadId
+  # is absent, so policies see `draft.thread` as empty rather than failing.
+  - name: thread
+    expr: 'thread{?user_id: optional.of(input.user_id), ?thread_id: response.body.?message.?threadId}'
+
+- name: label
+  kind: endpoint
+  input:
+  - name: user_id
+  - name: label_id
+  request: get('/gmail/v1/users/' + string(input.user_id) + '/labels/' + string(input.label_id))
+  output:
+  - name: id
+    expr: response.body.id
+  - name: name
+    expr: response.body.name
+  - name: type
+    expr: response.body.type
+  - name: messageListVisibility
+    expr: response.body.?messageListVisibility
+  - name: labelListVisibility
+    expr: response.body.?labelListVisibility
+  - name: messagesTotal
+    expr: response.body.?messagesTotal
+  - name: messagesUnread
+    expr: response.body.?messagesUnread
+  - name: threadsTotal
+    expr: response.body.?threadsTotal
+  - name: threadsUnread
+    expr: response.body.?threadsUnread
+  - name: color
+    expr: response.body.?color
+
+- name: settings_filter
+  kind: endpoint
+  input:
+  - name: user_id
+  - name: filter_id
+  request: get('/gmail/v1/users/' + string(input.user_id) + '/settings/filters/' + string(input.filter_id))
+  output:
+  - name: id
+    expr: response.body.id
+  - name: criteria
+    expr: response.body.?criteria
+  - name: action
+    expr: response.body.?action
+  # If the filter forwards mail, the destination must be a configured
+  # forwarding_address — chase the link so the same allowlist policies
+  # apply (e.g. "no filter may forward outside an allowlisted domain").
+  - name: forward_to
+    expr: 'settings_forwarding_address{?user_id: optional.of(input.user_id), ?address: response.body.?action.?forward}'
+
+- name: settings_send_as
+  kind: endpoint
+  input:
+  - name: user_id
+  # `address` rather than `sendAsEmail` — proto would normalize both
+  # to the same JSON name and we'd collide with the output field.
+  - name: address
+  request: get('/gmail/v1/users/' + string(input.user_id) + '/settings/sendAs/' + string(input.address))
+  output:
+  - name: sendAsEmail
+    expr: response.body.sendAsEmail
+  - name: displayName
+    expr: response.body.?displayName
+  - name: replyToAddress
+    expr: response.body.?replyToAddress
+  - name: signature
+    expr: response.body.?signature
+  - name: isPrimary
+    expr: response.body.?isPrimary
+  - name: isDefault
+    expr: response.body.?isDefault
+  - name: treatAsAlias
+    expr: response.body.?treatAsAlias
+  - name: verificationStatus
+    expr: response.body.?verificationStatus
+
+- name: settings_forwarding_address
+  kind: endpoint
+  input:
+  - name: user_id
+  - name: address
+  request: get('/gmail/v1/users/' + string(input.user_id) + '/settings/forwardingAddresses/' + string(input.address))
+  output:
+  - name: forwardingEmail
+    expr: response.body.forwardingEmail
+  - name: verificationStatus
+    expr: response.body.?verificationStatus
+
+- name: settings_vacation
+  kind: endpoint
+  input:
+  - name: user_id
+  request: get('/gmail/v1/users/' + string(input.user_id) + '/settings/vacation')
+  output:
+  # Only `enableAutoReply` is always present; everything else depends on it.
+  - name: enableAutoReply
+    expr: response.body.enableAutoReply
+  - name: responseSubject
+    expr: response.body.?responseSubject
+  - name: responseBodyPlainText
+    expr: response.body.?responseBodyPlainText
+  - name: responseBodyHtml
+    expr: response.body.?responseBodyHtml
+  - name: restrictToContacts
+    expr: response.body.?restrictToContacts
+  - name: restrictToDomain
+    expr: response.body.?restrictToDomain
+  - name: startTime
+    expr: response.body.?startTime
+  - name: endTime
+    expr: response.body.?endTime
+
+# Message body part returned by users.messages.attachments.get. Binding
+# this on attachment endpoints lets policies inspect `attachment.size`
+# before allowing a download.
+- name: attachment
+  kind: endpoint
+  input:
+  - name: user_id
+  - name: message_id
+  - name: attachment_id
+  request: get('/gmail/v1/users/' + string(input.user_id) + '/messages/' + string(input.message_id) + '/attachments/' + string(input.attachment_id))
+  output:
+  - name: attachmentId
+    expr: response.body.?attachmentId
+  - name: size
+    expr: response.body.size
+  # `data` is base64url-encoded payload — present on get but typically
+  # omitted from policy decisions. Optional so policies don't have to
+  # read it.
+  - name: data
+    expr: response.body.?data
+  # The carrier message — lets policies on get_attachment gate by the
+  # message's labels / thread without re-binding it on the action.
+  - name: message
+    expr: 'message{ user_id: input.user_id, message_id: input.message_id }'
+
+# Mail delegation grant — Gmail "send as / read as" delegates.
+- name: settings_delegate
+  kind: endpoint
+  input:
+  - name: user_id
+  - name: email
+  request: get('/gmail/v1/users/' + string(input.user_id) + '/settings/delegates/' + string(input.email))
+  output:
+  - name: delegateEmail
+    expr: response.body.delegateEmail
+  - name: verificationStatus
+    expr: response.body.?verificationStatus
+
+# S/MIME configuration attached to a sendAs alias.
+- name: settings_smime_info
+  kind: endpoint
+  input:
+  - name: user_id
+  - name: address
+  - name: info_id
+  request: get('/gmail/v1/users/' + string(input.user_id) + '/settings/sendAs/' + string(input.address) + '/smimeInfo/' + string(input.info_id))
+  output:
+  - name: id
+    expr: response.body.id
+  - name: issuerCn
+    expr: response.body.?issuerCn
+  - name: isDefault
+    expr: response.body.?isDefault
+  - name: expiration
+    expr: response.body.?expiration
+  - name: encryptedKeyPassword
+    expr: response.body.?encryptedKeyPassword
+  - name: pem
+    expr: response.body.?pem
+  # Parent sendAs alias the cert is attached to.
+  - name: send_as
+    expr: 'settings_send_as{ user_id: input.user_id, address: input.address }'
+
+# Client-side encryption identity binding an email to a primary keypair.
+- name: settings_cse_identity
+  kind: endpoint
+  input:
+  - name: user_id
+  - name: email
+  request: get('/gmail/v1/users/' + string(input.user_id) + '/settings/cse/identities/' + string(input.email))
+  output:
+  - name: emailAddress
+    expr: response.body.emailAddress
+  - name: primaryKeyPairId
+    expr: response.body.?primaryKeyPairId
+  # The CSE keypair this identity is currently bound to. `?keypair_id:`
+  # makes the bind a no-op when no primary keypair is configured. Lets
+  # policies on get_cse_identity check the keypair's enablementState.
+  - name: primary_keypair
+    expr: 'settings_cse_keypair{?user_id: optional.of(input.user_id), ?keypair_id: response.body.?primaryKeyPairId}'
+
+# Client-side encryption S/MIME keypair. enablementState lets policies
+# enforce e.g. "obliterate only on already-disabled keypairs".
+- name: settings_cse_keypair
+  kind: endpoint
+  input:
+  - name: user_id
+  - name: keypair_id
+  request: get('/gmail/v1/users/' + string(input.user_id) + '/settings/cse/keypairs/' + string(input.keypair_id))
+  output:
+  - name: keyPairId
+    expr: response.body.keyPairId
+  - name: enablementState
+    expr: response.body.?enablementState
+  - name: subjectEmailAddresses
+    expr: response.body.?subjectEmailAddresses
+  - name: disableTime
+    expr: response.body.?disableTime
+
+actions:
+# ---- messages ----------------------------------------------------------
+- name: list_messages
+  method: GET
+  path: /gmail/v1/users/{user_id}/messages
+
+- name: get_message
+  method: GET
+  path: /gmail/v1/users/{user_id}/messages/{message_id}
+  binds:
+    - |
+      message{ user_id: match.user_id, message_id: match.message_id }
+    - |
+      mailbox{ user_id: match.user_id }
+
+- name: send_message
+  method: POST
+  path: /gmail/v1/users/{user_id}/messages/send
+  bind: |
+    mailbox{ user_id: match.user_id }
+
+- name: insert_message
+  method: POST
+  path: /gmail/v1/users/{user_id}/messages
+  bind: |
+    mailbox{ user_id: match.user_id }
+
+- name: import_message
+  method: POST
+  path: /gmail/v1/users/{user_id}/messages/import
+  bind: |
+    mailbox{ user_id: match.user_id }
+
+- name: modify_message
+  method: POST
+  path: /gmail/v1/users/{user_id}/messages/{message_id}/modify
+  binds:
+    - |
+      message{ user_id: match.user_id, message_id: match.message_id }
+    - |
+      mailbox{ user_id: match.user_id }
+
+- name: trash_message
+  method: POST
+  path: /gmail/v1/users/{user_id}/messages/{message_id}/trash
+  binds:
+    - |
+      message{ user_id: match.user_id, message_id: match.message_id }
+    - |
+      mailbox{ user_id: match.user_id }
+
+- name: untrash_message
+  method: POST
+  path: /gmail/v1/users/{user_id}/messages/{message_id}/untrash
+  binds:
+    - |
+      message{ user_id: match.user_id, message_id: match.message_id }
+    - |
+      mailbox{ user_id: match.user_id }
+
+- name: delete_message
+  method: DELETE
+  path: /gmail/v1/users/{user_id}/messages/{message_id}
+  binds:
+    - |
+      message{ user_id: match.user_id, message_id: match.message_id }
+    - |
+      mailbox{ user_id: match.user_id }
+
+- name: batch_delete_messages
+  method: POST
+  path: /gmail/v1/users/{user_id}/messages/batchDelete
+  bind: |
+    mailbox{ user_id: match.user_id }
+
+- name: batch_modify_messages
+  method: POST
+  path: /gmail/v1/users/{user_id}/messages/batchModify
+  bind: |
+    mailbox{ user_id: match.user_id }
+
+# ---- threads -----------------------------------------------------------
+- name: list_threads
+  method: GET
+  path: /gmail/v1/users/{user_id}/threads
+
+- name: get_thread
+  method: GET
+  path: /gmail/v1/users/{user_id}/threads/{thread_id}
+  binds:
+    - |
+      thread{ user_id: match.user_id, thread_id: match.thread_id }
+    - |
+      mailbox{ user_id: match.user_id }
+
+- name: modify_thread
+  method: POST
+  path: /gmail/v1/users/{user_id}/threads/{thread_id}/modify
+  binds:
+    - |
+      thread{ user_id: match.user_id, thread_id: match.thread_id }
+    - |
+      mailbox{ user_id: match.user_id }
+
+- name: trash_thread
+  method: POST
+  path: /gmail/v1/users/{user_id}/threads/{thread_id}/trash
+  binds:
+    - |
+      thread{ user_id: match.user_id, thread_id: match.thread_id }
+    - |
+      mailbox{ user_id: match.user_id }
+
+- name: untrash_thread
+  method: POST
+  path: /gmail/v1/users/{user_id}/threads/{thread_id}/untrash
+  binds:
+    - |
+      thread{ user_id: match.user_id, thread_id: match.thread_id }
+    - |
+      mailbox{ user_id: match.user_id }
+
+- name: delete_thread
+  method: DELETE
+  path: /gmail/v1/users/{user_id}/threads/{thread_id}
+  binds:
+    - |
+      thread{ user_id: match.user_id, thread_id: match.thread_id }
+    - |
+      mailbox{ user_id: match.user_id }
+
+# ---- drafts ------------------------------------------------------------
+- name: list_drafts
+  method: GET
+  path: /gmail/v1/users/{user_id}/drafts
+
+- name: get_draft
+  method: GET
+  path: /gmail/v1/users/{user_id}/drafts/{draft_id}
+  binds:
+    - |
+      draft{ user_id: match.user_id, draft_id: match.draft_id }
+    - |
+      mailbox{ user_id: match.user_id }
+
+- name: create_draft
+  method: POST
+  path: /gmail/v1/users/{user_id}/drafts
+  bind: |
+    mailbox{ user_id: match.user_id }
+
+- name: update_draft
+  method: PUT
+  path: /gmail/v1/users/{user_id}/drafts/{draft_id}
+  binds:
+    - |
+      draft{ user_id: match.user_id, draft_id: match.draft_id }
+    - |
+      mailbox{ user_id: match.user_id }
+
+- name: send_draft
+  # Gmail's drafts.send is `POST /drafts/send` with the draft id in the body
+  # (`{"id": "...", "message": {...}}`), not in the URL — so the draft bind
+  # reads `request.body.id`.
+  method: POST
+  path: /gmail/v1/users/{user_id}/drafts/send
+  binds:
+    - |
+      draft{ user_id: match.user_id, draft_id: request.body.id }
+    - |
+      mailbox{ user_id: match.user_id }
+
+- name: delete_draft
+  method: DELETE
+  path: /gmail/v1/users/{user_id}/drafts/{draft_id}
+  binds:
+    - |
+      draft{ user_id: match.user_id, draft_id: match.draft_id }
+    - |
+      mailbox{ user_id: match.user_id }
+
+# ---- labels ------------------------------------------------------------
+- name: list_labels
+  method: GET
+  path: /gmail/v1/users/{user_id}/labels
+
+- name: get_label
+  method: GET
+  path: /gmail/v1/users/{user_id}/labels/{label_id}
+  binds:
+    - |
+      label{ user_id: match.user_id, label_id: match.label_id }
+    - |
+      mailbox{ user_id: match.user_id }
+
+- name: create_label
+  method: POST
+  path: /gmail/v1/users/{user_id}/labels
+  bind: |
+    mailbox{ user_id: match.user_id }
+
+- name: update_label
+  method: PUT
+  path: /gmail/v1/users/{user_id}/labels/{label_id}
+  binds:
+    - |
+      label{ user_id: match.user_id, label_id: match.label_id }
+    - |
+      mailbox{ user_id: match.user_id }
+
+- name: patch_label
+  method: PATCH
+  path: /gmail/v1/users/{user_id}/labels/{label_id}
+  binds:
+    - |
+      label{ user_id: match.user_id, label_id: match.label_id }
+    - |
+      mailbox{ user_id: match.user_id }
+
+- name: delete_label
+  method: DELETE
+  path: /gmail/v1/users/{user_id}/labels/{label_id}
+  binds:
+    - |
+      label{ user_id: match.user_id, label_id: match.label_id }
+    - |
+      mailbox{ user_id: match.user_id }
+
+# ---- history / profile / watch -----------------------------------------
+- name: list_history
+  method: GET
+  path: /gmail/v1/users/{user_id}/history
+
+- name: get_profile
+  method: GET
+  path: /gmail/v1/users/{user_id}/profile
+  bind: |
+    mailbox{ user_id: match.user_id }
+
+- name: watch
+  method: POST
+  path: /gmail/v1/users/{user_id}/watch
+  bind: |
+    mailbox{ user_id: match.user_id }
+
+- name: stop
+  method: POST
+  path: /gmail/v1/users/{user_id}/stop
+  bind: |
+    mailbox{ user_id: match.user_id }
+
+# ---- users.settings.filters --------------------------------------------
+- name: settings_list_filters
+  method: GET
+  path: /gmail/v1/users/{user_id}/settings/filters
+
+- name: settings_get_filter
+  method: GET
+  path: /gmail/v1/users/{user_id}/settings/filters/{filter_id}
+  binds:
+    - |
+      settings_filter{ user_id: match.user_id, filter_id: match.filter_id }
+    - |
+      mailbox{ user_id: match.user_id }
+
+- name: settings_create_filter
+  method: POST
+  path: /gmail/v1/users/{user_id}/settings/filters
+  bind: |
+    mailbox{ user_id: match.user_id }
+
+- name: settings_delete_filter
+  method: DELETE
+  path: /gmail/v1/users/{user_id}/settings/filters/{filter_id}
+  binds:
+    - |
+      settings_filter{ user_id: match.user_id, filter_id: match.filter_id }
+    - |
+      mailbox{ user_id: match.user_id }
+
+# ---- users.settings.sendAs ---------------------------------------------
+- name: settings_list_send_as
+  method: GET
+  path: /gmail/v1/users/{user_id}/settings/sendAs
+
+- name: settings_get_send_as
+  method: GET
+  path: /gmail/v1/users/{user_id}/settings/sendAs/{address}
+  binds:
+    - |
+      settings_send_as{ user_id: match.user_id, address: match.address }
+    - |
+      mailbox{ user_id: match.user_id }
+
+- name: settings_create_send_as
+  method: POST
+  path: /gmail/v1/users/{user_id}/settings/sendAs
+  bind: |
+    mailbox{ user_id: match.user_id }
+
+- name: settings_update_send_as
+  method: PUT
+  path: /gmail/v1/users/{user_id}/settings/sendAs/{address}
+  binds:
+    - |
+      settings_send_as{ user_id: match.user_id, address: match.address }
+    - |
+      mailbox{ user_id: match.user_id }
+
+- name: settings_patch_send_as
+  method: PATCH
+  path: /gmail/v1/users/{user_id}/settings/sendAs/{address}
+  binds:
+    - |
+      settings_send_as{ user_id: match.user_id, address: match.address }
+    - |
+      mailbox{ user_id: match.user_id }
+
+- name: settings_delete_send_as
+  method: DELETE
+  path: /gmail/v1/users/{user_id}/settings/sendAs/{address}
+  binds:
+    - |
+      settings_send_as{ user_id: match.user_id, address: match.address }
+    - |
+      mailbox{ user_id: match.user_id }
+
+- name: settings_verify_send_as
+  method: POST
+  path: /gmail/v1/users/{user_id}/settings/sendAs/{address}/verify
+  binds:
+    - |
+      settings_send_as{ user_id: match.user_id, address: match.address }
+    - |
+      mailbox{ user_id: match.user_id }
+
+# ---- users.settings.forwardingAddresses --------------------------------
+- name: settings_list_forwarding_addresses
+  method: GET
+  path: /gmail/v1/users/{user_id}/settings/forwardingAddresses
+
+- name: settings_get_forwarding_address
+  method: GET
+  path: /gmail/v1/users/{user_id}/settings/forwardingAddresses/{address}
+  binds:
+    - |
+      settings_forwarding_address{ user_id: match.user_id, address: match.address }
+    - |
+      mailbox{ user_id: match.user_id }
+
+- name: settings_create_forwarding_address
+  method: POST
+  path: /gmail/v1/users/{user_id}/settings/forwardingAddresses
+  bind: |
+    mailbox{ user_id: match.user_id }
+
+- name: settings_delete_forwarding_address
+  method: DELETE
+  path: /gmail/v1/users/{user_id}/settings/forwardingAddresses/{address}
+  binds:
+    - |
+      settings_forwarding_address{ user_id: match.user_id, address: match.address }
+    - |
+      mailbox{ user_id: match.user_id }
+
+# ---- users.settings.vacation / imap / pop / autoForwarding / language --
+- name: settings_get_vacation
+  method: GET
+  path: /gmail/v1/users/{user_id}/settings/vacation
+  binds:
+    - |
+      settings_vacation{ user_id: match.user_id }
+    - |
+      mailbox{ user_id: match.user_id }
+
+- name: settings_update_vacation
+  method: PUT
+  path: /gmail/v1/users/{user_id}/settings/vacation
+  binds:
+    - |
+      settings_vacation{ user_id: match.user_id }
+    - |
+      mailbox{ user_id: match.user_id }
+
+- name: settings_get_imap
+  method: GET
+  path: /gmail/v1/users/{user_id}/settings/imap
+  bind: |
+    mailbox{ user_id: match.user_id }
+
+- name: settings_update_imap
+  method: PUT
+  path: /gmail/v1/users/{user_id}/settings/imap
+  bind: |
+    mailbox{ user_id: match.user_id }
+
+- name: settings_get_pop
+  method: GET
+  path: /gmail/v1/users/{user_id}/settings/pop
+  bind: |
+    mailbox{ user_id: match.user_id }
+
+- name: settings_update_pop
+  method: PUT
+  path: /gmail/v1/users/{user_id}/settings/pop
+  bind: |
+    mailbox{ user_id: match.user_id }
+
+- name: settings_get_auto_forwarding
+  method: GET
+  path: /gmail/v1/users/{user_id}/settings/autoForwarding
+  bind: |
+    mailbox{ user_id: match.user_id }
+
+- name: settings_update_auto_forwarding
+  method: PUT
+  path: /gmail/v1/users/{user_id}/settings/autoForwarding
+  bind: |
+    mailbox{ user_id: match.user_id }
+
+- name: settings_get_language
+  method: GET
+  path: /gmail/v1/users/{user_id}/settings/language
+  bind: |
+    mailbox{ user_id: match.user_id }
+
+- name: settings_update_language
+  method: PUT
+  path: /gmail/v1/users/{user_id}/settings/language
+  bind: |
+    mailbox{ user_id: match.user_id }
+
+# ---- users.messages.attachments ----------------------------------------
+- name: get_attachment
+  method: GET
+  path: /gmail/v1/users/{user_id}/messages/{message_id}/attachments/{attachment_id}
+  binds:
+    - |
+      attachment{ user_id: match.user_id, message_id: match.message_id, attachment_id: match.attachment_id }
+    - |
+      message{ user_id: match.user_id, message_id: match.message_id }
+    - |
+      mailbox{ user_id: match.user_id }
+
+# ---- users.settings.delegates ------------------------------------------
+- name: settings_list_delegates
+  method: GET
+  path: /gmail/v1/users/{user_id}/settings/delegates
+  bind: |
+    mailbox{ user_id: match.user_id }
+
+- name: settings_create_delegate
+  method: POST
+  path: /gmail/v1/users/{user_id}/settings/delegates
+  bind: |
+    mailbox{ user_id: match.user_id }
+
+- name: settings_get_delegate
+  method: GET
+  path: /gmail/v1/users/{user_id}/settings/delegates/{email}
+  binds:
+    - |
+      settings_delegate{ user_id: match.user_id, email: match.email }
+    - |
+      mailbox{ user_id: match.user_id }
+
+- name: settings_delete_delegate
+  method: DELETE
+  path: /gmail/v1/users/{user_id}/settings/delegates/{email}
+  binds:
+    - |
+      settings_delegate{ user_id: match.user_id, email: match.email }
+    - |
+      mailbox{ user_id: match.user_id }
+
+# ---- users.settings.sendAs.smimeInfo -----------------------------------
+- name: settings_list_smime_info
+  method: GET
+  path: /gmail/v1/users/{user_id}/settings/sendAs/{address}/smimeInfo
+  binds:
+    - |
+      settings_send_as{ user_id: match.user_id, address: match.address }
+    - |
+      mailbox{ user_id: match.user_id }
+
+- name: settings_insert_smime_info
+  method: POST
+  path: /gmail/v1/users/{user_id}/settings/sendAs/{address}/smimeInfo
+  binds:
+    - |
+      settings_send_as{ user_id: match.user_id, address: match.address }
+    - |
+      mailbox{ user_id: match.user_id }
+
+- name: settings_get_smime_info
+  method: GET
+  path: /gmail/v1/users/{user_id}/settings/sendAs/{address}/smimeInfo/{info_id}
+  binds:
+    - |
+      settings_smime_info{ user_id: match.user_id, address: match.address, info_id: match.info_id }
+    - |
+      settings_send_as{ user_id: match.user_id, address: match.address }
+    - |
+      mailbox{ user_id: match.user_id }
+
+- name: settings_delete_smime_info
+  method: DELETE
+  path: /gmail/v1/users/{user_id}/settings/sendAs/{address}/smimeInfo/{info_id}
+  binds:
+    - |
+      settings_smime_info{ user_id: match.user_id, address: match.address, info_id: match.info_id }
+    - |
+      settings_send_as{ user_id: match.user_id, address: match.address }
+    - |
+      mailbox{ user_id: match.user_id }
+
+- name: settings_set_default_smime_info
+  method: POST
+  path: /gmail/v1/users/{user_id}/settings/sendAs/{address}/smimeInfo/{info_id}/setDefault
+  binds:
+    - |
+      settings_smime_info{ user_id: match.user_id, address: match.address, info_id: match.info_id }
+    - |
+      settings_send_as{ user_id: match.user_id, address: match.address }
+    - |
+      mailbox{ user_id: match.user_id }
+
+# ---- users.settings.cse.identities -------------------------------------
+- name: settings_list_cse_identities
+  method: GET
+  path: /gmail/v1/users/{user_id}/settings/cse/identities
+  bind: |
+    mailbox{ user_id: match.user_id }
+
+- name: settings_create_cse_identity
+  method: POST
+  path: /gmail/v1/users/{user_id}/settings/cse/identities
+  bind: |
+    mailbox{ user_id: match.user_id }
+
+- name: settings_get_cse_identity
+  method: GET
+  path: /gmail/v1/users/{user_id}/settings/cse/identities/{email}
+  binds:
+    - |
+      settings_cse_identity{ user_id: match.user_id, email: match.email }
+    - |
+      mailbox{ user_id: match.user_id }
+
+- name: settings_patch_cse_identity
+  method: PATCH
+  path: /gmail/v1/users/{user_id}/settings/cse/identities/{email}
+  binds:
+    - |
+      settings_cse_identity{ user_id: match.user_id, email: match.email }
+    - |
+      mailbox{ user_id: match.user_id }
+
+- name: settings_delete_cse_identity
+  method: DELETE
+  path: /gmail/v1/users/{user_id}/settings/cse/identities/{email}
+  binds:
+    - |
+      settings_cse_identity{ user_id: match.user_id, email: match.email }
+    - |
+      mailbox{ user_id: match.user_id }
+
+# ---- users.settings.cse.keypairs ---------------------------------------
+- name: settings_list_cse_keypairs
+  method: GET
+  path: /gmail/v1/users/{user_id}/settings/cse/keypairs
+  bind: |
+    mailbox{ user_id: match.user_id }
+
+- name: settings_create_cse_keypair
+  method: POST
+  path: /gmail/v1/users/{user_id}/settings/cse/keypairs
+  bind: |
+    mailbox{ user_id: match.user_id }
+
+- name: settings_get_cse_keypair
+  method: GET
+  path: /gmail/v1/users/{user_id}/settings/cse/keypairs/{keypair_id}
+  binds:
+    - |
+      settings_cse_keypair{ user_id: match.user_id, keypair_id: match.keypair_id }
+    - |
+      mailbox{ user_id: match.user_id }
+
+# `enable`, `disable` and `obliterate` use Google's `:method` suffix
+# convention — the path segment looks like `{keyPairId}:enable`. The path
+# template captures the whole segment; an extra filter narrows the verb
+# and the bind splits on `:` to recover the bare keypair id.
+- name: settings_enable_cse_keypair
+  method: POST
+  path: /gmail/v1/users/{user_id}/settings/cse/keypairs/{keypair_with_method}
+  filter: match.keypair_with_method.endsWith(':enable')
+  binds:
+    - |
+      settings_cse_keypair{ user_id: match.user_id, keypair_id: match.keypair_with_method.split(':')[0] }
+    - |
+      mailbox{ user_id: match.user_id }
+
+- name: settings_disable_cse_keypair
+  method: POST
+  path: /gmail/v1/users/{user_id}/settings/cse/keypairs/{keypair_with_method}
+  filter: match.keypair_with_method.endsWith(':disable')
+  binds:
+    - |
+      settings_cse_keypair{ user_id: match.user_id, keypair_id: match.keypair_with_method.split(':')[0] }
+    - |
+      mailbox{ user_id: match.user_id }
+
+- name: settings_obliterate_cse_keypair
+  method: POST
+  path: /gmail/v1/users/{user_id}/settings/cse/keypairs/{keypair_with_method}
+  filter: match.keypair_with_method.endsWith(':obliterate')
+  binds:
+    - |
+      settings_cse_keypair{ user_id: match.user_id, keypair_id: match.keypair_with_method.split(':')[0] }
+    - |
+      mailbox{ user_id: match.user_id }

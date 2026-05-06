@@ -1,0 +1,471 @@
+---
+# Google Calendar API v3 — https://developers.google.com/calendar/api/v3/reference
+#
+# Resources covered:
+#   calendar_context (calendars "me" scope, via settings)
+#   calendar         (calendars.*)
+#   calendar_list_entry (calendarList.*)
+#   event            (events.*)
+#   acl_rule         (acl.*)
+#   setting          (settings.*)
+#   color            (colors.*)
+
+name: calendar
+base_url: "https://www.googleapis.com"
+path_prefixes:
+- /calendar/v3
+
+meta:
+- name: calendar_context
+  kind: endpoint
+  input:
+  - name: dummy
+  request: get('/calendar/v3/colors')
+  output:
+  - name: kind
+    expr: response.body.kind
+  - name: updated
+    expr: response.body.updated
+
+- name: calendar
+  kind: endpoint
+  input:
+  - name: calendar_id
+  request: get('/calendar/v3/calendars/' + string(input.calendar_id))
+  output:
+  - name: id
+    expr: response.body.id
+  - name: etag
+    expr: response.body.etag
+  - name: summary
+    expr: response.body.summary
+  - name: description
+    expr: response.body.?description
+  - name: location
+    expr: response.body.?location
+  - name: timeZone
+    expr: response.body.?timeZone
+  - name: conferenceProperties
+    expr: response.body.?conferenceProperties
+  # The same id appears in calendarList for the authenticated user. Lets
+  # policies read the user's `accessRole` (reader / writer / owner) on
+  # the calendar before allowing a write.
+  - name: calendar_list_entry
+    expr: 'calendar_list_entry{ calendar_id: input.calendar_id }'
+
+- name: calendar_list_entry
+  kind: endpoint
+  input:
+  - name: calendar_id
+  request: get('/calendar/v3/users/me/calendarList/' + string(input.calendar_id))
+  output:
+  - name: id
+    expr: response.body.id
+  - name: summary
+    expr: response.body.summary
+  - name: accessRole
+    expr: response.body.accessRole
+  - name: summaryOverride
+    expr: response.body.?summaryOverride
+  - name: description
+    expr: response.body.?description
+  - name: location
+    expr: response.body.?location
+  - name: timeZone
+    expr: response.body.?timeZone
+  - name: colorId
+    expr: response.body.?colorId
+  - name: backgroundColor
+    expr: response.body.?backgroundColor
+  - name: foregroundColor
+    expr: response.body.?foregroundColor
+  - name: hidden
+    expr: response.body.?hidden
+  - name: selected
+    expr: response.body.?selected
+  - name: primary
+    expr: response.body.?primary
+  - name: deleted
+    expr: response.body.?deleted
+  - name: defaultReminders
+    expr: response.body.?defaultReminders
+  - name: notificationSettings
+    expr: response.body.?notificationSettings
+  - name: conferenceProperties
+    expr: response.body.?conferenceProperties
+  # The underlying calendar — same id, but `calendar` carries metadata
+  # the calendarList view doesn't (e.g. timezone canonicalisation,
+  # conferenceProperties on the source). Lets policies on
+  # get_calendar_list_entry reach properties of the actual calendar
+  # rather than the per-user subscription view.
+  - name: calendar
+    expr: 'calendar{ calendar_id: input.calendar_id }'
+
+- name: event
+  kind: endpoint
+  input:
+  - name: calendar_id
+  - name: event_id
+  request: get('/calendar/v3/calendars/' + string(input.calendar_id) + '/events/' + string(input.event_id))
+  output:
+  - name: id
+    expr: response.body.id
+  - name: status
+    expr: response.body.status
+  - name: htmlLink
+    expr: response.body.htmlLink
+  - name: created
+    expr: response.body.created
+  - name: updated
+    expr: response.body.updated
+  - name: iCalUID
+    expr: response.body.iCalUID
+  - name: sequence
+    expr: response.body.sequence
+  - name: summary
+    expr: response.body.?summary
+  - name: description
+    expr: response.body.?description
+  - name: location
+    expr: response.body.?location
+  - name: colorId
+    expr: response.body.?colorId
+  - name: creator
+    expr: response.body.?creator
+  - name: organizer
+    expr: response.body.?organizer
+  - name: start
+    expr: response.body.?start
+  - name: end
+    expr: response.body.?end
+  - name: endTimeUnspecified
+    expr: response.body.?endTimeUnspecified
+  - name: recurrence
+    expr: response.body.?recurrence
+  - name: recurringEventId
+    expr: response.body.?recurringEventId
+  - name: originalStartTime
+    expr: response.body.?originalStartTime
+  - name: transparency
+    expr: response.body.?transparency
+  - name: visibility
+    expr: response.body.?visibility
+  - name: attendees
+    expr: response.body.?attendees
+  - name: attendeesOmitted
+    expr: response.body.?attendeesOmitted
+  - name: extendedProperties
+    expr: response.body.?extendedProperties
+  - name: hangoutLink
+    expr: response.body.?hangoutLink
+  - name: conferenceData
+    expr: response.body.?conferenceData
+  - name: anyoneCanAddSelf
+    expr: response.body.?anyoneCanAddSelf
+  - name: guestsCanInviteOthers
+    expr: response.body.?guestsCanInviteOthers
+  - name: guestsCanModify
+    expr: response.body.?guestsCanModify
+  - name: guestsCanSeeOtherGuests
+    expr: response.body.?guestsCanSeeOtherGuests
+  - name: privateCopy
+    expr: response.body.?privateCopy
+  - name: locked
+    expr: response.body.?locked
+  - name: reminders
+    expr: response.body.?reminders
+  - name: source
+    expr: response.body.?source
+  - name: workingLocationProperties
+    expr: response.body.?workingLocationProperties
+  - name: outOfOfficeProperties
+    expr: response.body.?outOfOfficeProperties
+  - name: focusTimeProperties
+    expr: response.body.?focusTimeProperties
+  - name: attachments
+    expr: response.body.?attachments
+  - name: eventType
+    expr: response.body.?eventType
+  # Recursive parent — only present on instances of a recurring series.
+  # `?event_id:` skips the bind on top-level (non-instance) events. The
+  # parent itself is an `event` meta, so a policy can chase the chain
+  # event.parent_event.parent_event etc. (Calendar flattens to depth 1
+  # in practice, but the model permits.)
+  - name: parent_event
+    expr: 'event{?calendar_id: optional.of(input.calendar_id), ?event_id: response.body.?recurringEventId}'
+  # Containing calendar — lets policies on get_event reach the calendar's
+  # accessRole / sharing properties without re-binding it on the action.
+  - name: calendar
+    expr: 'calendar{ calendar_id: input.calendar_id }'
+
+- name: acl_rule
+  kind: endpoint
+  input:
+  - name: calendar_id
+  - name: rule_id
+  request: get('/calendar/v3/calendars/' + string(input.calendar_id) + '/acl/' + string(input.rule_id))
+  output:
+  - name: id
+    expr: response.body.id
+  - name: role
+    expr: response.body.role
+  - name: scope
+    expr: response.body.scope
+  # The calendar this rule grants access to.
+  - name: calendar
+    expr: 'calendar{ calendar_id: input.calendar_id }'
+
+- name: setting
+  kind: endpoint
+  input:
+  - name: setting_id
+  request: get('/calendar/v3/users/me/settings/' + string(input.setting_id))
+  output:
+  - name: id
+    expr: response.body.id
+  - name: value
+    expr: response.body.value
+
+actions:
+# ---- calendars ---------------------------------------------------------
+- name: create_calendar
+  method: POST
+  path: /calendar/v3/calendars
+
+- name: get_calendar
+  method: GET
+  path: /calendar/v3/calendars/{calendar_id}
+  bind: |
+    calendar{ calendar_id: match.calendar_id }
+
+- name: update_calendar
+  method: PUT
+  path: /calendar/v3/calendars/{calendar_id}
+  bind: |
+    calendar{ calendar_id: match.calendar_id }
+
+- name: patch_calendar
+  method: PATCH
+  path: /calendar/v3/calendars/{calendar_id}
+  bind: |
+    calendar{ calendar_id: match.calendar_id }
+
+- name: delete_calendar
+  method: DELETE
+  path: /calendar/v3/calendars/{calendar_id}
+  bind: |
+    calendar{ calendar_id: match.calendar_id }
+
+- name: clear_calendar
+  method: POST
+  path: /calendar/v3/calendars/{calendar_id}/clear
+  bind: |
+    calendar{ calendar_id: match.calendar_id }
+
+# ---- calendarList ------------------------------------------------------
+- name: list_calendar_list
+  method: GET
+  path: /calendar/v3/users/me/calendarList
+
+- name: watch_calendar_list
+  method: POST
+  path: /calendar/v3/users/me/calendarList/watch
+
+- name: insert_calendar_list
+  method: POST
+  path: /calendar/v3/users/me/calendarList
+
+- name: get_calendar_list_entry
+  method: GET
+  path: /calendar/v3/users/me/calendarList/{calendar_id}
+  bind: |
+    calendar_list_entry{ calendar_id: match.calendar_id }
+
+- name: update_calendar_list_entry
+  method: PUT
+  path: /calendar/v3/users/me/calendarList/{calendar_id}
+  bind: |
+    calendar_list_entry{ calendar_id: match.calendar_id }
+
+- name: patch_calendar_list_entry
+  method: PATCH
+  path: /calendar/v3/users/me/calendarList/{calendar_id}
+  bind: |
+    calendar_list_entry{ calendar_id: match.calendar_id }
+
+- name: delete_calendar_list_entry
+  method: DELETE
+  path: /calendar/v3/users/me/calendarList/{calendar_id}
+  bind: |
+    calendar_list_entry{ calendar_id: match.calendar_id }
+
+# ---- events ------------------------------------------------------------
+- name: list_events
+  method: GET
+  path: /calendar/v3/calendars/{calendar_id}/events
+  bind: |
+    calendar{ calendar_id: match.calendar_id }
+
+- name: watch_events
+  method: POST
+  path: /calendar/v3/calendars/{calendar_id}/events/watch
+  bind: |
+    calendar{ calendar_id: match.calendar_id }
+
+# Insert/import/quick_add cannot bind an `event{}` (no event id at
+# request time), so policies inspect the prospective event body via
+# `request.body.*` and the parent `calendar{}` for context.
+- name: insert_event
+  method: POST
+  path: /calendar/v3/calendars/{calendar_id}/events
+  bind: |
+    calendar{ calendar_id: match.calendar_id }
+
+- name: import_event
+  method: POST
+  path: /calendar/v3/calendars/{calendar_id}/events/import
+  bind: |
+    calendar{ calendar_id: match.calendar_id }
+
+- name: quick_add_event
+  method: POST
+  path: /calendar/v3/calendars/{calendar_id}/events/quickAdd
+  bind: |
+    calendar{ calendar_id: match.calendar_id }
+
+- name: get_event
+  method: GET
+  path: /calendar/v3/calendars/{calendar_id}/events/{event_id}
+  binds:
+    - |
+      event{ calendar_id: match.calendar_id, event_id: match.event_id }
+    - |
+      calendar{ calendar_id: match.calendar_id }
+
+- name: update_event
+  method: PUT
+  path: /calendar/v3/calendars/{calendar_id}/events/{event_id}
+  binds:
+    - |
+      event{ calendar_id: match.calendar_id, event_id: match.event_id }
+    - |
+      calendar{ calendar_id: match.calendar_id }
+
+- name: patch_event
+  method: PATCH
+  path: /calendar/v3/calendars/{calendar_id}/events/{event_id}
+  binds:
+    - |
+      event{ calendar_id: match.calendar_id, event_id: match.event_id }
+    - |
+      calendar{ calendar_id: match.calendar_id }
+
+- name: delete_event
+  method: DELETE
+  path: /calendar/v3/calendars/{calendar_id}/events/{event_id}
+  binds:
+    - |
+      event{ calendar_id: match.calendar_id, event_id: match.event_id }
+    - |
+      calendar{ calendar_id: match.calendar_id }
+
+- name: move_event
+  method: POST
+  path: /calendar/v3/calendars/{calendar_id}/events/{event_id}/move
+  binds:
+    - |
+      event{ calendar_id: match.calendar_id, event_id: match.event_id }
+    - |
+      calendar{ calendar_id: match.calendar_id }
+
+- name: get_event_instances
+  method: GET
+  path: /calendar/v3/calendars/{calendar_id}/events/{event_id}/instances
+  binds:
+    - |
+      event{ calendar_id: match.calendar_id, event_id: match.event_id }
+    - |
+      calendar{ calendar_id: match.calendar_id }
+
+# ---- acl ---------------------------------------------------------------
+- name: list_acl
+  method: GET
+  path: /calendar/v3/calendars/{calendar_id}/acl
+  bind: |
+    calendar{ calendar_id: match.calendar_id }
+
+- name: watch_acl
+  method: POST
+  path: /calendar/v3/calendars/{calendar_id}/acl/watch
+  bind: |
+    calendar{ calendar_id: match.calendar_id }
+
+- name: insert_acl_rule
+  method: POST
+  path: /calendar/v3/calendars/{calendar_id}/acl
+  bind: |
+    calendar{ calendar_id: match.calendar_id }
+
+- name: get_acl_rule
+  method: GET
+  path: /calendar/v3/calendars/{calendar_id}/acl/{rule_id}
+  binds:
+    - |
+      acl_rule{ calendar_id: match.calendar_id, rule_id: match.rule_id }
+    - |
+      calendar{ calendar_id: match.calendar_id }
+
+- name: update_acl_rule
+  method: PUT
+  path: /calendar/v3/calendars/{calendar_id}/acl/{rule_id}
+  binds:
+    - |
+      acl_rule{ calendar_id: match.calendar_id, rule_id: match.rule_id }
+    - |
+      calendar{ calendar_id: match.calendar_id }
+
+- name: patch_acl_rule
+  method: PATCH
+  path: /calendar/v3/calendars/{calendar_id}/acl/{rule_id}
+  binds:
+    - |
+      acl_rule{ calendar_id: match.calendar_id, rule_id: match.rule_id }
+    - |
+      calendar{ calendar_id: match.calendar_id }
+
+- name: delete_acl_rule
+  method: DELETE
+  path: /calendar/v3/calendars/{calendar_id}/acl/{rule_id}
+  binds:
+    - |
+      acl_rule{ calendar_id: match.calendar_id, rule_id: match.rule_id }
+    - |
+      calendar{ calendar_id: match.calendar_id }
+
+# ---- freebusy / colors / settings --------------------------------------
+- name: query_freebusy
+  method: POST
+  path: /calendar/v3/freeBusy
+
+- name: get_colors
+  method: GET
+  path: /calendar/v3/colors
+
+- name: list_settings
+  method: GET
+  path: /calendar/v3/users/me/settings
+
+- name: watch_settings
+  method: POST
+  path: /calendar/v3/users/me/settings/watch
+
+- name: get_setting
+  method: GET
+  path: /calendar/v3/users/me/settings/{setting_id}
+  bind: |
+    setting{ setting_id: match.setting_id }
+
+# ---- channels ----------------------------------------------------------
+- name: stop_channel
+  method: POST
+  path: /calendar/v3/channels/stop

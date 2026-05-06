@@ -1,0 +1,510 @@
+{{- /* policies page — list / create / edit policies. Edits validate
+against the live runtime via /_api/policies:dryRun before they
+persist. */ -}}
+{{- define "page-style" -}}
+  :root {
+    --success-bg: rgba(26, 127, 55, 0.10);
+    --danger-bg: rgba(207, 34, 46, 0.10);
+    --warning-bg: rgba(154, 103, 0, 0.12);
+    --warning-border: rgba(154, 103, 0, 0.35);
+    --row-selected: rgba(31, 35, 40, 0.08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --success-bg: rgba(63, 185, 80, 0.15);
+      --danger-bg: rgba(248, 81, 73, 0.15);
+      --warning-bg: rgba(210, 153, 34, 0.15);
+      --warning-border: rgba(210, 153, 34, 0.35);
+      --row-selected: rgba(255, 255, 255, 0.10);
+    }
+  }
+
+  /* The list-edit toolbar: filter dropdown + actions + status text. */
+  .toolbar { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; }
+  .toolbar label { display: flex; gap: 0.4rem; align-items: center; margin: 0; font-size: 0.95rem; color: var(--text); }
+  .toolbar label select, .toolbar label input { display: inline-block; width: auto; margin: 0; }
+
+  .pill { display: inline-block; padding: 0.1rem 0.55rem; border-radius: 0.4rem; font-size: 0.8rem; font-weight: 500; border: 1px solid currentColor; }
+  .pill-permit { color: var(--success); }
+  .pill-deny { color: var(--danger); }
+  .pill-readonly { color: var(--warning); }
+
+  .empty { color: var(--text-muted); font-style: italic; padding: 1.5rem; border: 1px dashed var(--border); border-radius: 0.5rem; text-align: center; background: var(--surface); }
+  .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; border: 1px solid var(--border); border-radius: 0.5rem; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.95rem; }
+  thead th { background: var(--surface); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.02em; }
+  tbody tr:last-child td { border-bottom: 0; }
+  tr.selectable { cursor: pointer; }
+  tr.selectable:hover { background: var(--row-hover); }
+  tr.selected { background: var(--row-selected); }
+  tr.selected td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+  td.cel { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; word-break: break-all; }
+
+  /* Inline edit row: shares the table's column widths via colspan
+     but reads as a card so the form doesn't bleed visually into the
+     row above. Indented slightly so the parent row's data still
+     visually anchors which policy is being edited. */
+  tr.detail-row > td { background: var(--surface); padding: 0; border-bottom: 1px solid var(--border); }
+  tr.detail-row .detail-inner { padding: 0.85rem 1rem 1rem; border-left: 3px solid var(--accent); }
+  tr.detail-row .detail-head { display: flex; gap: 0.6rem; align-items: baseline; flex-wrap: wrap; margin-bottom: 0.25rem; }
+  /* The detail row's form uses bare <label>, not label.field — its
+     density and inline-flex layout differs from the issue form. */
+  tr.detail-row label { display: block; margin-top: 0.6rem; font-size: 0.95rem; }
+  tr.detail-row input, tr.detail-row select, tr.detail-row textarea { margin-top: 0.3rem; }
+
+  .compile-status { padding: 0.5rem 0.75rem; border-radius: 0.4rem; min-height: 1.4rem; font-size: 0.9rem; }
+  .compile-ok  { background: var(--success-bg); color: var(--success); }
+  .compile-err { background: var(--danger-bg); color: var(--danger); white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; }
+  .banner { padding: 0.7rem 0.9rem; border-radius: 0.5rem; margin-bottom: 1rem; background: var(--warning-bg); border: 1px solid var(--warning-border); color: var(--warning); }
+{{- end -}}
+
+{{- define "body" -}}
+<h1>Policies</h1>
+<p class="lede">Live policy set, deny-first within each API. Edits validate against the running runtime before they persist &mdash; an invalid CEL expression never reaches disk.</p>
+
+<div id="readonly-banner" class="banner hidden">
+  <strong>Read-only mode.</strong> The policy store was opened with <code>--policies-readonly</code>; create / edit / delete are disabled. Restart without the flag to enable writes.
+</div>
+
+<div class="toolbar">
+  <label style="margin: 0;">API
+    <select id="api-filter">
+      <option value="" selected>all</option>
+    </select>
+  </label>
+  <button type="button" id="refresh" class="secondary">Refresh</button>
+  <button type="button" id="new-policy">New policy</button>
+  <span class="muted" id="list-status"></span>
+</div>
+
+<div id="list-empty" class="empty hidden">No policies match the current filter.</div>
+<div class="table-wrap">
+<table id="list" class="hidden">
+  <thead>
+    <tr><th>API</th><th>Name</th><th>Result</th><th class="col-action">Action</th><th>Condition</th></tr>
+  </thead>
+  <tbody id="list-body"></tbody>
+</table>
+</div>
+
+<!--
+  The edit panel is a single <tr> that the JS inserts directly after
+  the selected row. Lives detached in #detail-host while no row is
+  selected. The form fields hold the edit state, so reusing the same
+  tr (rather than rendering N hidden ones) keeps validation,
+  in-progress edits, and the dryRun debounce in one place.
+-->
+<table style="display: none;"><tbody id="detail-host">
+  <tr id="detail-row" class="detail-row">
+    <td colspan="5">
+      <div class="detail-inner">
+        <div class="detail-head">
+          <strong id="detail-title">Selected policy</strong>
+          <span class="muted" id="detail-meta"></span>
+        </div>
+
+        <label>API <input id="f-api" autocomplete="off" placeholder="gmail"></label>
+        <label>Name <input id="f-name" autocomplete="off" placeholder="allow_read"></label>
+        <label>Description (free-form note; ignored by the runtime, preserved for reviewers)
+          <textarea id="f-description" autocomplete="off" rows="2" placeholder="Why this policy exists, who owns it, links to context"></textarea>
+        </label>
+        <label>Principal (CEL bool over <code>principal</code>; empty &equals; every caller)
+          <input id="f-principal" autocomplete="off" placeholder='principal.subject == "agent-1"'>
+        </label>
+        <label>Action (CEL predicate over <code>action.name</code> + <code>request</code> + <code>match</code>)
+          <input id="f-action" autocomplete="off" placeholder="true">
+        </label>
+        <label>Condition (CEL bool over the action's binds)
+          <textarea id="f-condition" autocomplete="off" placeholder="true"></textarea>
+        </label>
+        <label>Result
+          <select id="f-result">
+            <option value="permit">permit</option>
+            <option value="deny">deny</option>
+          </select>
+        </label>
+
+        <div class="compile-status" id="compile-status"></div>
+
+        <div class="row" style="margin-top: 0.8rem;">
+          <button type="button" id="save" disabled>Save</button>
+          <button type="button" id="delete" class="danger" disabled>Delete</button>
+          <button type="button" id="propose-delete" class="secondary" disabled title="Submit a proposal to remove this policy. A reviewer with admin can approve.">Propose deletion</button>
+          <button type="button" id="cancel" class="secondary">Close</button>
+          <span class="muted" id="action-status"></span>
+        </div>
+      </div>
+    </td>
+  </tr>
+</tbody></table>
+{{- end -}}
+
+{{- define "page-script" -}}
+<script>
+const $ = (id) => document.getElementById(id);
+const listEl = $("list");
+const listBody = $("list-body");
+const listEmpty = $("list-empty");
+const listStatus = $("list-status");
+const apiFilter = $("api-filter");
+const detailRow = $("detail-row");
+const detailHost = $("detail-host");
+const detailTitle = $("detail-title");
+const detailMeta = $("detail-meta");
+const compileStatus = $("compile-status");
+const readonlyBanner = $("readonly-banner");
+
+// Move the detail row out of the tbody and back into its hidden
+// host (collapses any current selection). Called from cancel and
+// before opening another row to enforce one-at-a-time.
+function detachDetail() {
+  if (detailRow.parentNode !== detailHost) detailHost.appendChild(detailRow);
+}
+// Insert the detail row directly after `anchor`. anchor === null
+// means create-mode: prepend the row to the top of the tbody so
+// the new-policy form lands above the list.
+function attachDetailAfter(anchor) {
+  if (anchor) anchor.insertAdjacentElement("afterend", detailRow);
+  else listBody.insertBefore(detailRow, listBody.firstChild);
+}
+const fields = {
+  api: $("f-api"),
+  name: $("f-name"),
+  description: $("f-description"),
+  principal: $("f-principal"),
+  action: $("f-action"),
+  condition: $("f-condition"),
+  result: $("f-result"),
+};
+const buttons = {
+  save: $("save"),
+  delete: $("delete"),
+  proposeDelete: $("propose-delete"),
+  cancel: $("cancel"),
+  newPolicy: $("new-policy"),
+  refresh: $("refresh"),
+};
+const actionStatus = $("action-status");
+
+// Editor state. `mode` is "view" | "create" | "edit"; `original` holds
+// the (api, name) pair so PUT targets the right URL even if the user
+// renames the policy in the form.
+let writeable = false;
+let policies = [];
+let selectedKey = null;
+let mode = "view";
+let original = null;
+let dryRunSeq = 0;
+let dryRunTimer = null;
+
+function resultPill(r) {
+  const cls = r === "deny" ? "pill-deny" : "pill-permit";
+  return `<span class="pill ${cls}">${r}</span>`;
+}
+
+function policyKey(p) { return `${p.api}/${p.name}`; }
+
+async function fetchJSON(method, url, body) {
+  const opts = { method, headers: { "content-type": "application/json" } };
+  if (body !== undefined) opts.body = JSON.stringify(body);
+  const resp = await fetch(url, opts);
+  const text = await resp.text();
+  let parsed = null;
+  if (text) {
+    try { parsed = JSON.parse(text); } catch (_) { parsed = text; }
+  }
+  return { ok: resp.ok, status: resp.status, body: parsed, raw: text };
+}
+
+async function loadCapabilities() {
+  const r = await fetchJSON("GET", "/_api/policies:capabilities");
+  // A 404 here means an older proxy without the capabilities endpoint
+  // — fall back to "writeable" so the UI still functions against
+  // legacy deployments.
+  writeable = r.ok ? !!(r.body && r.body.writeable) : true;
+  readonlyBanner.classList.toggle("hidden", writeable);
+  buttons.newPolicy.disabled = !writeable;
+}
+
+async function refresh() {
+  listStatus.textContent = "Loading…";
+  listStatus.className = "muted";
+  const filter = apiFilter.value;
+  const url = "/_api/policies" + (filter ? `?api=${encodeURIComponent(filter)}` : "");
+  const r = await fetchJSON("GET", url);
+  if (!r.ok) {
+    listStatus.textContent = `Error: ${r.raw || r.status}`;
+    listStatus.className = "muted err";
+    return;
+  }
+  listStatus.textContent = "";
+  policies = (r.body && r.body.policies) || [];
+  populateApiFilter();
+  renderList();
+}
+
+function populateApiFilter() {
+  const apis = Array.from(new Set(policies.map(p => p.api))).sort();
+  const current = apiFilter.value;
+  // Build the option list via DOM nodes so the attribute and text
+  // contexts are escaped by the browser, matching the rest of this
+  // file's renderList / showDetail discipline. Templating into
+  // innerHTML here would silently inherit any non-validAPIName
+  // characters that slip past a future validator change.
+  while (apiFilter.firstChild) apiFilter.removeChild(apiFilter.firstChild);
+  const all = document.createElement("option");
+  all.value = "";
+  all.textContent = "all";
+  apiFilter.appendChild(all);
+  for (const a of apis) {
+    const opt = document.createElement("option");
+    opt.value = a;
+    opt.textContent = a;
+    apiFilter.appendChild(opt);
+  }
+  if (apis.includes(current)) apiFilter.value = current;
+}
+
+function renderList() {
+  // Detach the detail row before wiping the tbody so a refresh
+  // (after Save / Delete) doesn't drop it from the DOM. showDetail
+  // re-anchors it to the new selected row afterwards.
+  detachDetail();
+  listBody.innerHTML = "";
+  if (!policies.length) {
+    listEl.classList.add("hidden");
+    listEmpty.classList.remove("hidden");
+    return;
+  }
+  listEl.classList.remove("hidden");
+  listEmpty.classList.add("hidden");
+  for (const p of policies) {
+    const tr = document.createElement("tr");
+    tr.className = "selectable";
+    tr.dataset.key = policyKey(p);
+    tr.innerHTML = `
+      <td>${escapeHTML(p.api)}</td>
+      <td>${escapeHTML(p.name)}</td>
+      <td>${resultPill(p.result)}</td>
+      <td class="cel col-action">${escapeHTML(p.action || "")}</td>
+      <td class="cel">${escapeHTML((p.condition || "").slice(0, 80))}${(p.condition || "").length > 80 ? "…" : ""}</td>
+    `;
+    tr.addEventListener("click", () => selectByKey(policyKey(p)));
+    listBody.appendChild(tr);
+  }
+  highlightSelected();
+}
+
+function highlightSelected() {
+  for (const tr of listBody.querySelectorAll("tr")) {
+    tr.classList.toggle("selected", tr.dataset.key === selectedKey);
+  }
+}
+
+function escapeHTML(s) {
+  return String(s).replace(/[&<>"']/g, c => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[c]));
+}
+
+function selectByKey(key) {
+  const p = policies.find(x => policyKey(x) === key);
+  if (!p) return;
+  selectedKey = key;
+  mode = writeable ? "edit" : "view";
+  original = { api: p.api, name: p.name };
+  showDetail(p);
+}
+
+function showDetail(p) {
+  // Inline placement: park the detail row directly after the
+  // selected list row. Moving the same tr around (rather than
+  // rendering a hidden detail per row) keeps form state simple
+  // and gives "open another row collapses the previous" for free.
+  if (mode === "create") {
+    attachDetailAfter(null);
+  } else {
+    const row = listBody.querySelector(`tr.selectable[data-key="${policyKey(p)}"]`);
+    if (row) attachDetailAfter(row);
+  }
+  const editing = mode !== "view";
+  detailTitle.textContent =
+    mode === "create" ? "New policy" :
+    mode === "edit" ? `Edit ${p.api}/${p.name}` :
+    `${p.api}/${p.name}`;
+  detailMeta.textContent = mode === "view"
+    ? "Read-only — start the proxy without --policies-readonly to enable edits."
+    : (mode === "create"
+      ? "Fill in the fields and Save. The runtime validates on every keystroke."
+      : "Edits validate against the live runtime on every keystroke.");
+  fields.api.value = p.api || "";
+  fields.name.value = p.name || "";
+  fields.description.value = p.description || "";
+  fields.principal.value = p.principal || "";
+  fields.action.value = p.action || "";
+  fields.condition.value = p.condition || "";
+  fields.result.value = p.result || "permit";
+  for (const f of Object.values(fields)) f.disabled = !editing;
+  buttons.save.disabled = true; // re-enabled by dryRun on success
+  buttons.delete.disabled = !(writeable && mode === "edit");
+  // Propose-deletion is meaningful for any persisted policy, even
+  // in read-only mode: the reviewer flow doesn't require the
+  // policies endpoint to be writeable, only the proposal store.
+  buttons.proposeDelete.disabled = mode !== "edit" || original == null;
+  actionStatus.textContent = "";
+  actionStatus.className = "muted";
+  compileStatus.textContent = "";
+  compileStatus.className = "compile-status";
+  highlightSelected();
+  if (editing) scheduleDryRun();
+}
+
+function startCreate() {
+  if (!writeable) return;
+  selectedKey = null;
+  mode = "create";
+  original = null;
+  showDetail({ api: "", name: "", description: "", principal: "", action: "true", condition: "true", result: "permit" });
+  fields.api.focus();
+}
+
+function cancel() {
+  selectedKey = null;
+  mode = "view";
+  original = null;
+  detachDetail();
+  highlightSelected();
+}
+
+function currentPolicy() {
+  const p = {
+    api: fields.api.value.trim(),
+    name: fields.name.value.trim(),
+    action: fields.action.value,
+    condition: fields.condition.value,
+    result: fields.result.value,
+  };
+  // omitempty fields: send only when the operator typed something
+  // so we don't paper over downstream defaults.
+  const description = fields.description.value;
+  if (description) p.description = description;
+  const principal = fields.principal.value.trim();
+  if (principal) p.principal = principal;
+  return p;
+}
+
+async function dryRun() {
+  if (mode === "view") return;
+  const seq = ++dryRunSeq;
+  compileStatus.textContent = "Validating…";
+  compileStatus.className = "compile-status muted";
+  const r = await fetchJSON("POST", "/_api/policies:dryRun", currentPolicy());
+  if (seq !== dryRunSeq) return;
+  if (r.ok && r.body && r.body.ok) {
+    compileStatus.textContent = "Valid.";
+    compileStatus.className = "compile-status compile-ok";
+    buttons.save.disabled = false;
+  } else {
+    const msg = r.body?.error || r.raw || `HTTP ${r.status}`;
+    compileStatus.textContent = msg;
+    compileStatus.className = "compile-status compile-err";
+    buttons.save.disabled = true;
+  }
+}
+
+function scheduleDryRun() {
+  if (mode === "view") return;
+  if (dryRunTimer) clearTimeout(dryRunTimer);
+  dryRunTimer = setTimeout(dryRun, 250);
+}
+
+async function save() {
+  if (mode === "view") return;
+  const policy = currentPolicy();
+  actionStatus.textContent = "Saving…";
+  actionStatus.className = "muted";
+  let r;
+  if (mode === "create") {
+    r = await fetchJSON("POST", "/_api/policies", policy);
+  } else {
+    // PUT to the original URL even if the operator renamed: the
+    // server enforces api/name match between path and body, so a
+    // rename is an explicit two-step (delete + create).
+    if (policy.api !== original.api || policy.name !== original.name) {
+      actionStatus.textContent = "Cannot rename in place — delete and recreate instead.";
+      actionStatus.className = "muted err";
+      return;
+    }
+    r = await fetchJSON("PUT", `/_api/policies/${encodeURIComponent(original.api)}/${encodeURIComponent(original.name)}`, policy);
+  }
+  if (!r.ok) {
+    actionStatus.textContent = `Error: ${r.raw || r.status}`;
+    actionStatus.className = "muted err";
+    return;
+  }
+  actionStatus.textContent = mode === "create" ? "Created." : "Saved.";
+  actionStatus.className = "muted ok";
+  selectedKey = policyKey(policy);
+  mode = "edit";
+  original = { api: policy.api, name: policy.name };
+  await refresh();
+  // After refresh, re-pull the fresh row so the form mirrors what's
+  // live in the runtime (e.g. the runtime may have normalised the
+  // Result string).
+  const fresh = policies.find(p => policyKey(p) === selectedKey);
+  if (fresh) showDetail(fresh);
+}
+
+async function deletePolicy() {
+  if (mode !== "edit" || !original) return;
+  if (!confirm(`Delete policy ${original.api}/${original.name}? This removes it from the runtime and the store.`)) return;
+  const r = await fetchJSON("DELETE", `/_api/policies/${encodeURIComponent(original.api)}/${encodeURIComponent(original.name)}`);
+  if (!r.ok) {
+    actionStatus.textContent = `Error: ${r.raw || r.status}`;
+    actionStatus.className = "muted err";
+    return;
+  }
+  cancel();
+  await refresh();
+}
+
+// proposeDelete sends a kind=delete proposal for the selected
+// policy. The reviewer queue picks it up like any other draft;
+// approving it removes the live policy.
+async function proposeDelete() {
+  if (mode !== "edit" || !original) return;
+  const rationale = prompt(
+    `Submit a proposal to remove ${original.api}/${original.name}? Add a brief rationale (visible to the reviewer).`,
+    ""
+  );
+  if (rationale === null) return; // user hit cancel
+  const r = await fetchJSON("POST", "/_api/proposals", {
+    kind: "delete",
+    policy: { api: original.api, name: original.name },
+    rationale,
+  });
+  if (!r.ok) {
+    actionStatus.textContent = `Error: ${r.raw || r.status}`;
+    actionStatus.className = "muted err";
+    return;
+  }
+  actionStatus.textContent = "Proposal submitted — opening review queue.";
+  actionStatus.className = "muted ok";
+  setTimeout(() => { window.location.href = "/_admin/proposals"; }, 350);
+}
+
+for (const f of Object.values(fields)) f.addEventListener("input", scheduleDryRun);
+buttons.save.addEventListener("click", save);
+buttons.delete.addEventListener("click", deletePolicy);
+buttons.proposeDelete.addEventListener("click", proposeDelete);
+buttons.cancel.addEventListener("click", cancel);
+buttons.newPolicy.addEventListener("click", startCreate);
+buttons.refresh.addEventListener("click", refresh);
+apiFilter.addEventListener("change", refresh);
+
+(async () => {
+  await loadCapabilities();
+  await refresh();
+})();
+</script>
+{{- end -}}

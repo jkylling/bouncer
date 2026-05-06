@@ -1,0 +1,631 @@
+---
+# Google Drive API v3 — https://developers.google.com/drive/api/reference/rest/v3
+#
+# Resources covered:
+#   drive_user   (about.get)                   — scope for collection ops
+#   file         (files.*)
+#   permission   (files.permissions.*)
+#   comment      (files.comments.*)
+#   reply        (files.comments.replies.*)
+#   revision     (files.revisions.*)
+#   drive        (drives.*)                    — shared drives
+#
+# `fields=*` is requested on reads so output expressions can pick any
+# exposed field (Drive defaults to a sparse subset without it).
+
+name: drive
+base_url: "https://www.googleapis.com"
+path_prefixes:
+- /drive/v3
+- /upload/drive/v3
+
+meta:
+- name: drive_user
+  kind: endpoint
+  input:
+  - name: dummy
+  request: get('/drive/v3/about?fields=*')
+  # Output field conventions:
+  #   - Bare `response.body.X`: field is guaranteed present by the API
+  #     contract. Missing → eval error → policy 500 (loud failure).
+  #   - `response.body.?X`: field may be omitted. The runtime unwraps
+  #     the CEL `optional<T>` — present → value, absent → null.
+  #     Policies guard with `meta.X != null`.
+  output:
+  - name: user
+    expr: response.body.user
+  - name: storageQuota
+    expr: response.body.storageQuota
+  - name: maxUploadSize
+    expr: response.body.?maxUploadSize
+  - name: canCreateDrives
+    expr: response.body.?canCreateDrives
+  - name: appInstalled
+    expr: response.body.?appInstalled
+
+- name: file
+  kind: endpoint
+  input:
+  - name: file_id
+  request: get('/drive/v3/files/' + string(input.file_id) + '?fields=*&supportsAllDrives=true')
+  output:
+  # Always present.
+  - name: id
+    expr: response.body.id
+  - name: name
+    expr: response.body.name
+  - name: mimeType
+    expr: response.body.mimeType
+  # Conditional — wrapped so missing fields become null.
+  - name: description
+    expr: response.body.?description
+  - name: parents
+    expr: response.body.?parents
+  - name: driveId
+    expr: response.body.?driveId
+  - name: owners
+    expr: response.body.?owners
+  - name: lastModifyingUser
+    expr: response.body.?lastModifyingUser
+  - name: permissions
+    expr: response.body.?permissions
+  - name: permissionIds
+    expr: response.body.?permissionIds
+  - name: shared
+    expr: response.body.?shared
+  - name: ownedByMe
+    expr: response.body.?ownedByMe
+  - name: sharedWithMeTime
+    expr: response.body.?sharedWithMeTime
+  - name: viewedByMe
+    expr: response.body.?viewedByMe
+  - name: createdTime
+    expr: response.body.?createdTime
+  - name: modifiedTime
+    expr: response.body.?modifiedTime
+  - name: modifiedByMeTime
+    expr: response.body.?modifiedByMeTime
+  - name: size
+    expr: response.body.?size
+  - name: quotaBytesUsed
+    expr: response.body.?quotaBytesUsed
+  - name: md5Checksum
+    expr: response.body.?md5Checksum
+  - name: sha1Checksum
+    expr: response.body.?sha1Checksum
+  - name: sha256Checksum
+    expr: response.body.?sha256Checksum
+  - name: trashed
+    expr: response.body.?trashed
+  - name: trashedTime
+    expr: response.body.?trashedTime
+  - name: trashingUser
+    expr: response.body.?trashingUser
+  - name: explicitlyTrashed
+    expr: response.body.?explicitlyTrashed
+  - name: starred
+    expr: response.body.?starred
+  - name: viewersCanCopyContent
+    expr: response.body.?viewersCanCopyContent
+  - name: writersCanShare
+    expr: response.body.?writersCanShare
+  - name: copyRequiresWriterPermission
+    expr: response.body.?copyRequiresWriterPermission
+  - name: capabilities
+    expr: response.body.?capabilities
+  - name: labelInfo
+    expr: response.body.?labelInfo
+  - name: webViewLink
+    expr: response.body.?webViewLink
+  - name: webContentLink
+    expr: response.body.?webContentLink
+  - name: iconLink
+    expr: response.body.?iconLink
+  - name: thumbnailLink
+    expr: response.body.?thumbnailLink
+  - name: hasThumbnail
+    expr: response.body.?hasThumbnail
+  - name: version
+    expr: response.body.?version
+  - name: headRevisionId
+    expr: response.body.?headRevisionId
+  - name: fullFileExtension
+    expr: response.body.?fullFileExtension
+  - name: fileExtension
+    expr: response.body.?fileExtension
+  - name: originalFilename
+    expr: response.body.?originalFilename
+  - name: folderColorRgb
+    expr: response.body.?folderColorRgb
+  - name: imageMediaMetadata
+    expr: response.body.?imageMediaMetadata
+  - name: videoMediaMetadata
+    expr: response.body.?videoMediaMetadata
+  - name: exportLinks
+    expr: response.body.?exportLinks
+  - name: shortcutDetails
+    expr: response.body.?shortcutDetails
+  - name: contentRestrictions
+    expr: response.body.?contentRestrictions
+  - name: linkShareMetadata
+    expr: response.body.?linkShareMetadata
+  # Shared drive this file lives in. `?drive_id:` skips the bind for files
+  # in My Drive (no driveId set). Lets policies read drive.restrictions
+  # alongside file metadata.
+  - name: drive
+    expr: 'drive{?drive_id: response.body.?driveId}'
+  # Shortcut target — recursive: a shortcut may target another shortcut.
+  # `?file_id:` no-ops for non-shortcut files.
+  - name: shortcut_target
+    expr: 'file{?file_id: response.body.?shortcutDetails.?targetId}'
+
+- name: permission
+  kind: endpoint
+  input:
+  - name: file_id
+  - name: permission_id
+  request: get('/drive/v3/files/' + string(input.file_id) + '/permissions/' + string(input.permission_id) + '?supportsAllDrives=true&fields=*')
+  output:
+  - name: id
+    expr: response.body.id
+  - name: type
+    expr: response.body.type
+  - name: role
+    expr: response.body.role
+  - name: emailAddress
+    expr: response.body.?emailAddress
+  - name: domain
+    expr: response.body.?domain
+  - name: allowFileDiscovery
+    expr: response.body.?allowFileDiscovery
+  - name: displayName
+    expr: response.body.?displayName
+  - name: expirationTime
+    expr: response.body.?expirationTime
+  - name: deleted
+    expr: response.body.?deleted
+  - name: pendingOwner
+    expr: response.body.?pendingOwner
+  - name: permissionDetails
+    expr: response.body.?permissionDetails
+  - name: view
+    expr: response.body.?view
+  # The file this permission grants access to. Lets policies on
+  # delete_permission gate by file.driveId / file.parents (e.g. "no
+  # permission removal on files in the LegalHold folder").
+  - name: file
+    expr: 'file{ file_id: input.file_id }'
+
+- name: comment
+  kind: endpoint
+  input:
+  - name: file_id
+  - name: comment_id
+  request: get('/drive/v3/files/' + string(input.file_id) + '/comments/' + string(input.comment_id) + '?fields=*')
+  output:
+  - name: id
+    expr: response.body.id
+  - name: author
+    expr: response.body.author
+  - name: content
+    expr: response.body.content
+  - name: htmlContent
+    expr: response.body.?htmlContent
+  - name: createdTime
+    expr: response.body.createdTime
+  - name: modifiedTime
+    expr: response.body.modifiedTime
+  - name: resolved
+    expr: response.body.?resolved
+  - name: deleted
+    expr: response.body.?deleted
+  - name: anchor
+    expr: response.body.?anchor
+  - name: quotedFileContent
+    expr: response.body.?quotedFileContent
+  - name: replies
+    expr: response.body.?replies
+  # The commented file.
+  - name: file
+    expr: 'file{ file_id: input.file_id }'
+
+- name: reply
+  kind: endpoint
+  input:
+  - name: file_id
+  - name: comment_id
+  - name: reply_id
+  request: get('/drive/v3/files/' + string(input.file_id) + '/comments/' + string(input.comment_id) + '/replies/' + string(input.reply_id) + '?fields=*')
+  output:
+  - name: id
+    expr: response.body.id
+  - name: author
+    expr: response.body.author
+  - name: content
+    expr: response.body.?content
+  - name: htmlContent
+    expr: response.body.?htmlContent
+  - name: action
+    expr: response.body.?action
+  - name: createdTime
+    expr: response.body.createdTime
+  - name: modifiedTime
+    expr: response.body.modifiedTime
+  - name: deleted
+    expr: response.body.?deleted
+  # The parent comment this reply is attached to.
+  - name: comment
+    expr: 'comment{ file_id: input.file_id, comment_id: input.comment_id }'
+  # The underlying file (also reachable via reply.comment.file — exposed
+  # directly here for convenience).
+  - name: file
+    expr: 'file{ file_id: input.file_id }'
+
+- name: revision
+  kind: endpoint
+  input:
+  - name: file_id
+  - name: revision_id
+  request: get('/drive/v3/files/' + string(input.file_id) + '/revisions/' + string(input.revision_id) + '?fields=*')
+  output:
+  - name: id
+    expr: response.body.id
+  - name: mimeType
+    expr: response.body.mimeType
+  - name: modifiedTime
+    expr: response.body.modifiedTime
+  - name: size
+    expr: response.body.?size
+  - name: originalFilename
+    expr: response.body.?originalFilename
+  - name: md5Checksum
+    expr: response.body.?md5Checksum
+  - name: keepForever
+    expr: response.body.?keepForever
+  - name: published
+    expr: response.body.?published
+  - name: publishAuto
+    expr: response.body.?publishAuto
+  - name: publishedOutsideDomain
+    expr: response.body.?publishedOutsideDomain
+  - name: publishedLink
+    expr: response.body.?publishedLink
+  - name: lastModifyingUser
+    expr: response.body.?lastModifyingUser
+  # The file this revision belongs to.
+  - name: file
+    expr: 'file{ file_id: input.file_id }'
+
+- name: drive
+  kind: endpoint
+  input:
+  - name: drive_id
+  request: get('/drive/v3/drives/' + string(input.drive_id) + '?useDomainAdminAccess=false')
+  output:
+  - name: id
+    expr: response.body.id
+  - name: name
+    expr: response.body.name
+  - name: themeId
+    expr: response.body.?themeId
+  - name: colorRgb
+    expr: response.body.?colorRgb
+  - name: backgroundImageFile
+    expr: response.body.?backgroundImageFile
+  - name: backgroundImageLink
+    expr: response.body.?backgroundImageLink
+  - name: createdTime
+    expr: response.body.?createdTime
+  - name: hidden
+    expr: response.body.?hidden
+  - name: orgUnitId
+    expr: response.body.?orgUnitId
+  - name: restrictions
+    expr: response.body.?restrictions
+  - name: capabilities
+    expr: response.body.?capabilities
+
+actions:
+# ---- about / changes / channels ----------------------------------------
+- name: get_about
+  method: GET
+  path: /drive/v3/about
+
+- name: list_changes
+  method: GET
+  path: /drive/v3/changes
+
+- name: get_start_page_token
+  method: GET
+  path: /drive/v3/changes/startPageToken
+
+- name: watch_changes
+  method: POST
+  path: /drive/v3/changes/watch
+
+- name: stop_channel
+  method: POST
+  path: /drive/v3/channels/stop
+
+# ---- files -------------------------------------------------------------
+- name: list_files
+  method: GET
+  path: /drive/v3/files
+
+- name: generate_file_ids
+  method: GET
+  path: /drive/v3/files/generateIds
+
+- name: empty_trash
+  method: DELETE
+  path: /drive/v3/files/trash
+
+- name: create_file
+  method: POST
+  path: /drive/v3/files
+
+- name: upload_file
+  method: POST
+  path: /upload/drive/v3/files
+
+- name: get_file
+  method: GET
+  path: /drive/v3/files/{file_id}
+  bind: |
+    file{ file_id: match.file_id }
+
+- name: update_file
+  method: PATCH
+  path: /drive/v3/files/{file_id}
+  bind: |
+    file{ file_id: match.file_id }
+
+- name: upload_file_update
+  method: PATCH
+  path: /upload/drive/v3/files/{file_id}
+  bind: |
+    file{ file_id: match.file_id }
+
+- name: delete_file
+  method: DELETE
+  path: /drive/v3/files/{file_id}
+  bind: |
+    file{ file_id: match.file_id }
+
+- name: copy_file
+  method: POST
+  path: /drive/v3/files/{file_id}/copy
+  bind: |
+    file{ file_id: match.file_id }
+
+- name: export_file
+  method: GET
+  path: /drive/v3/files/{file_id}/export
+  bind: |
+    file{ file_id: match.file_id }
+
+- name: watch_file
+  method: POST
+  path: /drive/v3/files/{file_id}/watch
+  bind: |
+    file{ file_id: match.file_id }
+
+- name: list_file_labels
+  method: GET
+  path: /drive/v3/files/{file_id}/listLabels
+  bind: |
+    file{ file_id: match.file_id }
+
+- name: modify_file_labels
+  method: POST
+  path: /drive/v3/files/{file_id}/modifyLabels
+  bind: |
+    file{ file_id: match.file_id }
+
+# ---- permissions -------------------------------------------------------
+# Nested actions also bind the parent `file{}` so policies can check
+# file.shared / file.driveId / file.owners / file.permissions on
+# permission/comment/reply/revision mutations.
+- name: list_permissions
+  method: GET
+  path: /drive/v3/files/{file_id}/permissions
+  bind: |
+    file{ file_id: match.file_id }
+
+- name: create_permission
+  method: POST
+  path: /drive/v3/files/{file_id}/permissions
+  bind: |
+    file{ file_id: match.file_id }
+
+- name: get_permission
+  method: GET
+  path: /drive/v3/files/{file_id}/permissions/{permission_id}
+  binds:
+    - |
+      permission{ file_id: match.file_id, permission_id: match.permission_id }
+    - |
+      file{ file_id: match.file_id }
+
+- name: update_permission
+  method: PATCH
+  path: /drive/v3/files/{file_id}/permissions/{permission_id}
+  binds:
+    - |
+      permission{ file_id: match.file_id, permission_id: match.permission_id }
+    - |
+      file{ file_id: match.file_id }
+
+- name: delete_permission
+  method: DELETE
+  path: /drive/v3/files/{file_id}/permissions/{permission_id}
+  binds:
+    - |
+      permission{ file_id: match.file_id, permission_id: match.permission_id }
+    - |
+      file{ file_id: match.file_id }
+
+# ---- comments ----------------------------------------------------------
+- name: list_comments
+  method: GET
+  path: /drive/v3/files/{file_id}/comments
+  bind: |
+    file{ file_id: match.file_id }
+
+- name: create_comment
+  method: POST
+  path: /drive/v3/files/{file_id}/comments
+  bind: |
+    file{ file_id: match.file_id }
+
+- name: get_comment
+  method: GET
+  path: /drive/v3/files/{file_id}/comments/{comment_id}
+  binds:
+    - |
+      comment{ file_id: match.file_id, comment_id: match.comment_id }
+    - |
+      file{ file_id: match.file_id }
+
+- name: update_comment
+  method: PATCH
+  path: /drive/v3/files/{file_id}/comments/{comment_id}
+  binds:
+    - |
+      comment{ file_id: match.file_id, comment_id: match.comment_id }
+    - |
+      file{ file_id: match.file_id }
+
+- name: delete_comment
+  method: DELETE
+  path: /drive/v3/files/{file_id}/comments/{comment_id}
+  binds:
+    - |
+      comment{ file_id: match.file_id, comment_id: match.comment_id }
+    - |
+      file{ file_id: match.file_id }
+
+# ---- replies -----------------------------------------------------------
+- name: list_replies
+  method: GET
+  path: /drive/v3/files/{file_id}/comments/{comment_id}/replies
+  binds:
+    - |
+      comment{ file_id: match.file_id, comment_id: match.comment_id }
+    - |
+      file{ file_id: match.file_id }
+
+- name: create_reply
+  method: POST
+  path: /drive/v3/files/{file_id}/comments/{comment_id}/replies
+  binds:
+    - |
+      comment{ file_id: match.file_id, comment_id: match.comment_id }
+    - |
+      file{ file_id: match.file_id }
+
+- name: get_reply
+  method: GET
+  path: /drive/v3/files/{file_id}/comments/{comment_id}/replies/{reply_id}
+  binds:
+    - |
+      reply{ file_id: match.file_id, comment_id: match.comment_id, reply_id: match.reply_id }
+    - |
+      comment{ file_id: match.file_id, comment_id: match.comment_id }
+    - |
+      file{ file_id: match.file_id }
+
+- name: update_reply
+  method: PATCH
+  path: /drive/v3/files/{file_id}/comments/{comment_id}/replies/{reply_id}
+  binds:
+    - |
+      reply{ file_id: match.file_id, comment_id: match.comment_id, reply_id: match.reply_id }
+    - |
+      comment{ file_id: match.file_id, comment_id: match.comment_id }
+    - |
+      file{ file_id: match.file_id }
+
+- name: delete_reply
+  method: DELETE
+  path: /drive/v3/files/{file_id}/comments/{comment_id}/replies/{reply_id}
+  binds:
+    - |
+      reply{ file_id: match.file_id, comment_id: match.comment_id, reply_id: match.reply_id }
+    - |
+      comment{ file_id: match.file_id, comment_id: match.comment_id }
+    - |
+      file{ file_id: match.file_id }
+
+# ---- revisions ---------------------------------------------------------
+- name: list_revisions
+  method: GET
+  path: /drive/v3/files/{file_id}/revisions
+  bind: |
+    file{ file_id: match.file_id }
+
+- name: get_revision
+  method: GET
+  path: /drive/v3/files/{file_id}/revisions/{revision_id}
+  binds:
+    - |
+      revision{ file_id: match.file_id, revision_id: match.revision_id }
+    - |
+      file{ file_id: match.file_id }
+
+- name: update_revision
+  method: PATCH
+  path: /drive/v3/files/{file_id}/revisions/{revision_id}
+  binds:
+    - |
+      revision{ file_id: match.file_id, revision_id: match.revision_id }
+    - |
+      file{ file_id: match.file_id }
+
+- name: delete_revision
+  method: DELETE
+  path: /drive/v3/files/{file_id}/revisions/{revision_id}
+  binds:
+    - |
+      revision{ file_id: match.file_id, revision_id: match.revision_id }
+    - |
+      file{ file_id: match.file_id }
+
+# ---- drives (shared drives) --------------------------------------------
+- name: list_drives
+  method: GET
+  path: /drive/v3/drives
+
+- name: create_drive
+  method: POST
+  path: /drive/v3/drives
+
+- name: get_drive
+  method: GET
+  path: /drive/v3/drives/{drive_id}
+  bind: |
+    drive{ drive_id: match.drive_id }
+
+- name: update_drive
+  method: PATCH
+  path: /drive/v3/drives/{drive_id}
+  bind: |
+    drive{ drive_id: match.drive_id }
+
+- name: delete_drive
+  method: DELETE
+  path: /drive/v3/drives/{drive_id}
+  bind: |
+    drive{ drive_id: match.drive_id }
+
+- name: hide_drive
+  method: POST
+  path: /drive/v3/drives/{drive_id}/hide
+  bind: |
+    drive{ drive_id: match.drive_id }
+
+- name: unhide_drive
+  method: POST
+  path: /drive/v3/drives/{drive_id}/unhide
+  bind: |
+    drive{ drive_id: match.drive_id }

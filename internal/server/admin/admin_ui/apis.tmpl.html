@@ -1,0 +1,264 @@
+{{- /* APIs viewer page — read-only catalogue of every registered API,
+its actions, and meta types. Search dims non-matches rather than
+hiding them so the operator always sees the full surface. */ -}}
+{{- define "page-style" -}}
+  h2 { font-size: 1.15rem; margin: 1.5rem 0 0.4rem; font-weight: 600; }
+  h3 { font-size: 0.95rem; margin: 1rem 0 0.4rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+
+  /* Each API is a <details open> so the operator can collapse the
+     ones they're not interested in. The summary line carries the
+     name + base_url + prefixes; the body holds actions and metas. */
+  details.api-card {
+    border: 1px solid var(--border); border-radius: 0.5rem;
+    background: var(--surface); margin-bottom: 1rem;
+  }
+  details.api-card[open] > summary { border-bottom: 1px solid var(--border); }
+  details.api-card > summary {
+    list-style: none; cursor: pointer;
+    padding: 0.8rem 1.1rem;
+    display: flex; flex-wrap: wrap; gap: 0.5rem 1rem;
+    align-items: baseline;
+    border-radius: 0.5rem;
+  }
+  details.api-card > summary::-webkit-details-marker { display: none; }
+  details.api-card > summary::before {
+    content: "▸"; color: var(--text-muted);
+    margin-right: 0.4rem; transition: transform 0.15s;
+    display: inline-block;
+  }
+  details.api-card[open] > summary::before { transform: rotate(90deg); }
+  details.api-card > summary:hover { background: var(--bg); }
+  details.api-card .body { padding: 0.5rem 1.1rem 1rem; }
+  .api-header .name { font-size: 1.1rem; font-weight: 600; }
+  .api-header code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9rem; background: var(--bg); border: 1px solid var(--border); padding: 0.05rem 0.4rem; border-radius: 0.3rem; }
+  .api-header .label { color: var(--text-muted); font-size: 0.85rem; }
+  .prefixes { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+
+  /* Search bar: a wide input + a result count. The input is type=search
+     so the browser supplies the small clear-x affordance. */
+  .search-row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin-bottom: 1rem; }
+  .search-row input[type="search"] { flex: 1; min-width: 16rem; }
+  .search-row .count { color: var(--text-muted); font-size: 0.9rem; }
+  mark { background: rgba(212, 160, 23, 0.35); color: inherit; padding: 0 0.1rem; border-radius: 0.15rem; }
+
+  /* "Filtered out" state for items that don't match the current
+     search. They stay rendered (so the operator can see the full
+     catalogue and click to expand) but dim down so the matches
+     stand out. APIs that are filtered out also auto-collapse. */
+  .filtered-out { opacity: 0.4; }
+  .filtered-out:hover { opacity: 0.7; }
+  details.api-card.filtered-out > summary { color: var(--text-muted); }
+  tr.action-row.filtered-out > td { color: var(--text-muted); }
+
+  .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 0.4rem; background: var(--bg); }
+  thead th { background: var(--surface); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; }
+  tbody tr:last-child td { border-bottom: 0; }
+  td.method { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 600; white-space: nowrap; }
+  td.path, td.cel, td.bind { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.88rem; word-break: break-all; }
+
+  .meta-card { border: 1px solid var(--border); border-radius: 0.4rem; background: var(--bg); padding: 0.6rem 0.8rem; margin-bottom: 0.5rem; }
+  .meta-card .meta-name { font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9rem; }
+  .meta-card .meta-kind { color: var(--text-muted); font-size: 0.85rem; margin-left: 0.4rem; }
+  .meta-card ul { margin: 0.4rem 0 0; padding-left: 1.2rem; font-size: 0.9rem; }
+  .meta-card li { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
+  .meta-card li .out-expr { color: var(--text-muted); }
+
+  .empty { color: var(--text-muted); font-style: italic; padding: 1.5rem; border: 1px dashed var(--border); border-radius: 0.5rem; text-align: center; background: var(--surface); }
+{{- end -}}
+
+{{- define "body" -}}
+<h1>Registered APIs</h1>
+<p class="lede">Every upstream the proxy routes to, with the actions it claims and the meta types policies can constrain on. Read-only — the API surface is frozen at boot from <code>--apis-dir</code>.</p>
+
+<div class="search-row">
+  <input type="search" id="search" placeholder="Search name, path, action, meta field…" autocomplete="off" spellcheck="false">
+  <span class="count" id="count"></span>
+</div>
+
+<div id="status" class="muted">Loading…</div>
+<div id="apis"></div>
+{{- end -}}
+
+{{- define "page-script" -}}
+<script>
+function escapeHTML(s) {
+  return String(s).replace(/[&<>"']/g, c => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  })[c]);
+}
+
+function actionHaystack(a) {
+  return [a.name, a.method, a.path, a.filter || "", ...(a.binds || [])]
+    .filter(Boolean).join(" ").toLowerCase();
+}
+
+function renderActions(actions) {
+  if (!actions || !actions.length) return '<p class="muted action-empty">No actions declared.</p>';
+  let rows = "";
+  for (const a of actions) {
+    const binds = (a.binds || []).map(b => `<code>${escapeHTML(b)}</code>`).join("<br>");
+    rows += `
+      <tr class="action-row" data-haystack="${escapeHTML(actionHaystack(a))}">
+        <td>${escapeHTML(a.name)}</td>
+        <td class="method">${escapeHTML(a.method || "")}</td>
+        <td class="path">${escapeHTML(a.path || "")}</td>
+        <td class="cel">${escapeHTML(a.filter || "")}</td>
+        <td class="bind">${binds}</td>
+      </tr>`;
+  }
+  return `
+    <div class="table-wrap action-table">
+      <table>
+        <thead><tr>
+          <th>Name</th><th>Method</th><th>Path</th><th>Filter</th><th>Binds</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
+function metaHaystack(m) {
+  const parts = [m.name, m.kind || "", ...(m.input || [])];
+  for (const o of m.output || []) parts.push(o.name, o.expr || "");
+  return parts.filter(Boolean).join(" ").toLowerCase();
+}
+
+function renderMeta(metas) {
+  if (!metas || !metas.length) return '<p class="muted meta-empty">No meta types declared.</p>';
+  let html = "";
+  for (const m of metas) {
+    const ins = (m.input || []).map(n => `<code>${escapeHTML(n)}</code>`).join(", ");
+    const outs = (m.output || []).map(o => `<li><code>${escapeHTML(o.name)}</code>${o.expr ? ` <span class="out-expr">= ${escapeHTML(o.expr)}</span>` : ""}</li>`).join("");
+    html += `
+      <div class="meta-card" data-haystack="${escapeHTML(metaHaystack(m))}">
+        <span class="meta-name">${escapeHTML(m.name)}</span>${m.kind ? `<span class="meta-kind">${escapeHTML(m.kind)}</span>` : ""}
+        ${ins ? `<div class="muted" style="margin-top: 0.25rem;">Input: ${ins}</div>` : ""}
+        ${outs ? `<div class="muted" style="margin-top: 0.25rem;">Output:</div><ul>${outs}</ul>` : ""}
+      </div>`;
+  }
+  return html;
+}
+
+function renderApi(api) {
+  const prefixes = (api.path_prefixes || []).map(p => `<code>${escapeHTML(p)}</code>`).join(" ");
+  const readmeLink = api.readme_url
+    ? `<div><a href="${escapeHTML(api.readme_url)}" target="_blank" rel="noopener">README</a></div>`
+    : "";
+  return `
+    <details class="api-card" open data-haystack="${escapeHTML(apiHeaderHaystack(api))}">
+      <summary>
+        <div class="api-header" style="display: contents;">
+          <div class="name">${escapeHTML(api.name)}</div>
+          <div><span class="label">Base URL</span> <code>${escapeHTML(api.base_url || "")}</code></div>
+          ${prefixes ? `<div><span class="label">Prefixes</span> <span class="prefixes">${prefixes}</span></div>` : ""}
+          ${readmeLink}
+        </div>
+      </summary>
+      <div class="body">
+        <h3>Actions</h3>
+        ${renderActions(api.actions)}
+        <h3>Meta types</h3>
+        ${renderMeta(api.meta)}
+      </div>
+    </details>`;
+}
+
+// Header-only haystack: name + base_url + prefixes. A header match
+// shows the whole card with all children visible. A search that
+// only matches a child (action or meta) shows the card with just
+// the matching child(ren), so the operator sees the answer to
+// "which action mentions <X>?" rather than the whole API surface.
+function apiHeaderHaystack(api) {
+  return [api.name, api.base_url, ...(api.path_prefixes || [])]
+    .filter(Boolean).join(" ").toLowerCase();
+}
+
+(async () => {
+  const status = document.getElementById("status");
+  const out = document.getElementById("apis");
+  try {
+    const resp = await fetch("/_api/apis");
+    if (!resp.ok) {
+      status.textContent = `HTTP ${resp.status}: ${(await resp.text()).trim()}`;
+      status.className = "err";
+      return;
+    }
+    const data = await resp.json();
+    const apis = data.apis || [];
+    if (!apis.length) {
+      out.innerHTML = '<div class="empty">No APIs registered. Add YAML to <code>--apis-dir</code> and restart.</div>';
+      status.textContent = "";
+      return;
+    }
+    status.textContent = `${apis.length} ${apis.length === 1 ? "API" : "APIs"} registered.`;
+    out.innerHTML = apis.map(renderApi).join("");
+    wireSearch();
+  } catch (e) {
+    status.textContent = "Network error: " + e.message;
+    status.className = "err";
+  }
+})();
+
+// Substring filter that dims non-matching items rather than
+// hiding them. The operator always sees the full catalogue:
+//   - APIs that don't match collapse and grey out (header still
+//     visible, click to expand if you want a closer look — once
+//     open, the body shows in full opacity).
+//   - APIs that do match auto-open and stay full opacity.
+//   - Within a matching API, individual actions and meta cards
+//     that don't match dim down; the matching ones stand out.
+// Hover on a dimmed item lifts it back toward full opacity so a
+// near-miss is easy to read. Empty query restores everything.
+function wireSearch() {
+  const search = document.getElementById("search");
+  const count = document.getElementById("count");
+  const cards = Array.from(document.querySelectorAll("details.api-card"));
+  const baseline = new WeakMap();
+  for (const c of cards) baseline.set(c, c.open);
+
+  function applyFilter() {
+    const q = search.value.trim().toLowerCase();
+    let matched = 0;
+    for (const c of cards) {
+      const headerHit = !q || (c.dataset.haystack || "").includes(q);
+      const actions = Array.from(c.querySelectorAll("tr.action-row"));
+      const metas = Array.from(c.querySelectorAll(".meta-card"));
+      let actionHits = 0, metaHits = 0;
+
+      for (const r of actions) {
+        const hit = !q || headerHit || (r.dataset.haystack || "").includes(q);
+        r.classList.toggle("filtered-out", !hit);
+        if (hit) actionHits++;
+      }
+      for (const m of metas) {
+        const hit = !q || headerHit || (m.dataset.haystack || "").includes(q);
+        m.classList.toggle("filtered-out", !hit);
+        if (hit) metaHits++;
+      }
+
+      const cardHit = headerHit || actionHits > 0 || metaHits > 0;
+      c.classList.toggle("filtered-out", !cardHit);
+      if (cardHit) {
+        matched++;
+        // Matching cards open while a query is active; revert to
+        // the user's pre-search state when q is empty.
+        c.open = q ? true : baseline.get(c);
+      } else {
+        // Non-matching cards collapse so the operator can scan the
+        // headers without scrolling past every action table.
+        c.open = false;
+      }
+    }
+    if (q) count.textContent = `${matched} of ${cards.length} match`;
+    else count.textContent = "";
+  }
+
+  for (const c of cards) {
+    c.addEventListener("toggle", () => {
+      if (!search.value) baseline.set(c, c.open);
+    });
+  }
+  search.addEventListener("input", applyFilter);
+}
+</script>
+{{- end -}}
