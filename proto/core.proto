@@ -1,0 +1,69 @@
+syntax = "proto3";
+
+package bouncer;
+
+option go_package = "github.com/jkylling/bouncer/internal/pb;pb";
+
+import "google/protobuf/struct.proto";
+
+message Request {
+  reserved 2;  // was `host`; removed — policies only need path/method/body.
+
+  string method = 1;
+  string path = 3;
+  repeated string path_segments = 4;
+  repeated KeyValue query = 5;
+  // Body is `Value` rather than `Struct` so policies can inspect array
+  // and scalar bodies as well as JSON objects. Field-access expressions
+  // (`request.body.foo`) still work — CEL exposes `Value` as `dyn`.
+  google.protobuf.Value body = 6;
+}
+
+message Response {
+  // Body is `Value` rather than `Struct` so the upstream client can
+  // accept array and scalar JSON responses too (paginated cursors,
+  // attachment listings). Object-shaped responses still expose
+  // field access via `dyn` semantics.
+  google.protobuf.Value body = 1;
+}
+
+message KeyValue {
+  string key = 1;
+  string value = 2;
+}
+
+// Output of the in-CEL helper functions (`get(path)`, `post(path, body)`, ...)
+// used inside meta `request` expressions to describe an upstream call.
+// Distinct from `Request`, which models the incoming proxied request.
+message MetaRequest {
+  string method = 1;
+  string path = 2;
+  google.protobuf.Value body = 3;
+  // Content-Type to send the body with on the wire. Empty means
+  // application/json (the historical default). post_form sets it to
+  // application/x-www-form-urlencoded so Slack-style endpoints (which
+  // reject xoxc browser-session tokens carrying JSON bodies) get the
+  // shape they expect.
+  string content_type = 4;
+}
+
+// Principal identifies the caller for policy evaluation. The runtime does
+// not interpret these fields itself; policies read them via the top-level
+// `principal` CEL variable. Kept deliberately small so growing it (new
+// scopes, attributes) does not couple the runtime to JWT specifics.
+message Principal {
+  // Stable id for the caller. JWT `sub` claim in the proxy data plane.
+  string subject = 1;
+
+  // Coarse classifier: "user" | "agent" | "service". The runtime does
+  // not interpret this; policies may.
+  string kind = 2;
+
+  // Granted scopes. Examples: "admin", "gmail:read".
+  repeated string scopes = 3;
+
+  // Open-ended attributes (email, team, ...) so deployments can attach
+  // values without re-versioning the proto. map<string,string> keeps CEL
+  // access ergonomic (`principal.attributes.team == "finance"`).
+  map<string, string> attributes = 4;
+}

@@ -1,0 +1,11 @@
+api: gmail
+name: read
+action: action.name == "get_message"
+condition: "'Label_1234' in message.labelIds && mailbox.messagesTotal == 100"
+result: permit
+---
+api: gmail
+name: delete
+action: action.name == "delete_message"
+condition: "'Label_1234' in message.labelIds"
+result: permit

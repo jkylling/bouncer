@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>bouncer &mdash; admin login</title>
+<style>
+  /* Palette: GitHub Primer's light + dark, abbreviated to the
+     handful of tokens we actually use. Custom properties so
+     `prefers-color-scheme` flips one block instead of every rule. */
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff;
+    --surface: #f6f8fa;
+    --text: #1f2328;
+    --text-muted: #59636e;
+    --border: #d1d9e0;
+    --border-strong: #afb8c1;
+    --accent: #0969da;
+    --accent-hover: #0860c7;
+    --focus-ring: #0969da55;
+    --success: #1a7f37;
+    --danger: #cf222e;
+    --shadow: 0 1px 3px rgba(31, 35, 40, 0.08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --text: #f0f6fc;
+      --text-muted: #8b949e;
+      --border: #30363d;
+      --border-strong: #3d444d;
+      --accent: #2f81f7;
+      --accent-hover: #4493f8;
+      --focus-ring: #2f81f766;
+      --success: #3fb950;
+      --danger: #f85149;
+      --shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    font-size: 16px;
+    line-height: 1.5;
+    margin: 0;
+    min-height: 100vh;
+    /* Login is the only single-task page — centre the form both
+       axes so the eye lands on it directly instead of in the
+       top-left corner with empty white below. clamp() keeps the
+       padding sensible on phones. */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: clamp(1rem, 4vw, 2.5rem);
+    background: var(--bg);
+    color: var(--text);
+  }
+  .container { width: 100%; max-width: 24rem; }
+  h1 { font-size: 1.5rem; margin: 0 0 0.4rem; font-weight: 600; }
+  p.lede { color: var(--text-muted); margin: 0 0 1.5rem; }
+  fieldset {
+    border: 1px solid var(--border);
+    border-radius: 0.5rem;
+    padding: 1rem 1.1rem;
+    margin: 0 0 1rem;
+    background: var(--surface);
+  }
+  legend { padding: 0 0.4rem; font-size: 0.9rem; color: var(--text-muted); }
+  label { display: block; margin-top: 0.5rem; font-size: 0.95rem; }
+  input {
+    display: block; width: 100%;
+    padding: 0.45rem 0.7rem; margin-top: 0.3rem;
+    font: inherit;
+    color: var(--text); background: var(--bg);
+    border: 1px solid var(--border-strong); border-radius: 0.35rem;
+    min-height: 2.4rem; vertical-align: middle;
+    transition: border-color 0.1s, box-shadow 0.1s;
+  }
+  input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--focus-ring);
+  }
+  button {
+    padding: 0.45rem 1rem; font: inherit; cursor: pointer;
+    color: #fff; background: var(--accent); border: 1px solid var(--accent);
+    border-radius: 0.35rem; min-height: 2.4rem; line-height: 1.3;
+    vertical-align: middle;
+    transition: background 0.1s;
+  }
+  button:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+  button:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--focus-ring); }
+  .err { color: var(--danger); }
+  .ok  { color: var(--success); }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Admin login</h1>
+  <p class="lede">Sign in to access the bouncer control plane.</p>
+
+  <form id="login">
+    <fieldset>
+      <legend>Credentials</legend>
+      <label>Password
+        <input type="password" name="password" required autocomplete="current-password" autofocus>
+      </label>
+    </fieldset>
+    <button type="submit">Sign in</button>
+  </form>
+
+  <p id="status"></p>
+</div>
+
+<script>
+// Login flow:
+//   POST /_api/admin/login {password} → 200 sets the cookie. We
+//   then redirect to ?next=... (defaulting to /_admin/) so a 401
+//   redirect from another admin page brings the user back to where
+//   they were trying to go.
+const status = document.getElementById("status");
+
+function nextURL() {
+  const q = new URLSearchParams(location.search);
+  const raw = q.get("next");
+  // Only allow same-origin paths: a malicious link could otherwise
+  // redirect to attacker.example after a successful login. The
+  // leading-slash check rejects scheme-relative ("//evil.com") URLs.
+  if (raw && raw.startsWith("/") && !raw.startsWith("//")) return raw;
+  return "/_admin/";
+}
+
+document.getElementById("login").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  status.textContent = "Signing in…";
+  status.className = "";
+  try {
+    const resp = await fetch("/_api/admin/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ password: f.get("password") }),
+      credentials: "same-origin",
+    });
+    if (resp.status === 401) {
+      status.textContent = "Wrong password.";
+      status.className = "err";
+      return;
+    }
+    if (resp.status === 503) {
+      status.textContent = "Login is not configured on this proxy. Set BOUNCER_ADMIN_PASSWORD_HASH and restart, or bootstrap with cmd/issue-token --admin.";
+      status.className = "err";
+      return;
+    }
+    if (!resp.ok) {
+      const text = await resp.text();
+      status.textContent = `HTTP ${resp.status}: ${text.trim()}`;
+      status.className = "err";
+      return;
+    }
+    location.replace(nextURL());
+  } catch (err) {
+    status.textContent = "Network error: " + err.message;
+    status.className = "err";
+  }
+});
+</script>
+</body>
+</html>

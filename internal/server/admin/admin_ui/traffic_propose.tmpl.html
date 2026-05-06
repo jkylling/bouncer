@@ -1,0 +1,601 @@
+{{- /* propose-policy-from-request page — reached from the traffic
+detail view. Renders a low-code form whose checkboxes pick which
+recorded fields participate in the policy condition; can also be
+toggled into freeform YAML editing. Submit creates a proposal (or
+proposes-and-approves for admins). */ -}}
+{{- define "page-style" -}}
+  :root {
+    --success-bg: rgba(26, 127, 55, 0.10);
+    --danger-bg: rgba(207, 34, 46, 0.10);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --success-bg: rgba(63, 185, 80, 0.15);
+      --danger-bg: rgba(248, 81, 73, 0.15);
+    }
+  }
+
+  label.row { display: flex; align-items: center; gap: 0.5rem; margin: 0.4rem 0; font-size: 0.95rem; flex-wrap: wrap; }
+  label.row > input, label.row > select { display: inline-block; width: auto; flex: 1; min-width: 12rem; }
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  @media (max-width: 40rem) { .form-grid { grid-template-columns: 1fr; } }
+
+  .field-list { max-height: 24rem; overflow-y: auto; padding: 0.4rem 0.6rem; border: 1px solid var(--border); border-radius: 0.4rem; background: var(--bg); }
+  .field-row { display: grid; grid-template-columns: auto 1fr auto; gap: 0.5rem; align-items: center; padding: 0.35rem 0; }
+  .field-row + .field-row { border-top: 1px dashed var(--border); }
+  .field-row code { font-size: 0.85rem; word-break: break-all; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .field-row .preview { color: var(--text-muted); font-size: 0.85rem; word-break: break-all; }
+  .field-row select { display: inline-block; width: auto; font-size: 0.85rem; padding: 0.2rem 0.4rem; min-height: 0; margin: 0; }
+  .field-row input[type="checkbox"] { width: 1.1rem; height: 1.1rem; min-height: 0; margin: 0; accent-color: var(--accent); }
+
+  pre.preview-cel { background: var(--surface-2); border: 1px solid var(--border); padding: 0.7rem; border-radius: 0.4rem; font-size: 0.9rem; white-space: pre-wrap; word-break: break-all; margin: 0.5rem 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+  /* Source-request summary: a compact key/value grid plus optional
+     bind detail blocks. Mirrors the data the propose engine sees so
+     the reviewer doesn't have to flip back to the traffic page to
+     remember what the request was. */
+  dl.source-grid { display: grid; grid-template-columns: max-content 1fr; gap: 0.35rem 1rem; margin: 0; font-size: 0.95rem; }
+  dl.source-grid dt { color: var(--text-muted); font-weight: 500; }
+  dl.source-grid dd { margin: 0; word-break: break-all; }
+  dl.source-grid code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; }
+  .source-binds details { background: var(--bg); border: 1px solid var(--border); border-radius: 0.35rem; padding: 0.4rem 0.6rem; margin-bottom: 0.4rem; }
+  .source-binds details:last-child { margin-bottom: 0; }
+  .source-binds summary { cursor: pointer; padding: 0.15rem 0; color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9rem; }
+  .source-binds pre { background: var(--surface-2); border: 1px solid var(--border); padding: 0.6rem; border-radius: 0.35rem; font-size: 0.85rem; white-space: pre-wrap; word-break: break-all; margin: 0.4rem 0 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .compile { padding: 0.5rem 0.75rem; border-radius: 0.4rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; white-space: pre-wrap; }
+  .compile-ok { background: var(--success-bg); color: var(--success); }
+  .compile-err { background: var(--danger-bg); color: var(--danger); }
+
+  .actions { display: flex; gap: 0.5rem; margin-top: 1rem; align-items: center; flex-wrap: wrap; }
+  .actions a { color: var(--accent); }
+  .actions .spacer { flex: 1; }
+  details.advanced { margin-top: 0.5rem; }
+  details.advanced summary { cursor: pointer; font-size: 0.95rem; color: var(--text-muted); padding: 0.3rem 0; }
+
+  /* Split button: GitHub merge-button shape — main action + caret
+     dropdown sharing one bordered group. The caret toggle is a
+     primary button so the colour matches; only the inner divider
+     and the menu popover need bespoke rules. */
+  .split-btn { display: inline-flex; position: relative; }
+  .split-btn > button { border-radius: 0; }
+  .split-btn > button:first-child {
+    border-top-left-radius: 0.35rem; border-bottom-left-radius: 0.35rem;
+  }
+  .split-btn > button.split-caret {
+    padding: 0.45rem 0.6rem; min-width: 2.2rem;
+    border-top-right-radius: 0.35rem; border-bottom-right-radius: 0.35rem;
+    border-left: 1px solid rgba(255, 255, 255, 0.25);
+  }
+  .split-menu {
+    position: absolute; top: calc(100% + 0.3rem); left: 0;
+    min-width: 24rem;
+    background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 0.5rem;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+    padding: 0.3rem; z-index: 20;
+  }
+  .split-menu[hidden] { display: none; }
+  .split-menu button {
+    display: block; width: 100%; text-align: left;
+    padding: 0.55rem 0.65rem;
+    border: 0; background: transparent; color: var(--text);
+    border-radius: 0.35rem; cursor: pointer;
+    min-height: 0;
+  }
+  .split-menu button:hover:not(:disabled) { background: var(--surface); }
+  .split-menu button:disabled { cursor: not-allowed; opacity: 0.55; }
+  .split-menu button strong { display: block; font-size: 0.95rem; font-weight: 600; }
+  .split-menu button .menu-desc { display: block; font-size: 0.85rem; color: var(--text-muted); margin-top: 0.15rem; }
+  .split-menu button[aria-checked="true"] strong::before { content: "✓ "; color: var(--accent); }
+{{- end -}}
+
+{{- define "body" -}}
+<h1>Propose policy from request</h1>
+<p class="lede">A policy whose condition matches this request &mdash; by default every recorded field is part of the match. Uncheck fields to generalize, the way you'd relax labels on an AlertManager silence. Approve in <a href="/_admin/proposals">Proposals</a>.</p>
+
+<fieldset>
+  <legend>Source request</legend>
+  <dl class="source-grid" id="source-summary">
+    <dt>Loading…</dt><dd></dd>
+  </dl>
+  <div id="source-binds-wrap" class="hidden" style="margin-top: 0.6rem;">
+    <p class="muted" style="margin: 0 0 0.3rem;">Resolved binds (the values the policy condition can constrain on):</p>
+    <div id="source-binds" class="source-binds"></div>
+  </div>
+  <details class="advanced" style="margin-top: 0.6rem;">
+    <summary>Full event JSON</summary>
+    <pre class="preview-cel" id="source-json"></pre>
+  </details>
+</fieldset>
+
+<fieldset>
+  <legend>Policy header</legend>
+  <div class="form-grid">
+    <label class="row">Result
+      <select id="pp-result">
+        <option value="deny">deny</option>
+        <option value="permit">permit</option>
+      </select>
+    </label>
+    <label class="row">Name
+      <input type="text" id="pp-name" autocomplete="off">
+    </label>
+  </div>
+</fieldset>
+
+<fieldset>
+  <legend>Fields</legend>
+  <div class="field-list" id="pp-fields">Loading…</div>
+</fieldset>
+
+<fieldset>
+  <legend>Generated condition</legend>
+  <pre class="preview-cel" id="pp-condition"></pre>
+  <div class="compile" id="pp-compile"></div>
+</fieldset>
+
+<details class="advanced">
+  <summary style="cursor: pointer; font-size: 0.85rem; color: var(--text-muted);">Edit YAML directly (advanced)</summary>
+  <p class="muted">Customising the YAML disables the field checkboxes — submit will send your YAML verbatim to the proposal store. Click Reset to go back to the auto-generated form.</p>
+  <textarea id="pp-yaml" autocomplete="off" spellcheck="false"></textarea>
+  <button type="button" id="pp-yaml-reset" class="secondary" style="margin-top: 0.4rem;">Reset to auto-generated</button>
+</details>
+
+<div class="actions">
+  <div class="split-btn">
+    <button type="button" id="pp-submit">Submit for review</button>
+    <button type="button" id="pp-submit-toggle" class="split-caret"
+            aria-haspopup="menu" aria-expanded="false" aria-label="Submit options">▾</button>
+    <div id="pp-submit-menu" class="split-menu" role="menu" hidden>
+      <button type="button" data-mode="propose" role="menuitem" aria-checked="true">
+        <strong>Submit for review</strong>
+        <span class="menu-desc">Create a proposal for a reviewer to approve.</span>
+      </button>
+      <button type="button" data-mode="apply" role="menuitem" id="pp-apply-option" disabled>
+        <strong>Submit and approve</strong>
+        <span class="menu-desc">Apply the policy immediately to the live runtime. Requires admin.</span>
+      </button>
+    </div>
+  </div>
+  <button type="button" id="pp-copy" class="secondary">Copy YAML</button>
+  <a href="/_admin/traffic" style="margin-left: 0.5rem;">Cancel</a>
+  <span class="spacer"></span>
+  <span id="pp-status" class="muted"></span>
+</div>
+{{- end -}}
+
+{{- define "page-script" -}}
+<script>
+// Read the event id from the URL: /_admin/traffic/{id}/propose
+const m = location.pathname.match(/^\/_admin\/traffic\/([^/]+)\/propose\/?$/);
+const ppEventID = m ? decodeURIComponent(m[1]) : "";
+if (!ppEventID) {
+  document.body.innerHTML = '<p class="err">No event id in URL.</p>';
+  throw new Error("no event id");
+}
+
+// Fetch the source event once and render a structured summary
+// (method/url/decision/api/action) plus the resolved binds in a
+// collapsible. Reviewer-facing context — without this they'd have
+// to flip back to the traffic page to remember what the request
+// was. Best-effort: if the event was evicted between the click and
+// this fetch, the summary slot shows an error and the rest of the
+// page still works (the propose-policy endpoint reads its own copy).
+async function loadSource() {
+  try {
+    const resp = await fetch(`/_api/traffic/${encodeURIComponent(ppEventID)}`);
+    if (!resp.ok) {
+      document.getElementById("source-summary").innerHTML =
+        `<dt>Source request</dt><dd class="err">HTTP ${resp.status}</dd>`;
+      return;
+    }
+    renderSource(await resp.json());
+  } catch (e) {
+    document.getElementById("source-summary").innerHTML =
+      `<dt>Source request</dt><dd class="err">${escapeHTML(e.message)}</dd>`;
+  }
+}
+
+function renderSource(ev) {
+  const fmt = (s) => s == null || s === "" ? '<span class="muted">(none)</span>' : escapeHTML(String(s));
+  const code = (s) => s == null || s === "" ? '<span class="muted">(none)</span>' : `<code>${escapeHTML(String(s))}</code>`;
+  let when = ev.timestamp || "";
+  try { when = new Date(ev.timestamp).toLocaleString(); } catch {}
+  document.getElementById("source-summary").innerHTML = `
+    <dt>Method</dt><dd>${code(ev.method)}</dd>
+    <dt>URL</dt><dd>${code(ev.url)}</dd>
+    <dt>API</dt><dd>${fmt(ev.api)}</dd>
+    <dt>Action</dt><dd>${fmt(ev.action)}</dd>
+    <dt>Decision</dt><dd class="decision-${escapeHTML(ev.decision || "")}">${fmt(ev.decision)}</dd>
+    <dt>Subject</dt><dd>${fmt(ev.subject)}</dd>
+    <dt>Time</dt><dd>${escapeHTML(when)}</dd>
+  `;
+
+  if (Array.isArray(ev.binds) && ev.binds.length) {
+    const wrap = document.getElementById("source-binds-wrap");
+    const list = document.getElementById("source-binds");
+    list.innerHTML = "";
+    for (const b of ev.binds) {
+      const det = document.createElement("details");
+      const sum = document.createElement("summary");
+      sum.textContent = b.name || "(unnamed bind)";
+      det.appendChild(sum);
+      const pre = document.createElement("pre");
+      pre.textContent = JSON.stringify(b.value, null, 2);
+      det.appendChild(pre);
+      list.appendChild(det);
+    }
+    wrap.classList.remove("hidden");
+  }
+
+  document.getElementById("source-json").textContent = JSON.stringify(ev, null, 2);
+}
+loadSource();
+
+const ppFieldsEl = document.getElementById("pp-fields");
+const ppConditionEl = document.getElementById("pp-condition");
+const ppCompileEl = document.getElementById("pp-compile");
+const ppResultEl = document.getElementById("pp-result");
+const ppNameEl = document.getElementById("pp-name");
+const ppYamlEl = document.getElementById("pp-yaml");
+const ppStatusEl = document.getElementById("pp-status");
+
+let ppSelection = null;       // null = "use defaults"; an array = explicit
+let ppListMatch = {};
+let ppLastResult = null;
+let ppFreeform = false;       // user edited the YAML — propose engine is bypassed
+let ppNameTouched = false;
+
+function escapeHTML(s) {
+  return String(s).replace(/[&<>"']/g, c => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  })[c]);
+}
+
+async function ppFetch() {
+  const body = { result: ppResultEl.value };
+  if (ppSelection !== null) body.include = ppSelection;
+  if (Object.keys(ppListMatch).length) body.list_match = ppListMatch;
+  if (ppNameTouched && ppNameEl.value) body.name = ppNameEl.value;
+  let r;
+  try {
+    const resp = await fetch(`/_api/traffic/${encodeURIComponent(ppEventID)}/propose-policy`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok) {
+      const txt = (await resp.text()).trim();
+      // 422 = engine refused (no api/action, or no resolved binds).
+      // Show a dedicated message in place of the form so the user
+      // doesn't see widgets they can't usefully interact with.
+      if (resp.status === 422) {
+        ppShowUnproposable(txt);
+      } else {
+        ppFieldsEl.textContent = `Error ${resp.status}: ${txt}`;
+      }
+      return;
+    }
+    r = await resp.json();
+  } catch (e) {
+    ppFieldsEl.textContent = "Network error: " + e.message;
+    return;
+  }
+  ppLastResult = r;
+  ppRenderFields(r.available_fields || []);
+  ppRenderPreview(r);
+  if (!ppNameTouched && r.policy && r.policy.name) ppNameEl.value = r.policy.name;
+  if (!ppFreeform && r.policy) ppYamlEl.value = ppPolicyToYAML(r.policy);
+}
+
+// ppShowUnproposable swaps the form for an explanatory message when
+// the engine won't render a policy. Two cases land here: a no_match
+// (the request didn't claim any registered API) and a recorded
+// request where every bind failed to resolve (rare but possible
+// when an action's bind expression hits a runtime error). Both are
+// dead-ends — the right next step is to go back to the traffic
+// viewer, not to keep poking at this form.
+function ppShowUnproposable(reason) {
+  document.querySelectorAll("fieldset, details, .actions").forEach(el => el.remove());
+  const box = document.createElement("div");
+  box.className = "compile compile-err";
+  box.style.padding = "1rem";
+  box.style.lineHeight = "1.6";
+  box.innerHTML = `<strong>This request can't be turned into a policy.</strong><br>` +
+    `${escapeHTML(reason)}<br><br>` +
+    `<a href="/_admin/traffic">Back to traffic viewer</a>`;
+  document.body.appendChild(box);
+}
+
+function ppRenderFields(fields) {
+  if (!fields.length) {
+    ppFieldsEl.innerHTML = '<p class="muted">No constrainable fields recorded for this request.</p>';
+    return;
+  }
+  ppFieldsEl.innerHTML = "";
+  for (const f of fields) {
+    const isList = f.type && f.type.startsWith("list");
+    const row = document.createElement("div");
+    row.className = "field-row";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = !!f.selected;
+    cb.id = "pp-f-" + cssEscape(f.path);
+    cb.addEventListener("change", () => {
+      if (ppSelection === null) {
+        ppSelection = (ppLastResult.available_fields || []).filter(x => x.selected).map(x => x.path);
+      }
+      if (cb.checked) {
+        if (!ppSelection.includes(f.path)) ppSelection.push(f.path);
+      } else {
+        ppSelection = ppSelection.filter(p => p !== f.path);
+      }
+      ppFetch();
+    });
+    const label = document.createElement("label");
+    label.htmlFor = cb.id;
+    label.innerHTML = `<code>${escapeHTML(f.path)}</code> <span class="preview">${escapeHTML(JSON.stringify(f.value))}</span>`;
+    label.style.cursor = "pointer";
+    row.appendChild(cb);
+    row.appendChild(label);
+    if (isList) {
+      const sel = document.createElement("select");
+      for (const opt of ["contains_all", "contains_any", "equals"]) {
+        const o = document.createElement("option");
+        o.value = opt;
+        o.textContent = opt;
+        if ((ppListMatch[f.path] || "contains_all") === opt) o.selected = true;
+        sel.appendChild(o);
+      }
+      sel.addEventListener("change", () => {
+        ppListMatch[f.path] = sel.value;
+        ppFetch();
+      });
+      row.appendChild(sel);
+    } else {
+      row.appendChild(document.createElement("span"));
+    }
+    ppFieldsEl.appendChild(row);
+  }
+}
+
+function ppRenderPreview(r) {
+  ppConditionEl.textContent = (r.policy && r.policy.condition) || "";
+  if (r.compile_ok) {
+    ppCompileEl.textContent = "Compiles cleanly against the live runtime.";
+    ppCompileEl.className = "compile compile-ok";
+  } else {
+    ppCompileEl.textContent = r.compile_error || "Does not compile.";
+    ppCompileEl.className = "compile compile-err";
+  }
+}
+
+function ppPolicyToYAML(p) {
+  const out = [];
+  out.push("api: " + (p.api || ""));
+  out.push("name: " + (p.name || ""));
+  ppEmitField(out, "action", p.action || "");
+  ppEmitField(out, "condition", p.condition || "");
+  out.push("result: " + (p.result || ""));
+  return out.join("\n") + "\n";
+}
+
+// ppEmitField writes a YAML key/value, picking the literal block
+// scalar `|` for any value that contains a newline. Block style
+// keeps a multi-line CEL condition readable in the YAML view; the
+// quoted fallback covers the small one-liner case where ppYamlScalar
+// already handled the punctuation rules.
+function ppEmitField(out, key, val) {
+  if (!val.includes("\n")) {
+    out.push(`${key}: ${ppYamlScalar(val)}`);
+    return;
+  }
+  out.push(`${key}: |`);
+  for (const line of val.split("\n")) out.push("  " + line);
+}
+
+function ppYamlScalar(s) {
+  if (s === "" || /[:#\n'"]|^\s|\s$/.test(s)) {
+    return "'" + s.replace(/'/g, "''") + "'";
+  }
+  return s;
+}
+
+ppResultEl.addEventListener("change", ppFetch);
+ppNameEl.addEventListener("input", () => {
+  ppNameTouched = true;
+  ppFetch();
+});
+ppYamlEl.addEventListener("input", () => { ppFreeform = true; });
+document.getElementById("pp-yaml-reset").addEventListener("click", () => {
+  ppFreeform = false;
+  if (ppLastResult && ppLastResult.policy) {
+    ppYamlEl.value = ppPolicyToYAML(ppLastResult.policy);
+  }
+});
+
+document.getElementById("pp-copy").addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(ppYamlEl.value);
+    ppStatusEl.textContent = "Copied YAML.";
+    ppStatusEl.className = "muted";
+  } catch (e) {
+    ppStatusEl.textContent = "Copy failed: " + e.message;
+    ppStatusEl.className = "muted err";
+  }
+});
+
+// Submit-mode state: "propose" (default — create a draft) or
+// "apply" (also approve immediately; admin only). The dropdown
+// menu changes the mode and the main-button label so a click on
+// the main button always runs the currently-selected action.
+let ppSubmitMode = "propose";
+const ppSubmitBtn = document.getElementById("pp-submit");
+const ppSubmitToggle = document.getElementById("pp-submit-toggle");
+const ppSubmitMenu = document.getElementById("pp-submit-menu");
+const ppApplyOption = document.getElementById("pp-apply-option");
+
+// /_api/whoami tells us if the caller carries the admin claim, and
+// thus whether the "Submit and approve" option should be selectable.
+// The endpoint is open: a 401 / network failure leaves the option
+// disabled, which is the conservative default.
+fetch("/_api/whoami", { credentials: "same-origin" })
+  .then(r => r.ok ? r.json() : null)
+  .then(d => { if (d && d.admin) ppApplyOption.disabled = false; })
+  .catch(() => {});
+
+ppSubmitToggle.addEventListener("click", (e) => {
+  e.stopPropagation();
+  const open = !ppSubmitMenu.hidden;
+  ppSubmitMenu.hidden = open;
+  ppSubmitToggle.setAttribute("aria-expanded", String(!open));
+});
+document.addEventListener("click", (e) => {
+  if (!ppSubmitMenu.hidden && !ppSubmitMenu.contains(e.target) && e.target !== ppSubmitToggle) {
+    ppSubmitMenu.hidden = true;
+    ppSubmitToggle.setAttribute("aria-expanded", "false");
+  }
+});
+for (const item of ppSubmitMenu.querySelectorAll("button[data-mode]")) {
+  item.addEventListener("click", () => {
+    if (item.disabled) return;
+    ppSubmitMode = item.dataset.mode;
+    ppSubmitBtn.textContent = item.querySelector("strong").textContent;
+    for (const other of ppSubmitMenu.querySelectorAll("button[data-mode]")) {
+      other.setAttribute("aria-checked", String(other === item));
+    }
+    ppSubmitMenu.hidden = true;
+    ppSubmitToggle.setAttribute("aria-expanded", "false");
+  });
+}
+
+ppSubmitBtn.addEventListener("click", async () => {
+  ppStatusEl.textContent = ppSubmitMode === "apply" ? "Submitting and approving…" : "Submitting…";
+  ppStatusEl.className = "muted";
+  try {
+    const resp = ppFreeform ? await ppSubmitFreeform() : await ppSubmitLowcode();
+    if (!resp.ok) {
+      const txt = (await resp.text()).trim();
+      ppStatusEl.textContent = `HTTP ${resp.status}: ${txt}`;
+      ppStatusEl.className = "muted err";
+      return;
+    }
+    if (ppSubmitMode === "apply") {
+      // Two-step: the proposal is now in `proposed` state, approve
+      // it to promote into the live policy set. Done as a follow-up
+      // call rather than collapsing into a single endpoint so the
+      // proposal record carries the full audit trail (created → approved).
+      const proposal = await resp.json().catch(() => null);
+      const proposalID = proposal && (proposal.proposal?.id || proposal.id);
+      if (!proposalID) {
+        ppStatusEl.textContent = "Submitted, but proposal id missing — open Proposals to approve manually.";
+        ppStatusEl.className = "muted err";
+        return;
+      }
+      const ar = await fetch(`/_api/proposals/${encodeURIComponent(proposalID)}/approve`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (!ar.ok) {
+        const txt = (await ar.text()).trim();
+        ppStatusEl.textContent = `Submitted but approve failed (HTTP ${ar.status}): ${txt}`;
+        ppStatusEl.className = "muted err";
+        return;
+      }
+      ppStatusEl.textContent = "Approved — policy is live. Opening Policies.";
+      setTimeout(() => { window.location.href = "/_admin/policies"; }, 350);
+      return;
+    }
+    ppStatusEl.textContent = "Submitted — opening review tab.";
+    setTimeout(() => { window.location.href = "/_admin/proposals"; }, 250);
+  } catch (e) {
+    ppStatusEl.textContent = "Network error: " + e.message;
+    ppStatusEl.className = "muted err";
+  }
+});
+
+async function ppSubmitLowcode() {
+  const body = { result: ppResultEl.value };
+  if (ppSelection !== null) body.include = ppSelection;
+  if (Object.keys(ppListMatch).length) body.list_match = ppListMatch;
+  if (ppNameTouched && ppNameEl.value) body.name = ppNameEl.value;
+  return fetch(`/_api/traffic/${encodeURIComponent(ppEventID)}/propose-policy?submit=true`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+async function ppSubmitFreeform() {
+  const policy = ppYamlToPolicy(ppYamlEl.value);
+  if (!policy) {
+    return new Response("Could not parse YAML — expected api/name/action/condition/result keys.", { status: 400 });
+  }
+  return fetch("/_api/proposals", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      policy,
+      origin: { kind: "from_request", request_id: ppEventID },
+      author: "",
+      rationale: "Generated from request " + ppEventID + " (free-form edit)",
+    }),
+  });
+}
+
+function ppYamlToPolicy(text) {
+  const fields = { api: "", name: "", action: "", condition: "", result: "" };
+  const lines = text.split(/\r?\n/);
+  let i = 0;
+  while (i < lines.length) {
+    const raw = lines[i].trimEnd();
+    i++;
+    if (!raw || raw.startsWith("#")) continue;
+    const m = raw.match(/^([a-z_]+):\s*(.*)$/);
+    if (!m) return null;
+    const [, key, rawVal] = m;
+    if (!(key in fields)) return null;
+    if (rawVal === "|" || rawVal === ">") {
+      // Block scalar: collect indented lines until the next top-
+      // level key or end-of-input. Two-space indent — matches what
+      // ppEmitField writes.
+      const block = [];
+      while (i < lines.length) {
+        const bl = lines[i];
+        if (bl === "" || bl.startsWith("  ")) {
+          block.push(bl.startsWith("  ") ? bl.slice(2) : "");
+          i++;
+        } else {
+          break;
+        }
+      }
+      while (block.length && block[block.length - 1] === "") block.pop();
+      fields[key] = rawVal === ">" ? block.join(" ") : block.join("\n");
+    } else {
+      fields[key] = ppYamlUnquote(rawVal);
+    }
+  }
+  if (!fields.api || !fields.name || !fields.action || !fields.condition || !fields.result) return null;
+  return fields;
+}
+
+function ppYamlUnquote(s) {
+  s = s.trim();
+  if (s.startsWith("'") && s.endsWith("'") && s.length >= 2) {
+    return s.slice(1, -1).replace(/''/g, "'");
+  }
+  if (s.startsWith('"') && s.endsWith('"') && s.length >= 2) {
+    try { return JSON.parse(s); } catch { /* fall through */ }
+  }
+  return s;
+}
+
+function cssEscape(s) {
+  if (window.CSS && CSS.escape) return CSS.escape(s);
+  return s.replace(/[^a-zA-Z0-9_-]/g, "_");
+}
+
+ppFetch();
+</script>
+{{- end -}}

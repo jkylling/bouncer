@@ -1,0 +1,41 @@
+# Lima config wrapping template://default (Ubuntu LTS) with the
+# tooling `make e2e` needs at the version pinned in go.mod.
+#
+# Used by `make e2e-vms-up` for the linux-{amd64,arm64} matrix
+# entries. Pass --arch=x86_64 / --arch=aarch64 on the limactl
+# command line; the CLI flag wins over anything inherited from
+# the base template.
+
+base:
+- template:default
+
+# Provisioning runs once on first boot, before the VM is marked
+# ready. The script is idempotent — re-running it (e.g. across
+# `limactl stop` / `limactl start`) is a no-op when Go is
+# already at the requested version. Keep GO_VERSION in sync
+# with the `go` directive in go-impl/go.mod.
+provision:
+- mode: system
+  script: |
+    #!/bin/sh
+    set -eux
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y --no-install-recommends make ca-certificates curl
+
+    GO_VERSION=1.25.0
+    case "$(uname -m)" in
+      x86_64)  GOARCH=amd64 ;;
+      aarch64) GOARCH=arm64 ;;
+      *) echo "unsupported arch: $(uname -m)" >&2; exit 1 ;;
+    esac
+    if ! /usr/local/go/bin/go version 2>/dev/null | grep -q "go${GO_VERSION} "; then
+      rm -rf /usr/local/go
+      curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${GOARCH}.tar.gz" \
+        | tar -C /usr/local -xz
+    fi
+    install -d /etc/profile.d
+    cat >/etc/profile.d/go.sh <<'EOF'
+    export PATH=/usr/local/go/bin:$PATH
+    EOF
+    chmod 0644 /etc/profile.d/go.sh
