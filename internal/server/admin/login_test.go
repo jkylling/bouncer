@@ -194,10 +194,18 @@ func TestLoginCookieAuthenticatesSubsequentRequest(t *testing.T) {
 	keys := mustKeys(t)
 	r := testRouter(keys)
 	MountLogin(r, keys, hashPwd(t, "hunter2"))
-	// A trivial admin-only endpoint we can probe.
-	r.Get("/_api/_probe", RequireAdmin(func(w http.ResponseWriter, _ *http.Request) {
+	// A trivial probe that 200s only when the auth middleware
+	// promoted the caller to admin via the login cookie. Mounted at
+	// `/probe` (outside the /_api / /_admin internal-policy surface)
+	// so the only gate it exercises is the cookie → Caller path the
+	// auth middleware itself owns.
+	r.Get("/probe", func(w http.ResponseWriter, req *http.Request) {
+		if !auth.CallerFromContext(req.Context()).IsAdmin() {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
-	}))
+	})
 	ts := httptest.NewServer(r)
 	t.Cleanup(ts.Close)
 
@@ -220,7 +228,7 @@ func TestLoginCookieAuthenticatesSubsequentRequest(t *testing.T) {
 
 	// Hit the admin probe with no Authorization header — the cookie
 	// in the jar should carry the JWT.
-	resp, err = client.Get(ts.URL + "/_api/_probe")
+	resp, err = client.Get(ts.URL + "/probe")
 	if err != nil {
 		t.Fatalf("probe: %v", err)
 	}

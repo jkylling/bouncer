@@ -1,7 +1,6 @@
 package admin
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -84,81 +83,6 @@ func TestAuthMiddlewareAnonymousOnBadJWT(t *testing.T) {
 	}
 }
 
-func TestRequireAuthenticated(t *testing.T) {
-	called := false
-	wrapped := RequireAuthenticated(func(_ http.ResponseWriter, _ *http.Request) { called = true })
-
-	// Anonymous: 401.
-	rec := httptest.NewRecorder()
-	wrapped(rec, httptest.NewRequest(http.MethodGet, "/x", nil))
-	if rec.Code != http.StatusUnauthorized {
-		t.Errorf("anonymous status = %d, want 401", rec.Code)
-	}
-	if called {
-		t.Error("anonymous reached the handler")
-	}
-	assertDenialJSON(t, rec.Result())
-
-	// Authenticated: passes through.
-	called = false
-	rec = httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/x", nil)
-	ctx := auth.WithCaller(req.Context(), auth.Caller{Subject: "a", Role: auth.RoleUser})
-	wrapped(rec, req.WithContext(ctx))
-	if !called {
-		t.Error("user did not reach the handler")
-	}
-}
-
-func TestRequireAdmin(t *testing.T) {
-	called := false
-	wrapped := RequireAdmin(func(_ http.ResponseWriter, _ *http.Request) { called = true })
-
-	// Anonymous: 401, not 403, so the caller knows to authenticate.
-	rec := httptest.NewRecorder()
-	wrapped(rec, httptest.NewRequest(http.MethodGet, "/x", nil))
-	if rec.Code != http.StatusUnauthorized {
-		t.Errorf("anonymous status = %d, want 401", rec.Code)
-	}
-	if called {
-		t.Error("anonymous reached admin handler")
-	}
-
-	// Non-admin user: 403.
-	rec = httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/x", nil)
-	ctx := auth.WithCaller(req.Context(), auth.Caller{Subject: "u", Role: auth.RoleUser})
-	wrapped(rec, req.WithContext(ctx))
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("user status = %d, want 403", rec.Code)
-	}
-	if called {
-		t.Error("user reached admin handler")
-	}
-
-	// Admin: passes through.
-	called = false
-	rec = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodGet, "/x", nil)
-	ctx = auth.WithCaller(req.Context(), auth.Caller{Subject: "a", Role: auth.RoleAdmin})
-	wrapped(rec, req.WithContext(ctx))
-	if !called {
-		t.Error("admin did not reach the handler")
-	}
-}
-
-// assertDenialJSON spot-checks that the response body is the
-// admin.WriteDenial shape — a JSON object with `next_steps`.
-func assertDenialJSON(t *testing.T, resp *http.Response) {
-	t.Helper()
-	if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
-		t.Errorf("Content-Type = %q, want application/json", ct)
-	}
-	var body map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if _, ok := body["next_steps"].(map[string]any); !ok {
-		t.Errorf("body missing next_steps: %+v", body)
-	}
-}
+// Per-route admin/auth gating moved out of this package — see
+// TestInternalPolicyMiddleware in internal_policy_test.go for the
+// equivalent end-to-end coverage against each embedded policy set.

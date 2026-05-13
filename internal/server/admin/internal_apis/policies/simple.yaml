@@ -1,0 +1,105 @@
+# simple.yaml — three-tier model, mirrors the pre-policy access
+# control:
+#   - open: anyone (anonymous + authenticated + admin)
+#   - authenticated: any verified JWT (user + admin)
+#   - admin: only callers whose JWT carries `admin: true`
+#
+# The internal-policy middleware sets principal.scopes based on the
+# verified Caller role:
+#   anonymous -> []
+#   user      -> ["user"]
+#   admin     -> ["admin", "user"]   # admin implies user
+#
+# Tier checks live in `principal:` because they only read principal
+# (no meta side calls), so they short-circuit before any per-action
+# work. `condition:` stays "true" since there's nothing further to
+# gate on.
+---
+api: bouncer-internal
+name: open-discovery
+description: Identity / discovery / docs / login UI are reachable without a JWT.
+action: |
+  action.name in [
+    "ui_login",
+    "login",
+    "logout",
+    "whoami",
+    "ca_download",
+    "docs_agent",
+    "docs_policies",
+    "docs_apis",
+    "apis_list",
+    "apis_readme",
+    "policies_capabilities",
+    "mcp",
+    "agents_register",
+  ]
+condition: "true"
+result: permit
+---
+api: bouncer-internal
+name: authenticated-read
+description: Authenticated callers may read the policy / proposal / traffic-propose surface and the UI shells.
+principal: '"user" in principal.scopes'
+action: |
+  action.name in [
+    "ui_tokens",
+    "ui_policies",
+    "ui_proposals",
+    "ui_traffic",
+    "ui_traffic_propose",
+    "ui_settings",
+    "ui_services",
+    "ui_onboarding",
+    "install_wrapper",
+    "install_ca_pem",
+    "policies_list",
+    "policies_get",
+    "policies_dryrun",
+    "proposals_list",
+    "proposals_create",
+    "proposals_get",
+    "proposals_update",
+    "proposals_delete",
+    "propose_policy",
+  ]
+condition: "true"
+result: permit
+---
+api: bouncer-internal
+name: admin-only
+description: Token issuance, policy CRUD writes, proposal approval, and the traffic viewer are admin-only.
+principal: '"admin" in principal.scopes'
+action: |
+  action.name in [
+    "tokens_issue",
+    "tokens_issue_refresh",
+    "policies_create",
+    "policies_replace",
+    "policies_delete",
+    "proposals_approve",
+    "proposals_reject",
+    "traffic_list",
+    "traffic_get",
+    "traffic_subjects",
+    "connections_providers",
+    "connections_list",
+    "connections_put",
+    "connections_delete",
+    "recipes_list",
+    "recipes_preview",
+    "recipes_apply",
+    "agents_list",
+    "agents_seen",
+    "agents_get",
+    "agents_approve",
+    "agents_reject",
+    "services_list",
+    "services_get",
+    "services_connect",
+    "services_policies_list",
+    "services_policy_apply",
+    "services_policies_apply_all",
+  ]
+condition: "true"
+result: permit

@@ -56,14 +56,3 @@ func authedGet(t *testing.T, url, bearer string) (*http.Response, error) {
 	req.Header.Set("Authorization", bearer)
 	return http.DefaultClient.Do(req)
 }
-
-// authedRequest is the generic variant for non-GET methods.
-func authedRequest(t *testing.T, method, url, bearer string) *http.Request {
-	t.Helper()
-	req, err := http.NewRequest(method, url, nil)
-	if err != nil {
-		t.Fatalf("new req: %v", err)
-	}
-	req.Header.Set("Authorization", bearer)
-	return req
-}

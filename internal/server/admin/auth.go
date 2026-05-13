@@ -2,7 +2,6 @@ package admin
 
 import (
 	"net/http"
-	"net/url"
 	"strings"
 
 	"github.com/jkylling/bouncer/internal/auth"
@@ -19,10 +18,9 @@ const AdminCookieName = "bouncer_admin"
 // AuthMiddleware verifies an inbound JWT (Authorization header
 // preferred, then cookie) and stashes the resulting auth.Caller in
 // the request context. It does NOT reject — open routes serve an
-// anonymous Caller without complaint, and the per-route helpers
-// (RequireAdmin / RequireAuthenticated) gate the rest. The split
-// keeps the open/auth/admin tier visible at the route level rather
-// than buried in middleware logic.
+// anonymous Caller without complaint, and the
+// InternalPolicyMiddleware running after this middleware decides
+// per-route whether anonymous / user / admin callers are permitted.
 //
 // keys is required; the middleware is a no-op (anonymous Caller)
 // when keys is nil — useful in tests that only exercise open
@@ -72,66 +70,4 @@ func roleFor(admin bool) auth.Role {
 		return auth.RoleAdmin
 	}
 	return auth.RoleUser
-}
-
-// RequireAuthenticated wraps next with a guard that 401s anonymous
-// callers. The denial body still carries next_steps so an unauthed
-// agent gets the discovery surface for free.
-func RequireAuthenticated(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		c := auth.CallerFromContext(r.Context())
-		if !c.IsAuthenticated() {
-			WriteDenial(w, http.StatusUnauthorized,
-				"this endpoint requires a valid Bearer JWT — see next_steps.docs for how to issue one")
-			return
-		}
-		next(w, r)
-	}
-}
-
-// RequireAdmin wraps next with a guard that 403s callers who lack
-// the admin role. Anonymous callers get 401 (so they know to
-// authenticate) rather than 403 (which would invite probing for a
-// password). Authenticated-but-non-admin callers get 403.
-func RequireAdmin(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		c := auth.CallerFromContext(r.Context())
-		switch c.Role {
-		case auth.RoleAdmin:
-			next(w, r)
-		case auth.RoleAnonymous:
-			WriteDenial(w, http.StatusUnauthorized,
-				"this endpoint requires an admin Bearer JWT — see next_steps.docs for how to obtain one")
-		default:
-			WriteDenial(w, http.StatusForbidden,
-				"this endpoint requires the admin role — your JWT does not carry the `admin: true` claim")
-		}
-	}
-}
-
-// RedirectAnonymousToLogin wraps an HTML-shell handler with a
-// browser-friendly login redirect: anonymous callers get a 303 to
-// the login page with `?next=<original-path>` so they bounce back
-// after signing in. Authenticated callers (admin or otherwise) pass
-// through. Use this on the UI shell handlers — the JSON API guards
-// (RequireAdmin / RequireAuthenticated) keep returning 401/403 for
-// machine clients without disturbing this redirect for browsers.
-func RedirectAnonymousToLogin(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		c := auth.CallerFromContext(r.Context())
-		if c.IsAuthenticated() {
-			next(w, r)
-			return
-		}
-		// RequestURI carries the path + query as the browser sent
-		// it; URL.Path alone would lose any query the user had
-		// open. encoded via url.QueryEscape so a stray `&` doesn't
-		// land in the wrong place.
-		nextRaw := r.URL.Path
-		if r.URL.RawQuery != "" {
-			nextRaw += "?" + r.URL.RawQuery
-		}
-		dest := LoginUIPath + "?next=" + url.QueryEscape(nextRaw)
-		http.Redirect(w, r, dest, http.StatusSeeOther)
-	}
 }

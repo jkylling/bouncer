@@ -1,0 +1,86 @@
+# production.yaml — lock everything down to admin, with a narrow
+# exception for the login flow (anyone has to be able to obtain an
+# admin JWT before they can do anything else).
+#
+# Use case: a production deployment where the only legitimate caller
+# of the control plane is an operator who has authenticated against
+# the admin password.
+---
+api: bouncer-internal
+name: production-login
+description: The login flow itself must be reachable without a JWT.
+action: |
+  action.name in [
+    "ui_login",
+    "login",
+    "logout",
+    "policies_capabilities",
+    "agents_register",
+  ]
+condition: "true"
+result: permit
+---
+api: bouncer-internal
+name: production-admin
+description: Every other internal endpoint requires admin.
+principal: '"admin" in principal.scopes'
+action: |
+  action.name in [
+    "ui_tokens",
+    "ui_policies",
+    "ui_proposals",
+    "ui_traffic",
+    "ui_traffic_propose",
+    "ui_settings",
+    "ui_services",
+    "ui_onboarding",
+    "whoami",
+    "ca_download",
+    "install_wrapper",
+    "install_ca_pem",
+    "docs_agent",
+    "docs_policies",
+    "docs_apis",
+    "apis_list",
+    "apis_readme",
+    "tokens_issue",
+    "tokens_issue_refresh",
+    "policies_list",
+    "policies_get",
+    "policies_dryrun",
+    "policies_create",
+    "policies_replace",
+    "policies_delete",
+    "proposals_list",
+    "proposals_create",
+    "proposals_get",
+    "proposals_update",
+    "proposals_delete",
+    "proposals_approve",
+    "proposals_reject",
+    "propose_policy",
+    "traffic_list",
+    "traffic_get",
+    "traffic_subjects",
+    "mcp",
+    "connections_providers",
+    "connections_list",
+    "connections_put",
+    "connections_delete",
+    "recipes_list",
+    "recipes_preview",
+    "recipes_apply",
+    "agents_list",
+    "agents_seen",
+    "agents_get",
+    "agents_approve",
+    "agents_reject",
+    "services_list",
+    "services_get",
+    "services_connect",
+    "services_policies_list",
+    "services_policy_apply",
+    "services_policies_apply_all",
+  ]
+condition: "true"
+result: permit

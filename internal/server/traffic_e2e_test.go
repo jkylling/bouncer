@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/jkylling/bouncer/internal/auth"
-	"github.com/jkylling/bouncer/internal/control/store"
 	"github.com/jkylling/bouncer/internal/control/traffic"
 	"github.com/jkylling/bouncer/internal/server/admin"
 )
@@ -40,18 +39,20 @@ func TestTrafficEndToEndCaptureAndQuery(t *testing.T) {
 
 	rt := loadGmailRuntime(t, upstream.URL)
 	keys := mustKeys(t)
-	srv := NewServer(rt, keys, upstream.Client(), gmailFactory, 0)
 
-	s, err := traffic.Open(store.Memory(), traffic.Options{})
-	if err != nil {
-		t.Fatalf("traffic.Open: %v", err)
-	}
+	s := traffic.NewMemoryStore(traffic.Options{})
 	defer s.Close()
 	rec := traffic.NewAsyncRecorder(s, traffic.RecorderOptions{})
 	defer rec.Close()
 
-	srv.SetRecorder(rec)
-	srv.SetTrafficStore(s)
+	srv := NewServer(Dependencies{
+		Runtime:      rt,
+		Keys:         keys,
+		HTTPClient:   upstream.Client(),
+		APIFactory:   gmailFactory,
+		Recorder:     rec,
+		TrafficStore: s,
+	})
 
 	proxy := httptest.NewServer(srv.Router())
 	defer proxy.Close()
@@ -93,7 +94,7 @@ func TestTrafficEndToEndCaptureAndQuery(t *testing.T) {
 		t.Fatalf("listed %d rows, want 1", len(listed.Rows))
 	}
 	row := listed.Rows[0]
-	if row.API != "gmail" || row.Decision != traffic.DecisionPermit {
+	if row.API != "google.gmail" || row.Decision != traffic.DecisionPermit {
 		t.Errorf("row = %+v, want gmail/permit", row)
 	}
 	if row.Subject != "user-1" {
@@ -129,7 +130,7 @@ func TestTrafficEndToEndCaptureAndQuery(t *testing.T) {
 	for _, b := range ev.Binds {
 		bindNames[b.Name] = true
 	}
-	for _, want := range []string{"gmail.message", "gmail.mailbox"} {
+	for _, want := range []string{"google.gmail.message", "google.gmail.mailbox"} {
 		if !bindNames[want] {
 			t.Errorf("missing bind %q in %v", want, bindNames)
 		}
@@ -153,26 +154,6 @@ func TestTrafficEndToEndCaptureAndQuery(t *testing.T) {
 			t.Errorf("missing meta fetch for %q", path)
 		}
 	}
-
-	// Pin it.
-	pinReq, _ := http.NewRequest("PUT", proxy.URL+"/_api/traffic/"+row.ID.String()+"/pin", nil)
-	pinReq.Header.Set("Authorization", adminBearer(t, keys))
-	pinResp, err := http.DefaultClient.Do(pinReq)
-	if err != nil {
-		t.Fatalf("pin: %v", err)
-	}
-	pinResp.Body.Close()
-	if pinResp.StatusCode != http.StatusNoContent {
-		t.Errorf("pin status = %d, want 204", pinResp.StatusCode)
-	}
-
-	pinned, err := s.Get(context.Background(), row.ID)
-	if err != nil {
-		t.Fatalf("post-pin Get: %v", err)
-	}
-	if !pinned.Pinned {
-		t.Error("Pinned = false after PUT pin")
-	}
 }
 
 // TestTrafficRoutesUnmountedWithoutStore is a regression guard: when
@@ -181,7 +162,7 @@ func TestTrafficEndToEndCaptureAndQuery(t *testing.T) {
 func TestTrafficRoutesUnmountedWithoutStore(t *testing.T) {
 	rt := loadGmailRuntime(t, "")
 	keys := mustKeys(t)
-	srv := NewServer(rt, keys, nil, gmailFactory, 0)
+	srv := NewServer(Dependencies{Runtime: rt, Keys: keys, APIFactory: gmailFactory})
 	// Deliberately leave SetTrafficStore unset.
 	proxy := httptest.NewServer(srv.Router())
 	defer proxy.Close()
@@ -211,15 +192,17 @@ func TestTrafficCaptureLatency(t *testing.T) {
 
 	rt := loadGmailRuntime(t, upstream.URL)
 	keys := mustKeys(t)
-	srv := NewServer(rt, keys, upstream.Client(), gmailFactory, 0)
 
-	s, err := traffic.Open(store.Memory(), traffic.Options{})
-	if err != nil {
-		t.Fatalf("traffic.Open: %v", err)
-	}
+	s := traffic.NewMemoryStore(traffic.Options{})
 	defer s.Close()
 	rec := traffic.NewAsyncRecorder(s, traffic.RecorderOptions{})
-	srv.SetRecorder(rec)
+	srv := NewServer(Dependencies{
+		Runtime:    rt,
+		Keys:       keys,
+		HTTPClient: upstream.Client(),
+		APIFactory: gmailFactory,
+		Recorder:   rec,
+	})
 
 	proxy := httptest.NewServer(srv.Router())
 	defer proxy.Close()
@@ -247,15 +230,16 @@ func TestTrafficCaptureLatency(t *testing.T) {
 func TestTrafficSkipsNoMatchRequests(t *testing.T) {
 	rt := loadGmailRuntime(t, "")
 	keys := mustKeys(t)
-	srv := NewServer(rt, keys, nil, gmailFactory, 0)
 
-	s, err := traffic.Open(store.Memory(), traffic.Options{})
-	if err != nil {
-		t.Fatalf("traffic.Open: %v", err)
-	}
+	s := traffic.NewMemoryStore(traffic.Options{})
 	defer s.Close()
 	rec := traffic.NewAsyncRecorder(s, traffic.RecorderOptions{})
-	srv.SetRecorder(rec)
+	srv := NewServer(Dependencies{
+		Runtime:    rt,
+		Keys:       keys,
+		APIFactory: gmailFactory,
+		Recorder:   rec,
+	})
 
 	proxy := httptest.NewServer(srv.Router())
 	defer proxy.Close()
@@ -290,7 +274,7 @@ func TestTrafficSkipsNoMatchRequests(t *testing.T) {
 func TestFaviconBypassesAuth(t *testing.T) {
 	rt := loadGmailRuntime(t, "")
 	keys := mustKeys(t)
-	srv := NewServer(rt, keys, nil, gmailFactory, 0)
+	srv := NewServer(Dependencies{Runtime: rt, Keys: keys, APIFactory: gmailFactory})
 	proxy := httptest.NewServer(srv.Router())
 	defer proxy.Close()
 

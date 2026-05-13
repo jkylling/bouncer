@@ -52,7 +52,7 @@ type notOAuthBody struct {
 	AuthMethod     string `json:"auth_method"`
 	BearerConfig   string `json:"bearer_config"`
 	IssueTokenHint string `json:"issue_token_hint"`
-	Docs           string `json:"docs"`
+	Docs           string `json:"google.docs"`
 }
 
 func handlerNotOAuth() http.HandlerFunc {

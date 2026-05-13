@@ -2,7 +2,6 @@ package mcp
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -14,7 +13,6 @@ import (
 
 	"github.com/jkylling/bouncer/internal/auth"
 	"github.com/jkylling/bouncer/internal/control/policies"
-	"github.com/jkylling/bouncer/internal/control/proposals"
 	"github.com/jkylling/bouncer/internal/runtime"
 	"github.com/jkylling/bouncer/internal/runtime/models"
 )
@@ -23,7 +21,7 @@ import (
 // auth middleware so admin-tier checks exercise the same path as
 // production. Returns a pre-built ServerKeys so callers can issue
 // admin/anonymous bearers as needed.
-func testServer(t *testing.T) (*httptest.Server, *auth.ServerKeys, *runtime.Runtime, *policies.Service, *proposals.Service) {
+func testServer(t *testing.T) (*httptest.Server, *auth.ServerKeys, *runtime.Runtime, *policies.Service) {
 	t.Helper()
 	keys, err := auth.FromSecret(auth.DevStubSecret())
 	if err != nil {
@@ -43,14 +41,12 @@ func testServer(t *testing.T) (*httptest.Server, *auth.ServerKeys, *runtime.Runt
 		t.Fatalf("build runtime: %v", err)
 	}
 	policySvc := policies.New(rt, policies.NewMemoryStore())
-	proposalSvc := proposals.New(proposals.NewMemoryStore(), policySvc)
 
 	r := chi.NewRouter()
 	r.Use(adminAuthMiddleware(keys))
 	New(Deps{
-		Runtime:         rt,
-		PolicyService:   policySvc,
-		ProposalService: proposalSvc,
+		Runtime:       rt,
+		PolicyService: policySvc,
 		Docs: Docs{
 			AgentGuide:      []byte("# agent\n"),
 			PolicyAuthoring: []byte("# policies\n"),
@@ -59,7 +55,7 @@ func testServer(t *testing.T) (*httptest.Server, *auth.ServerKeys, *runtime.Runt
 	}).Mount(r)
 	ts := httptest.NewServer(r)
 	t.Cleanup(ts.Close)
-	return ts, keys, rt, policySvc, proposalSvc
+	return ts, keys, rt, policySvc
 }
 
 // adminAuthMiddleware is a minimal stand-in for the parent admin
@@ -127,7 +123,7 @@ func rpc(t *testing.T, base string, bearer string, method string, params any) Re
 }
 
 func TestInitializeReturnsCapabilities(t *testing.T) {
-	ts, keys, _, _, _ := testServer(t)
+	ts, keys, _, _ := testServer(t)
 	resp := rpc(t, ts.URL, issueAccess(t, keys, false), "initialize", map[string]any{
 		"protocolVersion": "2025-03-26",
 		"clientInfo":      map[string]string{"name": "ci", "version": "0"},
@@ -142,28 +138,45 @@ func TestInitializeReturnsCapabilities(t *testing.T) {
 	if !strings.Contains(string(raw), `"name":"`+ServerName+`"`) {
 		t.Errorf("result lacks server name: %s", raw)
 	}
+	if !strings.Contains(string(raw), `"title":"`+ServerTitle+`"`) {
+		t.Errorf("result lacks server title: %s", raw)
+	}
 	if !strings.Contains(string(raw), `"tools":{}`) {
 		t.Errorf("missing tools capability: %s", raw)
 	}
 	if !strings.Contains(string(raw), `"resources":{}`) {
 		t.Errorf("missing resources capability: %s", raw)
 	}
+	if !strings.Contains(string(raw), `"instructions":"`) {
+		t.Errorf("result lacks instructions: %s", raw)
+	}
+	// Sanity-check the key bits agents need to know.
+	for _, needle := range []string{"bouncer-wrap", "setup", "credentials_not_staged"} {
+		if !strings.Contains(string(raw), needle) {
+			t.Errorf("instructions missing %q: %s", needle, raw)
+		}
+	}
 }
 
 func TestToolsListEnumeratesEveryRegisteredTool(t *testing.T) {
-	ts, keys, _, _, _ := testServer(t)
+	ts, keys, _, _ := testServer(t)
 	resp := rpc(t, ts.URL, issueAccess(t, keys, false), "tools/list", nil)
 	if resp.Error != nil {
 		t.Fatalf("error: %+v", resp.Error)
 	}
 	raw, _ := json.Marshal(resp.Result)
 	for _, name := range []string{
-		"list_apis", "list_policies", "get_policy", "dry_run_policy",
-		"list_proposals", "get_proposal",
-		"propose_policy", "approve_proposal", "reject_proposal",
+		"list_apis", "list_policies", "get_policy", "dry_run_policy", "propose_policy",
 	} {
 		if !strings.Contains(string(raw), `"`+name+`"`) {
 			t.Errorf("tools/list missing %q: %s", name, raw)
+		}
+	}
+	// Traffic tools are exposed to non-admin (with a redacted view
+	// from get_traffic_event); confirm they're listed.
+	for _, name := range []string{"list_traffic", "get_traffic_event"} {
+		if !strings.Contains(string(raw), `"`+name+`"`) {
+			t.Errorf("tools/list missing traffic tool %q: %s", name, raw)
 		}
 	}
 }
@@ -204,7 +217,7 @@ func toolText(t *testing.T, resp Response) map[string]any {
 }
 
 func TestToolsCallListAPIs(t *testing.T) {
-	ts, keys, _, _, _ := testServer(t)
+	ts, keys, _, _ := testServer(t)
 	resp := rpc(t, ts.URL, issueAccess(t, keys, false), "tools/call", map[string]any{
 		"name": "list_apis",
 	})
@@ -219,66 +232,8 @@ func TestToolsCallListAPIs(t *testing.T) {
 	}
 }
 
-func TestApproveProposalRequiresAdmin(t *testing.T) {
-	ts, keys, _, _, proposalSvc := testServer(t)
-	created, err := proposalSvc.Create(context.Background(), proposals.CreateInput{
-		Policy: models.Policy{
-			API: "stub", Name: "p1",
-			Action: "true", Condition: "true", Result: models.Permit,
-		},
-		Author: "ci",
-	})
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
-
-	// Non-admin → -32600 invalid request with a clear message.
-	respUser := rpc(t, ts.URL, issueAccess(t, keys, false), "tools/call", map[string]any{
-		"name":      "approve_proposal",
-		"arguments": map[string]any{"id": string(created.ID)},
-	})
-	if respUser.Error == nil || !strings.Contains(respUser.Error.Message, "admin role") {
-		t.Errorf("user approve: error = %+v, want admin-role message", respUser.Error)
-	}
-
-	// Admin succeeds.
-	respAdmin := rpc(t, ts.URL, issueAccess(t, keys, true), "tools/call", map[string]any{
-		"name":      "approve_proposal",
-		"arguments": map[string]any{"id": string(created.ID)},
-	})
-	if respAdmin.Error != nil {
-		t.Fatalf("admin approve: %+v", respAdmin.Error)
-	}
-}
-
-func TestProposePolicyAttachesAuthorAndDescription(t *testing.T) {
-	ts, keys, _, _, _ := testServer(t)
-	resp := rpc(t, ts.URL, issueAccess(t, keys, false), "tools/call", map[string]any{
-		"name": "propose_policy",
-		"arguments": map[string]any{
-			"policy": map[string]any{
-				"api":         "stub",
-				"name":        "p1",
-				"description": "From MCP integration test.",
-				"action":      "true",
-				"condition":   "true",
-				"result":      "permit",
-			},
-			"rationale": "MCP smoke test.",
-		},
-	})
-	got := toolText(t, resp)
-	if got["author"] != "ci" {
-		t.Errorf("author = %v, want ci", got["author"])
-	}
-	policy, _ := got["policy"].(map[string]any)
-	if policy["description"] != "From MCP integration test." {
-		t.Errorf("policy.description = %v, want preserved", policy["description"])
-	}
-}
-
 func TestResourcesListIncludesEveryURI(t *testing.T) {
-	ts, keys, _, _, _ := testServer(t)
+	ts, keys, _, _ := testServer(t)
 	resp := rpc(t, ts.URL, issueAccess(t, keys, false), "resources/list", nil)
 	if resp.Error != nil {
 		t.Fatalf("error: %+v", resp.Error)
@@ -292,7 +247,7 @@ func TestResourcesListIncludesEveryURI(t *testing.T) {
 }
 
 func TestResourcesReadAgentGuide(t *testing.T) {
-	ts, keys, _, _, _ := testServer(t)
+	ts, keys, _, _ := testServer(t)
 	resp := rpc(t, ts.URL, issueAccess(t, keys, false), "resources/read", map[string]any{
 		"uri": URIDocsAgent,
 	})
@@ -362,7 +317,7 @@ func bundleTestServer(t *testing.T, readmes map[string][]byte) (*httptest.Server
 }
 
 func TestUnknownMethodReturnsMethodNotFound(t *testing.T) {
-	ts, keys, _, _, _ := testServer(t)
+	ts, keys, _, _ := testServer(t)
 	resp := rpc(t, ts.URL, issueAccess(t, keys, false), "no_such_method", nil)
 	if resp.Error == nil || resp.Error.Code != codeMethodNotFound {
 		t.Errorf("error = %+v, want method-not-found", resp.Error)
@@ -370,7 +325,7 @@ func TestUnknownMethodReturnsMethodNotFound(t *testing.T) {
 }
 
 func TestMalformedJSONReturnsParseError(t *testing.T) {
-	ts, _, _, _, _ := testServer(t)
+	ts, _, _, _ := testServer(t)
 	req, _ := http.NewRequest(http.MethodPost, ts.URL+Path, bytes.NewReader([]byte("{not-json")))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)

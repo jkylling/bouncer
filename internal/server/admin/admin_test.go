@@ -131,11 +131,8 @@ func TestIssueTokenValidation(t *testing.T) {
 			req:  tokens.Spec{Subject: "s", AccessToken: "x"},
 			want: "ttl_seconds must be positive",
 		},
-		{
-			name: "missing_access_token",
-			req:  tokens.Spec{Subject: "s", TTLSeconds: 60},
-			want: "at least one of access_token or headers is required",
-		},
+		// Zero-credential JWTs are explicitly allowed — they're the
+		// shape an MCP-only client uses (no upstream forward).
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -330,47 +327,44 @@ func TestIssueRefreshRequiresAdmin(t *testing.T) {
 	}
 }
 
-// TestIndexServesHTML pins that GET /_admin and /_admin/ both return
-// the embedded UI with an HTML content type and that the page
-// contains the path it posts to. If the embed declaration breaks
-// or the page is rewired to a different endpoint, the assertion
-// fails so the regression is visible.
-func TestIndexServesHTML(t *testing.T) {
+// TestIndexRedirectsToAgents pins that GET /_admin and /_admin/ both
+// redirect to /_admin/agents (the default dashboard). The auth-bearing
+// client will follow the redirect.
+func TestIndexRedirectsToAgents(t *testing.T) {
 	ts, keys := testServer(t)
 	bearer := adminBearer(t, keys)
 	for _, path := range []string{UIPath, UIPath + "/"} {
 		t.Run(path, func(t *testing.T) {
+			// Disable auto-follow so we can see the redirect
+			client := &http.Client{
+				CheckRedirect: func(*http.Request, []*http.Request) error {
+					return http.ErrUseLastResponse
+				},
+			}
 			req, _ := http.NewRequest(http.MethodGet, ts.URL+path, nil)
 			req.Header.Set("Authorization", bearer)
-			resp, err := http.DefaultClient.Do(req)
+			resp, err := client.Do(req)
 			if err != nil {
 				t.Fatalf("get %s: %v", path, err)
 			}
 			defer resp.Body.Close()
-			if resp.StatusCode != http.StatusOK {
-				t.Fatalf("status = %d, want 200", resp.StatusCode)
+			if resp.StatusCode != http.StatusSeeOther {
+				t.Fatalf("status = %d, want 303 redirect", resp.StatusCode)
 			}
-			if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
-				t.Errorf("Content-Type = %q, want text/html prefix", ct)
-			}
-			body, _ := io.ReadAll(resp.Body)
-			if !strings.Contains(string(body), IssuePath) {
-				t.Errorf("UI does not reference %q — form will post to the wrong URL", IssuePath)
-			}
-			if !strings.Contains(string(body), IssueRefreshPath) {
-				t.Errorf("UI does not reference %q — refresh form will post to the wrong URL", IssueRefreshPath)
+			loc := resp.Header.Get("Location")
+			if !strings.Contains(loc, "/_admin/agents") {
+				t.Errorf("Location = %q, want redirect to /_admin/agents", loc)
 			}
 		})
 	}
 }
 
-// TestIndexAnonymousRedirectsToLogin pins the browser-friendly
-// redirect: an unauthenticated GET on /_admin gets a 303 to the
-// login page rather than the bare HTML shell. Otherwise an anonymous
-// user lands on a form whose every fetch will 401.
+// TestIndexAnonymousRedirectsToLogin pins that an unauthenticated GET
+// on /_admin redirects to login (the auth middleware catches the
+// unauthenticated request before the page handler can redirect).
 func TestIndexAnonymousRedirectsToLogin(t *testing.T) {
 	ts, _ := testServer(t)
-	// Disable redirect-following so the test sees the 303.
+	// Disable redirect-following to see the first redirect
 	client := &http.Client{
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
@@ -387,8 +381,5 @@ func TestIndexAnonymousRedirectsToLogin(t *testing.T) {
 	loc := resp.Header.Get("Location")
 	if !strings.HasPrefix(loc, LoginUIPath) {
 		t.Errorf("Location = %q, want prefix %q", loc, LoginUIPath)
-	}
-	if !strings.Contains(loc, "next=") {
-		t.Errorf("Location = %q missing ?next=", loc)
 	}
 }

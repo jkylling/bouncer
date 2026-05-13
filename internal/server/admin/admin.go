@@ -38,24 +38,29 @@ const (
 // is generous.
 const maxIssueBodyBytes int64 = 1 << 16
 
-// MountOn attaches the admin UI shell and the issue endpoints. Other
-// admin surfaces (login, whoami, apis, docs, traffic, policies,
-// proposals, propose) have their own Mount* entry points.
+// MountOn attaches the issue endpoints. Other admin surfaces
+// (login, whoami, apis, docs, traffic, policies) have their own Mount*
+// entry points. Redirects /_admin/ to /_admin/agents as the default
+// dashboard entry point.
 //
 // Issuing an arbitrary access or refresh JWT is a
-// privilege-escalation primitive, so IssuePath / IssueRefreshPath are
-// admin-only — bootstrap is via `cmd/issue-token --admin`.
+// privilege-escalation primitive; the admin gate now lives in the
+// embedded internal-policy set rather than per-route wrappers, so
+// every Mount* site is plain `r.Method(path, handler)` and gating
+// happens uniformly via InternalPolicyMiddleware.
 func MountOn(r chi.Router, keys *auth.ServerKeys) {
-	mountUIPage(r, UIPath, "tokens")
-	r.Post(IssuePath, RequireAdmin(issueHandler(keys)))
-	r.Post(IssueRefreshPath, RequireAdmin(issueRefreshHandler(keys)))
+	r.Get(UIPath, http.RedirectHandler("/_admin/agents", http.StatusSeeOther).ServeHTTP)
+	r.Get(UIPath+"/", http.RedirectHandler("/_admin/agents", http.StatusSeeOther).ServeHTTP)
+	r.Post(IssuePath, issueHandler(keys))
+	r.Post(IssueRefreshPath, issueRefreshHandler(keys))
 }
 
 // issueHandler returns the handler for POST /_api/issue/tokens. It
 // decodes a `tokens.Spec` (the same struct cmd/issue-token reads
 // from --credentials-file, so a payload from one source replays
-// cleanly through the other), validates, and signs. RequireAdmin
-// gating is applied by MountOn.
+// cleanly through the other), validates, and signs. Admin gating
+// is enforced upstream by InternalPolicyMiddleware against the
+// `tokens_issue` action.
 func issueHandler(keys *auth.ServerKeys) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var spec tokens.Spec
