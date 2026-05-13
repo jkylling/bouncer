@@ -1,0 +1,507 @@
+{{- /*
+policies_list.tmpl.html — shared partial for the policies list /
+edit UI.
+
+Used by both /_admin/policies (full-page) and the Policies tab on
+/_admin/services/{slug}/ (scoped to that service's API set). The
+partial exports three blocks (style, body, script) and one JS
+function `setupPoliciesList(scope)`:
+
+  scope == null     → global mode. Operator picks the API filter
+                      from a dropdown populated from observed
+                      policies. New-policy form defaults to a blank
+                      API field.
+
+  scope.apis        → array of API names; filter to these on every
+                      fetch (repeated ?api=foo&api=bar). The
+                      api-filter dropdown is hidden; new-policy
+                      defaults to scope.apis[0].
+
+Both pages parse this file via templates.go's ParseFS so the
+{{define}} blocks are visible at render time.
+*/ -}}
+
+
+{{- define "policies_list_body" -}}
+<div data-policies-list>
+  <div class="pl-banner pl-readonly-banner hidden">
+    <strong>Read-only mode.</strong> The policy store was opened with <code>--policies-readonly</code>; create / edit / delete are disabled. Restart without the flag to enable writes.
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <div class="pl-toolbar">
+        <label class="pl-api-filter-wrap" style="margin: 0;">API
+          <div class="multiselect-wrapper">
+            <button type="button" class="multiselect-toggle pl-f-api-toggle">
+              <span class="multiselect-toggle-label">all</span>
+              <span style="font-size: 10px;">▼</span>
+            </button>
+            <div class="multiselect-dropdown pl-f-api-dropdown"></div>
+            <select class="pl-api-filter" style="display: none;" multiple></select>
+          </div>
+        </label>
+        <span class="muted pl-list-status"></span>
+      </div>
+      <div style="display: flex; gap: 6px;">
+        <button type="button" class="btn btn-secondary btn-sm pl-refresh">Refresh</button>
+        <button type="button" class="btn btn-primary btn-sm pl-new-policy">+ New policy</button>
+      </div>
+    </div>
+
+    <div class="pl-empty hidden">No policies match the current filter.</div>
+    <div class="pl-table-wrap pl-table-wrap-bare">
+      <table class="pl-table pl-list hidden">
+        <thead>
+          <tr><th>API</th><th>Name</th><th>Result</th><th class="col-action">Action</th><th>Condition</th></tr>
+        </thead>
+        <tbody class="pl-list-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Detail row lives detached when no policy is selected, then is
+       inserted directly after the selected list row. -->
+  <table style="display: none;"><tbody class="pl-detail-host">
+    <tr class="pl-detail-row">
+      <td colspan="5">
+        <div class="pl-detail-inner">
+          <div class="pl-detail-head">
+            <strong class="pl-detail-title">Selected policy</strong>
+            <span class="muted pl-detail-meta"></span>
+          </div>
+          <div class="pl-detail-actions">
+            <button type="button" class="pl-save" disabled>Save</button>
+            <button type="button" class="pl-delete danger" disabled>Delete</button>
+            <span class="muted pl-action-status"></span>
+          </div>
+          <div class="pl-compile"></div>
+          <label>API <input class="pl-f-api" autocomplete="off" placeholder="gmail"></label>
+          <label>Name <input class="pl-f-name" autocomplete="off" placeholder="allow_read"></label>
+          <label>Description (free-form note; ignored by the runtime, preserved for reviewers)
+            <textarea class="pl-f-description" autocomplete="off" rows="1" placeholder="Why this policy exists, who owns it, links to context"></textarea>
+          </label>
+          <label>Principal (CEL bool over <code>principal</code>; empty &equals; every caller)
+            <input class="pl-f-principal" autocomplete="off" placeholder='principal.subject == "agent-1"'>
+          </label>
+          <label>Action (CEL predicate over <code>action.name</code> + <code>request</code> + <code>match</code>)
+            <input class="pl-f-action" autocomplete="off" placeholder="true">
+          </label>
+          <label>Condition (CEL bool over the action's binds)
+            <textarea class="pl-f-condition" autocomplete="off" rows="1" placeholder="true"></textarea>
+          </label>
+          <label>Result
+            <select class="pl-f-result">
+              <option value="permit">permit</option>
+              <option value="deny">deny</option>
+            </select>
+          </label>
+        </div>
+      </td>
+    </tr>
+  </tbody></table>
+</div>
+{{- end -}}
+
+{{- define "policies_list_script" -}}
+<script>
+// setupPoliciesList wires up a [data-policies-list] block inside
+// `host`. Pass null for global mode, or {apis: [...]} to scope.
+function setupPoliciesList(host, scope) {
+  if (!host) return;
+  const $ = (sel) => host.querySelector(sel);
+  const listEl = $(".pl-list");
+  const listBody = $(".pl-list-body");
+  const listEmpty = $(".pl-empty");
+  const listStatus = $(".pl-list-status");
+  const apiFilter = $(".pl-api-filter");
+  const apiFilterWrap = $(".pl-api-filter-wrap");
+  const apiToggleBtn = $(".pl-f-api-toggle");
+  const apiDropdown = $(".pl-f-api-dropdown");
+  const apiToggleLabel = apiToggleBtn.querySelector(".multiselect-toggle-label");
+  const detailHost = $(".pl-detail-host");
+  const detailRow = $(".pl-detail-row");
+  const detailTitle = $(".pl-detail-title");
+  const detailMeta = $(".pl-detail-meta");
+  const compileStatus = $(".pl-compile");
+  const readonlyBanner = $(".pl-readonly-banner");
+
+  const fields = {
+    api: $(".pl-f-api"),
+    name: $(".pl-f-name"),
+    description: $(".pl-f-description"),
+    principal: $(".pl-f-principal"),
+    action: $(".pl-f-action"),
+    condition: $(".pl-f-condition"),
+    result: $(".pl-f-result"),
+  };
+  const buttons = {
+    save: $(".pl-save"),
+    delete: $(".pl-delete"),
+    newPolicy: $(".pl-new-policy"),
+    refresh: $(".pl-refresh"),
+  };
+  const actionStatus = $(".pl-action-status");
+
+  // In scoped mode hide the api-filter dropdown (the scope is fixed).
+  // The dropdown is left in the DOM so populateApiFilter() doesn't
+  // need a separate code path.
+  const scopedAPIs = (scope && scope.apis && scope.apis.length > 0) ? scope.apis.slice() : null;
+  if (scopedAPIs) apiFilterWrap.classList.add("hidden");
+
+  // Set up multiselect dropdown with shared utility
+  const { populate: populateAPIs, updateSelection: updateAPISelection } = setupMultiselect(host, {
+    toggleBtn: apiToggleBtn,
+    dropdown: apiDropdown,
+    selectEl: apiFilter,
+    optionClassName: "multiselect-option",
+    emptyLabel: "all",
+    onUpdate: refresh
+  });
+
+  function detachDetail() {
+    if (detailRow.parentNode !== detailHost) detailHost.appendChild(detailRow);
+  }
+  function attachDetailAfter(anchor) {
+    if (anchor) anchor.insertAdjacentElement("afterend", detailRow);
+    else listBody.insertBefore(detailRow, listBody.firstChild);
+  }
+
+  let writeable = false;
+  let policies = [];
+  let availableAPIs = []; // Track all available APIs from /_api/apis
+  let selectedKey = null;
+  let mode = "view";
+  let original = null;
+  let dryRunSeq = 0;
+  let dryRunTimer = null;
+
+  function resultPill(r) {
+    const cls = r === "deny" ? "pl-pill-deny" : "pl-pill-permit";
+    return `<span class="pl-pill ${cls}">${r}</span>`;
+  }
+  function policyKey(p) { return `${p.api}/${p.name}`; }
+  function escapeHTML(s) {
+    return String(s).replace(/[&<>"']/g, c => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+    }[c]));
+  }
+
+  async function fetchJSON(method, url, body) {
+    const opts = { method, headers: { "content-type": "application/json" } };
+    if (body !== undefined) opts.body = JSON.stringify(body);
+    const resp = await fetch(url, opts);
+    const text = await resp.text();
+    let parsed = null;
+    if (text) {
+      try { parsed = JSON.parse(text); } catch (_) { parsed = text; }
+    }
+    return { ok: resp.ok, status: resp.status, body: parsed, raw: text };
+  }
+
+  async function loadCapabilities() {
+    const r = await fetchJSON("GET", "/_api/policies:capabilities");
+    writeable = r.ok ? !!(r.body && r.body.writeable) : true;
+    readonlyBanner.classList.toggle("hidden", writeable);
+    buttons.newPolicy.disabled = !writeable;
+  }
+
+  // loadAvailableAPIs fetches the full list of available APIs from /_api/apis
+  // so the dropdown shows all APIs even when filtered to a subset of policies.
+  async function loadAvailableAPIs() {
+    const r = await fetchJSON("GET", "/_api/apis");
+    if (r.ok && r.body && r.body.apis && Array.isArray(r.body.apis)) {
+      availableAPIs = r.body.apis.map(api => api.name).sort();
+    }
+  }
+
+  // policiesURL composes the GET URL with the right `api` filter:
+  //   - scoped mode + no selection → repeated ?api=... per scope
+  //   - scoped mode + selected APIs → repeated ?api=... per selected API
+  //   - global mode + selected APIs → repeated ?api=... per selected API
+  //   - global mode + no selection → no filter
+  function policiesURL() {
+    const params = new URLSearchParams();
+    const selectedAPIs = Array.from(apiFilter.selectedOptions)
+      .map(o => o.value)
+      .filter(v => v); // filter out "all" option
+
+    if (selectedAPIs.length > 0) {
+      for (const a of selectedAPIs) params.append("api", a);
+    } else if (scopedAPIs) {
+      for (const a of scopedAPIs) params.append("api", a);
+    }
+    const qs = params.toString();
+    return "/_api/policies" + (qs ? "?" + qs : "");
+  }
+
+  async function refresh() {
+    listStatus.textContent = "Loading…";
+    listStatus.className = "muted";
+    const r = await fetchJSON("GET", policiesURL());
+    if (!r.ok) {
+      listStatus.textContent = `Error: ${r.raw || r.status}`;
+      listStatus.className = "muted err";
+      return;
+    }
+    listStatus.textContent = "";
+    policies = (r.body && r.body.policies) || [];
+    populateApiFilter();
+    renderList();
+  }
+
+  function populateApiFilter() {
+    // APIs are either availableAPIs (global mode) or the scoped APIs
+    // (scoped mode). Always use availableAPIs in global mode to show all
+    // registered APIs, not just the APIs in the currently-filtered policies.
+    const apis = scopedAPIs ? scopedAPIs.slice().sort() : availableAPIs;
+    // Use shared utility to populate the dropdown
+    populateAPIs(apis);
+  }
+
+  function renderList() {
+    detachDetail();
+    listBody.innerHTML = "";
+    if (!policies.length) {
+      listEl.classList.add("hidden");
+      listEmpty.classList.remove("hidden");
+      return;
+    }
+    listEl.classList.remove("hidden");
+    listEmpty.classList.add("hidden");
+    for (const p of policies) {
+      const tr = document.createElement("tr");
+      tr.className = "pl-selectable";
+      tr.dataset.key = policyKey(p);
+      tr.innerHTML = `
+        <td>${escapeHTML(p.api)}</td>
+        <td>${escapeHTML(p.name)}</td>
+        <td>${resultPill(p.result)}</td>
+        <td class="pl-cel col-action">${escapeHTML(p.action || "")}</td>
+        <td class="pl-cel">${escapeHTML((p.condition || "").slice(0, 80))}${(p.condition || "").length > 80 ? "…" : ""}</td>
+      `;
+      tr.addEventListener("click", () => selectByKey(policyKey(p)));
+      listBody.appendChild(tr);
+    }
+    highlightSelected();
+  }
+
+  function highlightSelected() {
+    for (const tr of listBody.querySelectorAll("tr")) {
+      tr.classList.toggle("pl-selected", tr.dataset.key === selectedKey);
+    }
+  }
+
+  function selectByKey(key) {
+    if (selectedKey === key) {
+      cancel();
+      return;
+    }
+    const p = policies.find(x => policyKey(x) === key);
+    if (!p) return;
+    selectedKey = key;
+    mode = writeable ? "edit" : "view";
+    original = { api: p.api, name: p.name };
+    showDetail(p);
+  }
+
+  function showDetail(p) {
+    if (mode === "create") {
+      attachDetailAfter(null);
+    } else {
+      const row = listBody.querySelector(`tr.pl-selectable[data-key="${CSS.escape(policyKey(p))}"]`);
+      if (row) attachDetailAfter(row);
+    }
+    const editing = mode !== "view";
+    detailTitle.textContent =
+      mode === "create" ? "New policy" :
+      mode === "edit" ? `Edit ${p.api}/${p.name}` :
+      `${p.api}/${p.name}`;
+    detailMeta.textContent = mode === "view"
+      ? "Read-only — start the proxy without --policies-readonly to enable edits."
+      : (mode === "create"
+        ? "Fill in the fields and Save. The runtime validates on every keystroke."
+        : "Edits validate against the live runtime on every keystroke.");
+    fields.api.value = p.api || "";
+    fields.name.value = p.name || "";
+    fields.description.value = p.description || "";
+    fields.principal.value = p.principal || "";
+    fields.action.value = p.action || "";
+    fields.condition.value = p.condition || "";
+    fields.result.value = p.result || "permit";
+    for (const f of Object.values(fields)) f.disabled = !editing;
+    buttons.save.disabled = true;
+    buttons.delete.disabled = !(writeable && mode === "edit");
+    actionStatus.textContent = "";
+    actionStatus.className = "muted";
+    compileStatus.textContent = "";
+    compileStatus.className = "pl-compile";
+    highlightSelected();
+    if (editing) scheduleDryRun();
+  }
+
+  function startCreate() {
+    if (!writeable) return;
+    selectedKey = null;
+    mode = "create";
+    original = null;
+    // In scoped mode, default the API field to the first scoped API
+    // so the operator doesn't have to remember which APIs belong to
+    // this service.
+    const apiDefault = scopedAPIs ? scopedAPIs[0] || "" : "";
+    showDetail({ api: apiDefault, name: "", description: "", principal: "", action: "true", condition: "true", result: "permit" });
+    fields.api.focus();
+  }
+
+  function cancel() {
+    selectedKey = null;
+    mode = "view";
+    original = null;
+    detachDetail();
+    highlightSelected();
+  }
+
+  function currentPolicy() {
+    const p = {
+      api: fields.api.value.trim(),
+      name: fields.name.value.trim(),
+      action: fields.action.value,
+      condition: fields.condition.value,
+      result: fields.result.value,
+    };
+    const description = fields.description.value;
+    if (description) p.description = description;
+    const principal = fields.principal.value.trim();
+    if (principal) p.principal = principal;
+    return p;
+  }
+
+  function hasChanges() {
+    if (mode === "create") return true; // New policies are always "changed"
+    if (!original) return false;
+    const current = currentPolicy();
+    return current.api !== original.api ||
+           current.name !== original.name ||
+           current.action !== (original.action || "true") ||
+           current.condition !== (original.condition || "true") ||
+           current.description !== (original.description || "") ||
+           current.principal !== (original.principal || "") ||
+           current.result !== (original.result || "permit");
+  }
+
+  async function dryRun() {
+    if (mode === "view") return;
+    const seq = ++dryRunSeq;
+    compileStatus.textContent = "Validating…";
+    compileStatus.className = "pl-compile muted";
+    const r = await fetchJSON("POST", "/_api/policies:dryRun", currentPolicy());
+    if (seq !== dryRunSeq) return;
+    if (r.ok && r.body && r.body.ok) {
+      compileStatus.textContent = "Valid";
+      compileStatus.className = "pl-compile pl-compile-ok";
+      buttons.save.disabled = !hasChanges();
+    } else {
+      const msg = (r.body && r.body.error) || r.raw || `HTTP ${r.status}`;
+      compileStatus.textContent = msg;
+      compileStatus.className = "pl-compile pl-compile-err";
+      buttons.save.disabled = true; // Always disabled when validation fails
+    }
+  }
+
+  function scheduleDryRun() {
+    if (mode === "view") return;
+    if (dryRunTimer) clearTimeout(dryRunTimer);
+    dryRunTimer = setTimeout(dryRun, 250);
+  }
+
+  async function save() {
+    if (mode === "view") return;
+    const policy = currentPolicy();
+    actionStatus.textContent = "Saving…";
+    actionStatus.className = "muted";
+    let r;
+    if (mode === "create") {
+      r = await fetchJSON("POST", "/_api/policies", policy);
+    } else {
+      if (policy.api !== original.api || policy.name !== original.name) {
+        actionStatus.textContent = "Cannot rename in place — delete and recreate instead.";
+        actionStatus.className = "muted err";
+        return;
+      }
+      r = await fetchJSON("PUT", `/_api/policies/${encodeURIComponent(original.api)}/${encodeURIComponent(original.name)}`, policy);
+    }
+    if (!r.ok) {
+      actionStatus.textContent = `Error: ${r.raw || r.status}`;
+      actionStatus.className = "muted err";
+      return;
+    }
+    actionStatus.textContent = mode === "create" ? "Created." : "Saved.";
+    actionStatus.className = "muted ok";
+    selectedKey = policyKey(policy);
+    mode = "edit";
+    original = { api: policy.api, name: policy.name };
+    await refresh();
+    const fresh = policies.find(p => policyKey(p) === selectedKey);
+    if (fresh) showDetail(fresh);
+  }
+
+  async function deletePolicy() {
+    if (mode !== "edit" || !original) return;
+    if (!confirm(`Delete policy ${original.api}/${original.name}? This removes it from the runtime and the store.`)) return;
+    const r = await fetchJSON("DELETE", `/_api/policies/${encodeURIComponent(original.api)}/${encodeURIComponent(original.name)}`);
+    if (!r.ok) {
+      actionStatus.textContent = `Error: ${r.raw || r.status}`;
+      actionStatus.className = "muted err";
+      return;
+    }
+    cancel();
+    await refresh();
+  }
+
+  for (const f of Object.values(fields)) f.addEventListener("input", scheduleDryRun);
+  buttons.save.addEventListener("click", save);
+  buttons.delete.addEventListener("click", deletePolicy);
+  buttons.newPolicy.addEventListener("click", startCreate);
+  buttons.refresh.addEventListener("click", refresh);
+  apiFilter.addEventListener("change", refresh);
+
+  // Expose refresh() so callers (the service-detail page) can re-
+  // pull the list after applying a template policy without having
+  // to re-mount the entire component.
+  host.refresh = refresh;
+
+  (async () => {
+    await loadCapabilities();
+    await loadAvailableAPIs();
+
+    // Deeplink: ?api=X[&policy=Y]. The traffic detail's "policy"
+    // link uses this so the operator lands on the row already
+    // expanded. We pre-populate the dropdown option so the initial
+    // refresh fetches only that API; populateApiFilter() rebuilds
+    // the dropdown but preserves apiFilter.value when it matches an
+    // available API. No-op in scoped mode (the dropdown is hidden
+    // and the scope is fixed by the host page).
+    const sp = new URLSearchParams(window.location.search);
+    const deepAPI = sp.get("api");
+    const deepPolicy = sp.get("policy");
+    if (deepAPI && !scopedAPIs) {
+      const opt = document.createElement("option");
+      opt.value = deepAPI;
+      opt.textContent = deepAPI;
+      apiFilter.appendChild(opt);
+      apiFilter.value = deepAPI;
+    }
+
+    await refresh();
+
+    if (deepAPI && deepPolicy) {
+      const key = `${deepAPI}/${deepPolicy}`;
+      if (policies.find(p => policyKey(p) === key)) {
+        selectByKey(key);
+        detailRow.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    }
+  })();
+}
+</script>
+{{- end -}}

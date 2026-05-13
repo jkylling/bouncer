@@ -85,7 +85,7 @@ func TestAPIsListReturnsRegisteredAPIs(t *testing.T) {
 func TestAPIsListIncludesReadmeURL(t *testing.T) {
 	b := runtime.NewBuilder()
 	if err := b.AddAPI(&models.API{
-		Name:         "gmail",
+		Name:         "google.gmail",
 		BaseURL:      "https://gmail.example.com",
 		PathPrefixes: []string{"/gmail"},
 	}); err != nil {
@@ -99,7 +99,7 @@ func TestAPIsListIncludesReadmeURL(t *testing.T) {
 	r := chi.NewRouter()
 	MountAPIs(r, rt, BundleData{
 		Readmes:   map[string][]byte{"gws": []byte("# Google Workspace bundle\n")},
-		APIBundle: map[string]string{"gmail": "gws"},
+		APIBundle: map[string]string{"google.gmail": "gws"},
 	})
 	ts := httptest.NewServer(r)
 	t.Cleanup(ts.Close)

@@ -16,182 +16,33 @@ centered shell, no nav).
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>bouncer &mdash; {{.Title}}</title>
-<style>
-  :root {
-    color-scheme: light dark;
-    --bg: #ffffff;
-    --surface: #f6f8fa;
-    --surface-2: #eaeef2;
-    --text: #1f2328;
-    --text-muted: #59636e;
-    --border: #d1d9e0;
-    --border-strong: #afb8c1;
-    --accent: #0969da;
-    --accent-hover: #0860c7;
-    --focus-ring: #0969da55;
-    --success: #1a7f37;
-    --danger: #cf222e;
-    --warning: #9a6700;
-    --pin-mark: #d4a017;
-    --row-hover: rgba(31, 35, 40, 0.05);
-    --row-expanded: rgba(31, 35, 40, 0.08);
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #0d1117;
-      --surface: #161b22;
-      --surface-2: #21262d;
-      --text: #f0f6fc;
-      --text-muted: #8b949e;
-      --border: #30363d;
-      --border-strong: #3d444d;
-      --accent: #2f81f7;
-      --accent-hover: #4493f8;
-      --focus-ring: #2f81f766;
-      --success: #3fb950;
-      --danger: #f85149;
-      --warning: #d29922;
-      --pin-mark: #e3b341;
-      --row-hover: rgba(255, 255, 255, 0.06);
-      --row-expanded: rgba(255, 255, 255, 0.10);
-    }
-  }
-  * { box-sizing: border-box; }
-  body {
-    font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-    font-size: 16px; line-height: 1.5;
-    margin: 0;
-    padding: clamp(0.75rem, 3vw, 2rem);
-    background: var(--bg);
-    color: var(--text);
-  }
-  .container { max-width: 44rem; }
-  .container.wide { max-width: 80rem; }
-  nav {
-    display: flex; flex-wrap: wrap; align-items: center;
-    gap: 0.4rem 1.25rem;
-    font-size: 0.95rem; margin: 0 0 1.25rem;
-  }
-  .nav-spacer { flex: 1 1 1rem; min-width: 0; }
-  nav a { color: var(--text-muted); text-decoration: none; padding: 0.15rem 0; }
-  nav a:hover { color: var(--accent); text-decoration: underline; }
-  nav a[aria-current] { font-weight: 600; color: var(--text); }
-  .nav-badge { color: var(--warning); font-weight: 600; margin-left: 0.25rem; }
-  h1 { font-size: 1.5rem; margin: 0 0 0.4rem; font-weight: 600; }
-  h2 { font-size: 1.1rem; margin: 1.25rem 0 0.5rem; font-weight: 600; }
-  p.lede { color: var(--text-muted); margin: 0 0 1.25rem; max-width: 70ch; }
-  fieldset {
-    border: 1px solid var(--border); border-radius: 0.5rem;
-    padding: 1rem 1.1rem; margin: 0 0 1rem;
-    background: var(--surface);
-  }
-  legend { padding: 0 0.4rem; font-size: 0.9rem; color: var(--text-muted); }
-  label.field { display: block; margin-top: 0.85rem; }
-  label.field:first-of-type { margin-top: 0; }
-  label.field > span {
-    display: block;
-    font-size: 0.95rem; font-weight: 500; margin-bottom: 0.3rem;
-  }
-  label.field > small {
-    display: block; color: var(--text-muted);
-    font-size: 0.85rem; margin-top: 0.3rem;
-  }
-  label.checkbox-field {
-    display: flex; align-items: center; gap: 0.5rem;
-    margin-top: 0.85rem; font-size: 0.95rem;
-  }
-  label.checkbox-field input[type="checkbox"] {
-    width: auto; min-height: 0; margin: 0;
-  }
-  code, kbd {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 0.85em;
-    padding: 0.05rem 0.3rem;
-    background: var(--surface-2);
-    border-radius: 0.25rem;
-  }
-  input, select, textarea {
-    display: block; width: 100%;
-    padding: 0.45rem 0.7rem; font: inherit;
-    color: var(--text); background: var(--bg);
-    border: 1px solid var(--border-strong); border-radius: 0.35rem;
-    min-height: 2.4rem; vertical-align: middle;
-    transition: border-color 0.1s, box-shadow 0.1s;
-  }
-  textarea {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 0.9rem; min-height: 6rem;
-  }
-  input:focus, select:focus, textarea:focus {
-    outline: none;
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px var(--focus-ring);
-  }
-  button {
-    padding: 0.45rem 1rem; font: inherit; cursor: pointer;
-    color: #fff; background: var(--accent); border: 1px solid var(--accent);
-    border-radius: 0.35rem; min-height: 2.4rem; line-height: 1.3;
-    vertical-align: middle;
-    transition: background 0.1s;
-  }
-  form > button[type="submit"] { margin-top: 0.5rem; }
-  button:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
-  button:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--focus-ring); }
-  button.secondary { background: var(--bg); color: var(--text); border-color: var(--border-strong); }
-  button.secondary:hover { background: var(--surface); }
-  button.danger { background: var(--danger); border-color: var(--danger); }
-  button.danger:hover { background: var(--danger); border-color: var(--danger); filter: brightness(1.1); }
-  pre {
-    background: var(--surface-2);
-    border: 1px solid var(--border);
-    padding: 0.75rem; border-radius: 0.4rem;
-    overflow-wrap: anywhere; word-break: break-all; white-space: pre-wrap;
-    font-size: 0.9rem;
-  }
-  .row { display: flex; gap: 0.5rem; align-items: stretch; flex-wrap: wrap; }
-  .row pre { flex: 1; min-width: 0; margin: 0; }
-  .row button { flex-shrink: 0; }
-  .hidden { display: none; }
-  .err { color: var(--danger); }
-  .ok  { color: var(--success); }
-  .muted { color: var(--text-muted); }
-
-  /* Tables (traffic, policies, proposals, apis viewer). */
-  table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
-  th, td { text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--border); vertical-align: top; }
-  th { font-weight: 600; color: var(--text-muted); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.02em; }
-  tbody tr:hover { background: var(--row-hover); }
-
-  /* Narrow-screen rules. The nav stays full-width and wraps; the
-     spacer collapses; tables get horizontal scroll instead of
-     bursting the viewport. */
-  @media (max-width: 640px) {
-    .nav-spacer { flex-basis: 100%; height: 0; margin: 0; }
-    nav { gap: 0.3rem 0.9rem; }
-    .scroll-x { overflow-x: auto; }
-    table { font-size: 0.86rem; }
-    th, td { padding: 0.4rem 0.5rem; }
-    .row { flex-direction: column; align-items: stretch; }
-  }
-{{ block "page-style" . }}{{ end -}}
-</style>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/_admin/static/css/admin-ui.css">
 </head>
 <body>
-<div class="container{{ with .ContainerClass }} {{.}}{{ end }}">
-{{ template "nav" .Current -}}
-{{ block "body" . }}{{ end -}}
+<div class="app">
+  {{ template "sidebar" .Current }}
+  <main class="dashboard-main">
+    <div class="container{{ with .ContainerClass }} {{.}}{{ end }}">
+      {{ block "body" . }}{{ end -}}
+    </div>
+  </main>
 </div>
+<script src="/_admin/static/js/utils.js"></script>
 <script>
-// Best-effort pending-proposal badge in the nav. Shared across every
-// admin page so a freshly-submitted proposal gets a count without
-// the operator opening the proposals tab.
-fetch("/_api/proposals?status=proposed").then(r => r.ok ? r.json() : null).then(d => {
-  if (!d || !Array.isArray(d.proposals)) return;
-  const link = document.getElementById("nav-proposals");
-  if (link && d.proposals.length > 0) {
-    link.innerHTML = `Proposals <span class="nav-badge">(${d.proposals.length})</span>`;
-  }
-}).catch(() => {});
+// Proposal feature removed; badge code kept for reference
+// fetch("/_api/proposals?status=proposed").then(r => r.ok ? r.json() : null).then(d => {
+//   if (!d || !Array.isArray(d.proposals)) return;
+//   const link = document.getElementById("nav-policies");
+//   if (link && d.proposals.length > 0) {
+//     const badge = document.createElement("span");
+//     badge.className = "nav-badge";
+//     badge.textContent = d.proposals.length;
+//     link.appendChild(badge);
+//   }
+// }).catch(() => {});
 </script>
 {{ block "page-script" . }}{{ end -}}
 </body>
@@ -199,21 +50,44 @@ fetch("/_api/proposals?status=proposed").then(r => r.ok ? r.json() : null).then(
 {{- end -}}
 
 {{- /*
-nav lives in its own template so a future page-add lands in one
+sidebar lives in its own template so a future page-add lands in one
 place. The argument is the page identifier (`tokens`, `traffic`,
-`policies`, `proposals`, `apis`) — used to stamp aria-current on the
-matching link.
+`policies`, `proposals`, `apis`, `settings`) — used to stamp
+aria-current="page" on the matching link.
+
+Identifier vs label mismatch is intentional: "tokens" is the current
+shape of the page (issue a JWT) but the sidebar label is "Agents"
+because that's what it'll become in phase 4. Same for "apis" surfaced
+as "Connections."
 */ -}}
-{{- define "nav" -}}
-<nav>
-  <a href="/_admin/traffic" {{ if eq . "traffic" }}aria-current="page"{{ end }}>Traffic</a>
-  <a href="/_admin/policies" {{ if eq . "policies" }}aria-current="page"{{ end }}>Policies</a>
-  <a href="/_admin/apis" {{ if eq . "apis" }}aria-current="page"{{ end }}>APIs</a>
-  <a href="/_admin/proposals" id="nav-proposals" {{ if eq . "proposals" }}aria-current="page"{{ end }}>Proposals</a>
-  <a href="/_admin/" {{ if eq . "tokens" }}aria-current="page"{{ end }}>Tokens</a>
-  <span class="nav-spacer" aria-hidden="true"></span>
-  <a href="/_api/docs" title="Markdown agent guide (orientation, denial recovery)">Agent docs</a>
-  <a href="/_api/docs/policies" title="Policy authoring + CEL primer">Policy authoring</a>
-  <a href="/_api/docs/apis" title="API integration spec">API authoring</a>
-</nav>
+{{- define "sidebar" -}}
+<aside class="sidebar">
+  <a class="logo" href="/_admin/" aria-label="bouncer home">
+    <span class="logo-mark">⛨</span>
+    <span class="logo-text">bouncer</span>
+    <span class="logo-cloud">cloud</span>
+  </a>
+  <nav class="sidebar-nav" aria-label="Primary">
+    <a class="nav-item" href="/_admin/traffic" {{ if eq . "traffic" }}aria-current="page"{{ end }}>
+      <span class="nav-ico" aria-hidden="true">📡</span> Traffic
+    </a>
+    <a class="nav-item" id="nav-policies" href="/_admin/policies" {{ if or (eq . "policies") (eq . "proposals") }}aria-current="page"{{ end }}>
+      <span class="nav-ico" aria-hidden="true">🛡</span> Policies
+    </a>
+    <a class="nav-item" href="/_admin/agents" {{ if eq . "tokens" }}aria-current="page"{{ end }}>
+      <span class="nav-ico" aria-hidden="true">🤖</span> Agents
+    </a>
+    <a class="nav-item" href="/_admin/services" {{ if eq . "services" }}aria-current="page"{{ end }}>
+      <span class="nav-ico" aria-hidden="true">🧩</span> Services
+    </a>
+    <a class="nav-item" href="/_admin/settings" {{ if eq . "settings" }}aria-current="page"{{ end }}>
+      <span class="nav-ico" aria-hidden="true">⚙</span> Settings
+    </a>
+  </nav>
+  <div class="sidebar-foot">
+    <a href="/_api/docs" title="Agent orientation + denial recovery">Agent docs</a>
+    <a href="/_api/docs/policies" title="Policy authoring + CEL primer">Policy authoring</a>
+    <a href="/_api/docs/apis" title="API integration spec">API authoring</a>
+  </div>
+</aside>
 {{- end -}}

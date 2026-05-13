@@ -1,7 +1,6 @@
 package admin
 
 import (
-	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -17,19 +16,14 @@ import (
 // alongside the issue form.
 const (
 	TrafficListPath = "/_api/traffic"
-	// TrafficItemPath uses chi's `{id}` parameter syntax. Pinned-only
-	// listing rides on the same path with `?pinned=true`, so we
-	// don't need a dedicated `/pinned` route — that would conflict
-	// with `{id}` anyway under chi's literal-vs-param rules.
 	TrafficItemPath = "/_api/traffic/{id}"
-	TrafficPinPath  = "/_api/traffic/{id}/pin"
 	TrafficUIPath   = "/_admin/traffic"
 
-	// TrafficProposeUIPath is the per-event "propose policy from
-	// this request" page. Linked from each row's detail panel; the
-	// page reads the {id} from window.location and POSTs to the
-	// existing /_api/traffic/{id}/propose-policy endpoint.
-	TrafficProposeUIPath = "/_admin/traffic/{id}/propose"
+	// TrafficSubjectsPath returns one row per JWT subject seen in
+	// stored traffic. The Agents page reads this to show "agents that
+	// have authenticated" without needing the agents.Store (which
+	// nothing populates in the local-bouncer model).
+	TrafficSubjectsPath = "/_api/traffic/subjects"
 )
 
 // PrincipalExtractor maps an inbound request to a principal subject
@@ -58,30 +52,38 @@ func MountTraffic(r chi.Router, store traffic.Store, principal PrincipalExtracto
 	if principal == nil {
 		principal = AnonymousPrincipal
 	}
-	// Reading other principals' recorded traffic is admin-only —
-	// requests can carry sensitive paths (resource ids, query
-	// parameters), and the existing `principal` extractor is the
-	// per-subject filter for the eventual subject-scoped read path.
-	// Today the proxy ships AnonymousPrincipal, so for now reads
-	// are admin-tier full stop. If the subject-scoped reader lands
-	// later, switch the GETs to RequireAuthenticated and let the
-	// extractor narrow the rows.
-	r.Get(TrafficListPath, RequireAdmin(listHandler(store, principal)))
-	r.Get(TrafficItemPath, RequireAdmin(getHandler(store, principal)))
-	r.Put(TrafficPinPath, RequireAdmin(pinHandler(store, principal)))
-	r.Delete(TrafficPinPath, RequireAdmin(unpinHandler(store, principal)))
+	// Per-route access tiers live in the embedded internal-policy
+	// set (traffic_list / traffic_get / ui_traffic).
+	// The default sets gate the JSON endpoints to admin and the UI
+	// shell to authenticated callers (anonymous bounces to login).
+	r.Get(TrafficListPath, listHandler(store, principal))
+	r.Get(TrafficSubjectsPath, subjectsHandler(store))
+	r.Get(TrafficItemPath, getHandler(store, principal))
 	mountUIPage(r, TrafficUIPath, "traffic")
-	r.Get(TrafficProposeUIPath, RedirectAnonymousToLogin(pageHandler("traffic_propose")))
 }
 
 // listHandler serves GET /_api/traffic with structured filter and
 // pagination query params:
 //
-//	api, action, method, decision, path_prefix, since, until, pinned,
-//	limit, cursor.
+//	api, action, method, decision, path_prefix, since, until, limit, cursor.
 //
-// `since` / `until` accept RFC 3339; everything else is a literal
-// string. `pinned=true` filters to pinned rows only.
+// `since` / `until` accept RFC 3339; everything else is a literal string.
+//
+// subjectsHandler serves GET /_api/traffic/subjects — a per-subject
+// roll-up of stored traffic. Read-only by design; "revoke this
+// subject" is intentionally a follow-up because it requires new
+// state on the JWT-verify hot path.
+func subjectsHandler(store traffic.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		out, err := store.Subjects(r.Context())
+		if err != nil {
+			writeJSONError(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]any{"subjects": out})
+	}
+}
+
 func listHandler(store traffic.Store, principal PrincipalExtractor) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		opts, err := parseListOpts(r)
@@ -124,57 +126,6 @@ func getHandler(store traffic.Store, principal PrincipalExtractor) http.HandlerF
 	}
 }
 
-// pinHandler / unpinHandler mark id pinned/unpinned. Idempotent;
-// 404 on unknown id, 409 on pin-cap exhaustion. Subject scoping
-// applies — a principal can only pin rows they can see.
-func pinHandler(store traffic.Store, principal PrincipalExtractor) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		id := traffic.EventID(chi.URLParam(r, "id"))
-		if err := authorizeID(r, store, principal, id); err != nil {
-			writeStoreError(r.Context(), w, err)
-			return
-		}
-		if err := store.Pin(r.Context(), id); err != nil {
-			writeStoreError(r.Context(), w, err)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	}
-}
-
-func unpinHandler(store traffic.Store, principal PrincipalExtractor) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		id := traffic.EventID(chi.URLParam(r, "id"))
-		if err := authorizeID(r, store, principal, id); err != nil {
-			writeStoreError(r.Context(), w, err)
-			return
-		}
-		if err := store.Unpin(r.Context(), id); err != nil {
-			writeStoreError(r.Context(), w, err)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	}
-}
-
-// authorizeID looks up the row and returns ErrNotFound when the
-// principal's subject filter rejects it. Centralised so pin/unpin
-// share one trust check.
-func authorizeID(r *http.Request, store traffic.Store, principal PrincipalExtractor, id traffic.EventID) error {
-	subj := principal(r)
-	if subj == nil {
-		return nil // admin / anonymous-trust mode
-	}
-	ev, err := store.Get(r.Context(), id)
-	if err != nil {
-		return err
-	}
-	if ev.Subject != *subj {
-		return traffic.ErrNotFound
-	}
-	return nil
-}
-
 // listResponse is the GET /_api/traffic body. Exported so callers
 // can decode without restating the shape.
 type listResponse struct {
@@ -188,14 +139,24 @@ type listResponse struct {
 // with 400 rather than silently dropping a filter.
 func parseListOpts(r *http.Request) (traffic.ListOpts, error) {
 	q := r.URL.Query()
+	// `api` can be repeated (?api=foo&api=bar) for per-service traffic
+	// views that scope to the bundle's full API set. A single value
+	// folds into the legacy API field; multiple values land in APIs.
+	apis := q["api"]
 	opts := traffic.ListOpts{
-		API:        q.Get("api"),
 		Action:     q.Get("action"),
 		Method:     q.Get("method"),
 		Decision:   traffic.Decision(q.Get("decision")),
 		PathPrefix: q.Get("path_prefix"),
-		PinnedOnly: q.Get("pinned") == "true",
 		Cursor:     traffic.Cursor(q.Get("cursor")),
+	}
+	switch len(apis) {
+	case 0:
+		// no filter
+	case 1:
+		opts.API = apis[0]
+	default:
+		opts.APIs = apis
 	}
 	if s := q.Get("limit"); s != "" {
 		n, err := strconv.Atoi(s)
@@ -219,11 +180,4 @@ func parseListOpts(r *http.Request) (traffic.ListOpts, error) {
 		opts.Until = t
 	}
 	return opts, nil
-}
-
-func writeStoreError(ctx context.Context, w http.ResponseWriter, err error) {
-	writeMappedError(ctx, w, "traffic", err, []errMap{
-		{sentinel: traffic.ErrNotFound, status: http.StatusNotFound, msg: "not found"},
-		{sentinel: traffic.ErrPinnedFull, status: http.StatusConflict, msg: "pinned cap reached"},
-	})
 }

@@ -6,6 +6,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/jkylling/bouncer/internal/control/bundles"
 	"github.com/jkylling/bouncer/internal/runtime"
 	"github.com/jkylling/bouncer/internal/runtime/models"
 )
@@ -15,7 +16,6 @@ import (
 const (
 	APIsPath       = "/_api/apis"
 	APIsReadmePath = "/_api/apis/{bundle}/readme"
-	APIsUIPath     = "/_admin/apis"
 )
 
 // APIsListResponse is the GET /_api/apis body. Wrapped in an object
@@ -74,8 +74,10 @@ type OutputDescriptor struct {
 }
 
 // BundleData carries the per-bundle metadata MountAPIs needs to
-// surface READMEs and per-API readme links. Both maps may be nil
-// for a deployment with no vendored bundles.
+// surface READMEs and per-API readme links, plus the token-staging
+// metadata the MCP layer needs to register per-service prompts and
+// tools. All fields may be empty for a deployment with no vendored
+// bundles.
 type BundleData struct {
 	// Readmes maps a bundle's manifest name to its README bytes.
 	Readmes map[string][]byte
@@ -83,17 +85,27 @@ type BundleData struct {
 	// APIBundle maps an API name to the bundle name it came from.
 	// Locally-loaded APIs are absent.
 	APIBundle map[string]string
+
+	// TokenBundles is the per-bundle token-staging blocks the MCP
+	// prompts/tools layer reads. Empty for deployments where no
+	// bundle declares MCP staging metadata.
+	TokenBundles []*bundles.BundleToken
+
+	// Services is the per-bundle service block + OAuth + token
+	// variants + suggested policies the /_api/services surface and
+	// the new Service Detail UI read. Empty for deployments whose
+	// bundles don't declare a `service:` block.
+	Services []bundles.LoadedService
 }
 
 // MountAPIs attaches the GET /_api/apis listing onto r, backed by
 // rt's registered API specs. Read-only — no Put/Delete since the
-// API surface is frozen at boot. Also mounts the browser-facing
-// /_admin/apis page that renders the same JSON, plus a per-bundle
-// README endpoint at /_api/apis/{bundle}/readme.
+// API surface is frozen at boot. Plus a per-bundle README endpoint
+// at /_api/apis/{bundle}/readme used by the per-service Docs tab on
+// /_admin/services/{slug}.
 func MountAPIs(r chi.Router, rt *runtime.Runtime, bd BundleData) {
 	r.Get(APIsPath, listAPIsHandler(rt, bd))
 	r.Get(APIsReadmePath, readmeHandler(bd.Readmes))
-	mountUIPage(r, APIsUIPath, "apis")
 }
 
 func listAPIsHandler(rt *runtime.Runtime, bd BundleData) http.HandlerFunc {

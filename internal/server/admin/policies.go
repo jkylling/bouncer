@@ -33,22 +33,18 @@ const MaxPolicyBodyBytes int64 = 1 << 16
 // constructs the dependency and calls this only when policy CRUD is
 // wanted (it's a no-op otherwise).
 //
-// Tier wiring:
-//   - :capabilities is open so the UI can decide whether to render
-//     edit affordances before the operator logs in.
-//   - List, Get, dryRun require any authenticated caller — policies
-//     are the rules being applied to them, so non-admins can read.
-//   - Create / Replace / Delete require admin — only operators
-//     change the rule set.
-//   - The HTML shell is open so the login JS can render.
+// Per-route access tiers (open / authenticated / admin / login
+// redirect) are now expressed in the embedded internal-policy set
+// keyed off the action names declared in
+// `internal_apis/api.yaml` — this function just wires raw handlers.
 func MountPolicies(r chi.Router, svc *policies.Service) {
 	r.Get(PoliciesCapabilitiesPath, capabilitiesHandler(svc))
-	r.Get(PoliciesPath, RequireAuthenticated(listPoliciesHandler(svc)))
-	r.Get(PolicyItemPath, RequireAuthenticated(getPolicyHandler(svc)))
-	r.Post(PoliciesDryRunPath, RequireAuthenticated(dryRunPolicyHandler(svc)))
-	r.Post(PoliciesPath, RequireAdmin(createPolicyHandler(svc)))
-	r.Put(PolicyItemPath, RequireAdmin(replacePolicyHandler(svc)))
-	r.Delete(PolicyItemPath, RequireAdmin(deletePolicyHandler(svc)))
+	r.Get(PoliciesPath, listPoliciesHandler(svc))
+	r.Get(PolicyItemPath, getPolicyHandler(svc))
+	r.Post(PoliciesDryRunPath, dryRunPolicyHandler(svc))
+	r.Post(PoliciesPath, createPolicyHandler(svc))
+	r.Put(PolicyItemPath, replacePolicyHandler(svc))
+	r.Delete(PolicyItemPath, deletePolicyHandler(svc))
 	mountUIPage(r, PoliciesUIPath, "policies")
 }
 
@@ -75,16 +71,19 @@ type policiesListResponse struct {
 
 func listPoliciesHandler(svc *policies.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		filter := r.URL.Query().Get("api")
+		// `api` can be repeated (?api=foo&api=bar) for per-service
+		// policy views that scope to the bundle's full API set in one
+		// query. A single value is the legacy single-filter form.
+		filters := r.URL.Query()["api"]
 		all := svc.List()
-		if filter != "" {
-			// Build a fresh slice rather than filter in place: even
-			// though Service.List returns a fresh snapshot today, a
-			// future copy-on-write or interned-slice optimisation
-			// would silently turn this into shared-state mutation.
+		if len(filters) > 0 {
+			allow := make(map[string]bool, len(filters))
+			for _, f := range filters {
+				allow[f] = true
+			}
 			out := make([]models.Policy, 0, len(all))
 			for _, p := range all {
-				if p.API == filter {
+				if allow[p.API] {
 					out = append(out, p)
 				}
 			}

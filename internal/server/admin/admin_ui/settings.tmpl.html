@@ -1,0 +1,102 @@
+{{- /* settings page — workspace info + sign out. Cards match the
+mockup pattern; bare-button styling left for legacy parity is no
+longer used here. */ -}}
+
+{{- define "body" -}}
+<div class="dash-header">
+  <div>
+    <h1>Settings</h1>
+    <p class="muted">Workspace info. Detailed configuration moves here in a follow-up change.</p>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-head"><h3>Workspace</h3></div>
+  <div class="setting-row">
+    <span class="setting-label">Mode</span>
+    <span class="setting-value">self-hosted</span>
+  </div>
+  <div class="setting-row">
+    <span class="setting-label">Admin API base</span>
+    <a class="setting-value" id="setting-host" href="" title="Click to copy to clipboard" style="cursor: pointer;">…</a>
+  </div>
+  <div class="setting-row">
+    <span class="setting-label">MITM CA</span>
+    <span class="setting-value"><a href="/_api/ca.crt">Download ca.crt</a></span>
+  </div>
+  <div class="setting-row">
+    <span class="setting-label">Onboarding wizard</span>
+    <span class="setting-value"><a href="/_admin/onboarding/connect">Run again</a></span>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-head"><h3>Identity</h3></div>
+  <div class="setting-row">
+    <span class="setting-label">Logged in as</span>
+    <span class="setting-value" id="setting-subject">…</span>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-head"><h3>Sign out</h3></div>
+  <div style="padding: 16px 20px;">
+    <p class="muted" style="margin: 0 0 12px;">Clears your admin session cookie. The JWT itself stays valid until its expiry.</p>
+    <form id="logout-form">
+      <button type="submit" class="btn btn-danger btn-sm">Sign out</button>
+    </form>
+    <p id="logout-status" class="muted hidden" style="margin: 10px 0 0; font-size: 13px;"></p>
+  </div>
+</div>
+{{- end -}}
+
+{{- define "page-script" -}}
+<script>
+const hostEl = document.getElementById("setting-host");
+const protocol = window.location.protocol;
+const host = window.location.host;
+const baseUrl = `${protocol}//${host}`;
+hostEl.textContent = host;
+hostEl.href = baseUrl;
+hostEl.addEventListener("click", (e) => {
+  e.preventDefault();
+  navigator.clipboard.writeText(baseUrl).then(() => {
+    const originalText = hostEl.textContent;
+    hostEl.textContent = "Copied!";
+    setTimeout(() => {
+      hostEl.textContent = originalText;
+    }, 2000);
+  }).catch(() => {
+    // Fallback for browsers without clipboard API
+    alert("Admin API base: " + baseUrl);
+  });
+});
+fetch("/_api/whoami").then(r => r.ok ? r.json() : null).then(d => {
+  const el = document.getElementById("setting-subject");
+  if (!d) { el.textContent = "(anonymous)"; return; }
+  el.textContent = `${d.subject || "—"} · ${d.role || "—"}`;
+}).catch(() => {
+  document.getElementById("setting-subject").textContent = "(unavailable)";
+});
+
+document.getElementById("logout-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const status = document.getElementById("logout-status");
+  status.classList.remove("hidden");
+  status.textContent = "Signing out…";
+  status.className = "";
+  try {
+    const resp = await fetch("/_api/admin/logout", { method: "POST" });
+    if (!resp.ok && resp.status !== 204) {
+      status.textContent = "HTTP " + resp.status;
+      status.className = "err";
+      return;
+    }
+    window.location.href = "/_admin/login";
+  } catch (err) {
+    status.textContent = "Network error: " + err.message;
+    status.className = "err";
+  }
+});
+</script>
+{{- end -}}

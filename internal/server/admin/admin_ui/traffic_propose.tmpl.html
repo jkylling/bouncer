@@ -3,93 +3,9 @@ detail view. Renders a low-code form whose checkboxes pick which
 recorded fields participate in the policy condition; can also be
 toggled into freeform YAML editing. Submit creates a proposal (or
 proposes-and-approves for admins). */ -}}
-{{- define "page-style" -}}
-  :root {
-    --success-bg: rgba(26, 127, 55, 0.10);
-    --danger-bg: rgba(207, 34, 46, 0.10);
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --success-bg: rgba(63, 185, 80, 0.15);
-      --danger-bg: rgba(248, 81, 73, 0.15);
-    }
-  }
-
-  label.row { display: flex; align-items: center; gap: 0.5rem; margin: 0.4rem 0; font-size: 0.95rem; flex-wrap: wrap; }
-  label.row > input, label.row > select { display: inline-block; width: auto; flex: 1; min-width: 12rem; }
-  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
-  @media (max-width: 40rem) { .form-grid { grid-template-columns: 1fr; } }
-
-  .field-list { max-height: 24rem; overflow-y: auto; padding: 0.4rem 0.6rem; border: 1px solid var(--border); border-radius: 0.4rem; background: var(--bg); }
-  .field-row { display: grid; grid-template-columns: auto 1fr auto; gap: 0.5rem; align-items: center; padding: 0.35rem 0; }
-  .field-row + .field-row { border-top: 1px dashed var(--border); }
-  .field-row code { font-size: 0.85rem; word-break: break-all; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-  .field-row .preview { color: var(--text-muted); font-size: 0.85rem; word-break: break-all; }
-  .field-row select { display: inline-block; width: auto; font-size: 0.85rem; padding: 0.2rem 0.4rem; min-height: 0; margin: 0; }
-  .field-row input[type="checkbox"] { width: 1.1rem; height: 1.1rem; min-height: 0; margin: 0; accent-color: var(--accent); }
-
-  pre.preview-cel { background: var(--surface-2); border: 1px solid var(--border); padding: 0.7rem; border-radius: 0.4rem; font-size: 0.9rem; white-space: pre-wrap; word-break: break-all; margin: 0.5rem 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-
-  /* Source-request summary: a compact key/value grid plus optional
-     bind detail blocks. Mirrors the data the propose engine sees so
-     the reviewer doesn't have to flip back to the traffic page to
-     remember what the request was. */
-  dl.source-grid { display: grid; grid-template-columns: max-content 1fr; gap: 0.35rem 1rem; margin: 0; font-size: 0.95rem; }
-  dl.source-grid dt { color: var(--text-muted); font-weight: 500; }
-  dl.source-grid dd { margin: 0; word-break: break-all; }
-  dl.source-grid code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; }
-  .source-binds details { background: var(--bg); border: 1px solid var(--border); border-radius: 0.35rem; padding: 0.4rem 0.6rem; margin-bottom: 0.4rem; }
-  .source-binds details:last-child { margin-bottom: 0; }
-  .source-binds summary { cursor: pointer; padding: 0.15rem 0; color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9rem; }
-  .source-binds pre { background: var(--surface-2); border: 1px solid var(--border); padding: 0.6rem; border-radius: 0.35rem; font-size: 0.85rem; white-space: pre-wrap; word-break: break-all; margin: 0.4rem 0 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-  .compile { padding: 0.5rem 0.75rem; border-radius: 0.4rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; white-space: pre-wrap; }
-  .compile-ok { background: var(--success-bg); color: var(--success); }
-  .compile-err { background: var(--danger-bg); color: var(--danger); }
-
-  .actions { display: flex; gap: 0.5rem; margin-top: 1rem; align-items: center; flex-wrap: wrap; }
-  .actions a { color: var(--accent); }
-  .actions .spacer { flex: 1; }
-  details.advanced { margin-top: 0.5rem; }
-  details.advanced summary { cursor: pointer; font-size: 0.95rem; color: var(--text-muted); padding: 0.3rem 0; }
-
-  /* Split button: GitHub merge-button shape — main action + caret
-     dropdown sharing one bordered group. The caret toggle is a
-     primary button so the colour matches; only the inner divider
-     and the menu popover need bespoke rules. */
-  .split-btn { display: inline-flex; position: relative; }
-  .split-btn > button { border-radius: 0; }
-  .split-btn > button:first-child {
-    border-top-left-radius: 0.35rem; border-bottom-left-radius: 0.35rem;
-  }
-  .split-btn > button.split-caret {
-    padding: 0.45rem 0.6rem; min-width: 2.2rem;
-    border-top-right-radius: 0.35rem; border-bottom-right-radius: 0.35rem;
-    border-left: 1px solid rgba(255, 255, 255, 0.25);
-  }
-  .split-menu {
-    position: absolute; top: calc(100% + 0.3rem); left: 0;
-    min-width: 24rem;
-    background: var(--bg); color: var(--text);
-    border: 1px solid var(--border); border-radius: 0.5rem;
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
-    padding: 0.3rem; z-index: 20;
-  }
-  .split-menu[hidden] { display: none; }
-  .split-menu button {
-    display: block; width: 100%; text-align: left;
-    padding: 0.55rem 0.65rem;
-    border: 0; background: transparent; color: var(--text);
-    border-radius: 0.35rem; cursor: pointer;
-    min-height: 0;
-  }
-  .split-menu button:hover:not(:disabled) { background: var(--surface); }
-  .split-menu button:disabled { cursor: not-allowed; opacity: 0.55; }
-  .split-menu button strong { display: block; font-size: 0.95rem; font-weight: 600; }
-  .split-menu button .menu-desc { display: block; font-size: 0.85rem; color: var(--text-muted); margin-top: 0.15rem; }
-  .split-menu button[aria-checked="true"] strong::before { content: "✓ "; color: var(--accent); }
-{{- end -}}
 
 {{- define "body" -}}
+<div id="traffic-propose">
 <h1>Propose policy from request</h1>
 <p class="lede">A policy whose condition matches this request &mdash; by default every recorded field is part of the match. Uncheck fields to generalize, the way you'd relax labels on an AlertManager silence. Approve in <a href="/_admin/proposals">Proposals</a>.</p>
 
@@ -192,13 +108,13 @@ async function loadSource() {
     renderSource(await resp.json());
   } catch (e) {
     document.getElementById("source-summary").innerHTML =
-      `<dt>Source request</dt><dd class="err">${escapeHTML(e.message)}</dd>`;
+      `<dt>Source request</dt><dd class="err">${esc(e.message)}</dd>`;
   }
 }
 
 function renderSource(ev) {
-  const fmt = (s) => s == null || s === "" ? '<span class="muted">(none)</span>' : escapeHTML(String(s));
-  const code = (s) => s == null || s === "" ? '<span class="muted">(none)</span>' : `<code>${escapeHTML(String(s))}</code>`;
+  const fmt = (s) => s == null || s === "" ? '<span class="muted">(none)</span>' : esc(String(s));
+  const code = (s) => s == null || s === "" ? '<span class="muted">(none)</span>' : `<code>${esc(String(s))}</code>`;
   let when = ev.timestamp || "";
   try { when = new Date(ev.timestamp).toLocaleString(); } catch {}
   document.getElementById("source-summary").innerHTML = `
@@ -206,9 +122,9 @@ function renderSource(ev) {
     <dt>URL</dt><dd>${code(ev.url)}</dd>
     <dt>API</dt><dd>${fmt(ev.api)}</dd>
     <dt>Action</dt><dd>${fmt(ev.action)}</dd>
-    <dt>Decision</dt><dd class="decision-${escapeHTML(ev.decision || "")}">${fmt(ev.decision)}</dd>
+    <dt>Decision</dt><dd class="decision-${esc(ev.decision || "")}">${fmt(ev.decision)}</dd>
     <dt>Subject</dt><dd>${fmt(ev.subject)}</dd>
-    <dt>Time</dt><dd>${escapeHTML(when)}</dd>
+    <dt>Time</dt><dd>${esc(when)}</dd>
   `;
 
   if (Array.isArray(ev.binds) && ev.binds.length) {
@@ -245,12 +161,6 @@ let ppListMatch = {};
 let ppLastResult = null;
 let ppFreeform = false;       // user edited the YAML — propose engine is bypassed
 let ppNameTouched = false;
-
-function escapeHTML(s) {
-  return String(s).replace(/[&<>"']/g, c => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
-  })[c]);
-}
 
 async function ppFetch() {
   const body = { result: ppResultEl.value };
@@ -302,7 +212,7 @@ function ppShowUnproposable(reason) {
   box.style.padding = "1rem";
   box.style.lineHeight = "1.6";
   box.innerHTML = `<strong>This request can't be turned into a policy.</strong><br>` +
-    `${escapeHTML(reason)}<br><br>` +
+    `${esc(reason)}<br><br>` +
     `<a href="/_admin/traffic">Back to traffic viewer</a>`;
   document.body.appendChild(box);
 }
@@ -334,7 +244,7 @@ function ppRenderFields(fields) {
     });
     const label = document.createElement("label");
     label.htmlFor = cb.id;
-    label.innerHTML = `<code>${escapeHTML(f.path)}</code> <span class="preview">${escapeHTML(JSON.stringify(f.value))}</span>`;
+    label.innerHTML = `<code>${esc(f.path)}</code> <span class="preview">${esc(JSON.stringify(f.value))}</span>`;
     label.style.cursor = "pointer";
     row.appendChild(cb);
     row.appendChild(label);
@@ -598,4 +508,5 @@ function cssEscape(s) {
 
 ppFetch();
 </script>
+</div>
 {{- end -}}

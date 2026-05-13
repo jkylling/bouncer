@@ -1,0 +1,414 @@
+{{- /*
+traffic_list.tmpl.html — shared partial for the traffic viewer.
+
+Mirrors policies_list.tmpl.html. Three blocks (style, body, script)
+plus one JS function:
+
+  setupTrafficList(host, scope)
+
+  scope == null     → global mode (operator filters via the form).
+  scope.apis        → array of API names; lock the filter to these
+                      via repeated ?api=… on every fetch. The API
+                      input in the form is read-only in scoped mode.
+
+Both /_admin/traffic and the Traffic tab on /_admin/services/{slug}
+parse this partial via templates.go's ParseFS glob.
+*/ -}}
+
+
+{{- define "traffic_list_body" -}}
+<div data-traffic-list>
+  <div class="card">
+    <div class="card-head">
+      <h3>Recent requests <span class="muted tl-status" style="font-weight: 400; font-size: 12.5px;"></span></h3>
+      <div style="display: flex; gap: 8px; align-items: center;">
+        <label class="tl-auto-wrap" style="font-size: 13px; color: var(--text-muted); display: inline-flex; gap: 6px; align-items: center;">
+          <input type="checkbox" class="tl-auto" style="width: auto; min-height: 0; margin: 0;"> auto-refresh
+        </label>
+        <button type="button" class="btn btn-secondary btn-sm tl-refresh">Refresh</button>
+      </div>
+    </div>
+
+    <form class="tl-filters card-body" style="padding-bottom: 4px;">
+      <label>API
+        <div class="multiselect-wrapper">
+          <button type="button" class="multiselect-toggle tl-f-api-toggle">
+            <span class="multiselect-toggle-label">any</span>
+            <span style="font-size: 10px;">▼</span>
+          </button>
+          <div class="multiselect-dropdown tl-f-api-dropdown"></div>
+          <select class="tl-f-api" name="api" style="display: none;" multiple></select>
+        </div>
+      </label>
+      <label>Action
+        <select class="tl-f-action" name="action">
+          <option value="">any</option>
+        </select>
+      </label>
+      <label>Method
+        <select class="tl-f-method" name="method">
+          <option value="">any</option>
+          <option>GET</option><option>POST</option><option>PUT</option>
+          <option>DELETE</option><option>PATCH</option>
+        </select>
+      </label>
+      <label>Decision
+        <select class="tl-f-decision" name="decision">
+          <option value="">any</option>
+          <option value="permit">permit</option>
+          <option value="deny">deny</option>
+          <option value="no_match">no_match</option>
+          <option value="error">error</option>
+        </select>
+      </label>
+      <label>Path prefix <input class="tl-f-path-prefix" name="path_prefix" autocomplete="off"></label>
+    </form>
+
+    <div class="tl-table-wrap tl-table-wrap-bare">
+      <table class="tl-table">
+        <thead>
+          <tr>
+            <th class="tl-col-time">Time</th>
+            <th class="tl-col-method">Method</th>
+            <th class="tl-col-path">Path</th>
+            <th class="tl-col-api">API</th>
+            <th class="tl-col-decision">Decision</th>
+            <th class="tl-col-status">Status</th>
+            <th class="tl-col-latency">Latency</th>
+            <th class="tl-col-subject">Subject</th>
+          </tr>
+        </thead>
+        <tbody class="tl-rows"></tbody>
+      </table>
+    </div>
+
+    <div class="tl-actions tl-actions-foot">
+      <button type="button" class="btn btn-secondary btn-sm tl-more hidden">Load more</button>
+    </div>
+  </div>
+</div>
+{{- end -}}
+
+{{- define "traffic_list_script" -}}
+<script>
+function setupTrafficList(host, scope) {
+  if (!host) return;
+  const $ = (sel) => host.querySelector(sel);
+  const rowsEl = $(".tl-rows");
+  const filtersEl = $(".tl-filters");
+  const statusEl = $(".tl-status");
+  const moreBtn = $(".tl-more");
+  const autoEl = $(".tl-auto");
+  const refreshBtn = $(".tl-refresh");
+  const apiInput = $(".tl-f-api");
+  const actionInput = $(".tl-f-action");
+  const apiToggleBtn = $(".tl-f-api-toggle");
+  const apiDropdown = $(".tl-f-api-dropdown");
+  const apiToggleLabel = apiToggleBtn.querySelector(".multiselect-toggle-label");
+
+  const scopedAPIs = (scope && scope.apis && scope.apis.length > 0) ? scope.apis.slice() : null;
+  if (scopedAPIs) {
+    apiToggleBtn.dataset.scoped = "true";
+    apiToggleBtn.title = "Scoped to this service's APIs";
+  }
+
+  let nextCursor = "";
+  let autoTimer = null;
+  const expanded = new Set();
+  const detailCache = new Map();
+  const colspanCount = 8; // total table columns (removed Type column)
+  let allAPIs = []; // Cache for available APIs and actions
+
+  // Set up multiselect dropdown with shared utility
+  const { populate: populateAPIs, updateSelection: updateAPISelection } = setupMultiselect(host, {
+    toggleBtn: apiToggleBtn,
+    dropdown: apiDropdown,
+    selectEl: apiInput,
+    optionClassName: "multiselect-option",
+    emptyLabel: "any",
+    onUpdate: updateActionDropdown
+  });
+
+  function escapeHTML(s) {
+    return String(s).replace(/[&<>"']/g, c => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    })[c]);
+  }
+  function fmtTime(s) {
+    const d = new Date(s);
+    if (isNaN(d)) return s;
+    return d.toLocaleString();
+  }
+
+  // loadAPIs fetches the available APIs from /_api/apis and populates the dropdowns
+  async function loadAPIs() {
+    try {
+      const resp = await fetch("/_api/apis");
+      if (!resp.ok) return;
+      const data = await resp.json();
+      if (!data.apis || !Array.isArray(data.apis)) return;
+      allAPIs = data.apis;
+      populateAPIDropdown();
+    } catch (err) {
+      console.error("Failed to load APIs:", err);
+    }
+  }
+
+  function populateAPIDropdown() {
+    // In scoped mode, only show APIs that are in the scope
+    const availableAPIs = scopedAPIs
+      ? allAPIs.filter(a => scopedAPIs.includes(a.name))
+      : allAPIs;
+    // Use shared utility to populate the dropdown
+    populateAPIs(availableAPIs);
+  }
+
+  function updateActionDropdown() {
+    const currentAction = actionInput.value;
+    actionInput.innerHTML = '<option value="">any</option>';
+
+    let actionsSet = new Set();
+    // Get all currently selected APIs from the multi-select
+    const selectedAPIs = Array.from(apiInput.selectedOptions)
+      .map(o => o.value)
+      .filter(v => v); // filter out "any" option
+
+    if (selectedAPIs.length > 0) {
+      // Show actions from all selected APIs
+      for (const apiName of selectedAPIs) {
+        const api = allAPIs.find(a => a.name === apiName);
+        if (api && api.actions && Array.isArray(api.actions)) {
+          for (const action of api.actions) {
+            actionsSet.add(action.name);
+          }
+        }
+      }
+    } else {
+      // If no specific API selected (or "any" selected), show all actions
+      for (const api of allAPIs) {
+        if (api.actions && Array.isArray(api.actions)) {
+          for (const action of api.actions) {
+            actionsSet.add(action.name);
+          }
+        }
+      }
+    }
+
+    // Add all actions to the dropdown, sorted
+    const actions = Array.from(actionsSet).sort();
+    for (const actionName of actions) {
+      const opt = document.createElement("option");
+      opt.value = actionName;
+      opt.textContent = actionName;
+      actionInput.appendChild(opt);
+    }
+    actionInput.value = currentAction;
+  }
+
+  // buildQuery composes /_api/traffic?… from the form + scope. Scoped
+  // mode uses selected APIs from the dropdown (which are constrained to
+  // the scope's API set). Global mode forwards selected APIs from the
+  // multi-select dropdown.
+  function buildQuery(opts) {
+    const f = new FormData(filtersEl);
+    const q = new URLSearchParams();
+    for (const [k, v] of f.entries()) {
+      if (k === "api") continue; // handled below
+      if (v) q.set(k, v);
+    }
+    if (opts.cursor) q.set("cursor", opts.cursor);
+    const selectedAPIs = f.getAll("api").filter(a => a); // getAll includes all selected options
+    if (selectedAPIs.length > 0) {
+      for (const a of selectedAPIs) q.append("api", a);
+    }
+    return q;
+  }
+
+  const URL_PREVIEW_MAX = 80;
+  function truncateURL(u) {
+    if (!u || u.length <= URL_PREVIEW_MAX) return u;
+    return u.slice(0, URL_PREVIEW_MAX - 1) + "…";
+  }
+
+  async function fetchPage({ append = false } = {}) {
+    statusEl.textContent = "Loading…";
+    statusEl.classList.remove("err");
+    try {
+      const cursor = append ? nextCursor : "";
+      const q = buildQuery({ cursor });
+      const resp = await fetch("/_api/traffic?" + q.toString());
+      if (!resp.ok) {
+        const t = await resp.text();
+        statusEl.textContent = `HTTP ${resp.status}: ${t.trim()}`;
+        statusEl.classList.add("err");
+        return;
+      }
+      const data = await resp.json();
+      if (!append) {
+        rowsEl.innerHTML = "";
+        detailCache.clear();
+      }
+      if (!data.rows || data.rows.length === 0) {
+        if (!append) rowsEl.innerHTML = `<tr><td colspan="${colspanCount}" class="tl-empty">No requests captured yet.</td></tr>`;
+      } else {
+        // Collect special API types from the rows
+        const specialTypes = new Set(["admin", "mcp", "unknown"]);
+        const foundTypes = new Set();
+        for (const row of data.rows) {
+          appendRow(row);
+          if (specialTypes.has(row.api)) foundTypes.add(row.api);
+        }
+        // Add found special types to the API dropdown if not already there
+        if (foundTypes.size > 0) {
+          for (const type of foundTypes) {
+            if (!allAPIs.find(a => a.name === type)) {
+              allAPIs.push({ name: type });
+            }
+          }
+          populateAPIDropdown();
+        }
+      }
+      nextCursor = data.next_cursor || "";
+      moreBtn.classList.toggle("hidden", !nextCursor);
+      statusEl.textContent = `${rowsEl.querySelectorAll("tr.tl-summary").length} rows`;
+    } catch (err) {
+      statusEl.textContent = "Network error: " + err.message;
+      statusEl.classList.add("err");
+    }
+  }
+
+  function appendRow(row) {
+    const tr = document.createElement("tr");
+    tr.className = "tl-summary";
+    tr.dataset.id = row.id;
+    tr.innerHTML = `
+      <td class="tl-col-time">${escapeHTML(fmtTime(row.timestamp))}</td>
+      <td class="tl-method">${escapeHTML(row.method || "")}</td>
+      <td class="tl-url" title="${escapeHTML(row.url || "")}">${escapeHTML(truncateURL(row.url || ""))}</td>
+      <td class="tl-col-api">${escapeHTML(row.api || "")}</td>
+      <td class="tl-decision-${escapeHTML(row.decision || "")}">${escapeHTML(row.decision || "")}</td>
+      <td class="tl-col-status">${row.upstream_status || ""}</td>
+      <td class="tl-col-latency">${row.latency_ms ?? ""} ms</td>
+      <td class="tl-col-subject">${escapeHTML(row.subject || "")}</td>
+    `;
+    rowsEl.appendChild(tr);
+
+    const detailTr = document.createElement("tr");
+    detailTr.className = "tl-detail-row hidden";
+    detailTr.innerHTML = `
+      <td colspan="${colspanCount}">
+        <div class="tl-detail-toolbar"></div>
+        <div class="tl-policy-evals" hidden></div>
+        <pre class="tl-detail">Loading…</pre>
+      </td>`;
+    rowsEl.appendChild(detailTr);
+
+    tr.addEventListener("click", () => toggleExpanded(row.id, tr, detailTr));
+    if (expanded.has(row.id)) {
+      detailTr.classList.remove("hidden");
+      tr.classList.add("tl-expanded");
+      loadDetail(row.id, detailTr);
+    }
+  }
+
+  async function toggleExpanded(id, tr, detailTr) {
+    const isOpen = !detailTr.classList.contains("hidden");
+    detailTr.classList.toggle("hidden", isOpen);
+    tr.classList.toggle("tl-expanded", !isOpen);
+    if (isOpen) { expanded.delete(id); return; }
+    expanded.add(id);
+    loadDetail(id, detailTr);
+  }
+
+  async function loadDetail(id, detailTr) {
+    const pre = detailTr.querySelector("pre.tl-detail");
+    const evalsBox = detailTr.querySelector(".tl-policy-evals");
+    if (detailCache.has(id)) {
+      const cached = detailCache.get(id);
+      pre.textContent = cached.text;
+      renderPolicyEvals(evalsBox, cached.policyEvals, cached.api);
+      return;
+    }
+    pre.textContent = "Loading…";
+    evalsBox.hidden = true;
+    try {
+      const resp = await fetch("/_api/traffic/" + encodeURIComponent(id));
+      if (!resp.ok) {
+        pre.textContent = `HTTP ${resp.status}: ${(await resp.text()).trim()}`;
+        return;
+      }
+      const ev = await resp.json();
+      const text = JSON.stringify(ev, null, 2);
+      const policyEvals = ev.policy_evaluations || [];
+      detailCache.set(id, { text, policyEvals, api: ev.api });
+      pre.textContent = text;
+      renderPolicyEvals(evalsBox, policyEvals, ev.api);
+    } catch (err) {
+      pre.textContent = "Network error: " + err.message;
+    }
+  }
+
+  function renderPolicyEvals(box, evals, api) {
+    if (!evals.length) { box.hidden = true; box.innerHTML = ""; return; }
+    const rows = evals.map(e => {
+      const fired = e.fired ? '<span class="tl-fired-marker">●</span>' : "";
+      const cls = e.fired ? "tl-fired" : "";
+      const effectCls = e.fired ? "" : "tl-effect-muted";
+      const errCell = e.error ? `<td class="tl-err">${escapeHTML(e.error)}</td>` : "<td></td>";
+      const policyName = escapeHTML(e.policy || "");
+      const policyCell = api && e.policy
+        ? `<a class="tl-policy-link" href="/_admin/policies?api=${encodeURIComponent(api)}&policy=${encodeURIComponent(e.policy)}" title="Edit policy">${policyName}</a>`
+        : policyName;
+      return `<tr class="${cls}">
+        <td>${policyCell}</td>
+        <td>${escapeHTML(e.action || "")}</td>
+        <td class="${effectCls}">${escapeHTML(e.result || "")}</td>
+        <td>${fired}</td>
+        ${errCell}
+      </tr>`;
+    }).join("");
+    box.innerHTML = `
+      <h3>Policies evaluated</h3>
+      <table>
+        <thead><tr><th>Policy</th><th>Action</th><th title="What the policy would do if its condition fired">Effect</th><th>Fired</th><th>Error</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+    box.hidden = false;
+  }
+
+  refreshBtn.addEventListener("click", () => fetchPage());
+  moreBtn.addEventListener("click", () => fetchPage({ append: true }));
+  filtersEl.addEventListener("change", (e) => {
+    if (e.target === apiInput) updateActionDropdown();
+    fetchPage();
+  });
+  filtersEl.addEventListener("submit", (e) => { e.preventDefault(); fetchPage(); });
+
+  autoEl.addEventListener("change", () => {
+    if (autoEl.checked) {
+      autoTimer = setInterval(() => fetchPage(), 5000);
+    } else {
+      clearInterval(autoTimer);
+      autoTimer = null;
+    }
+  });
+
+  // Expose so the parent page can re-pull when the surrounding
+  // service config changes.
+  host.refresh = () => fetchPage();
+
+  // Load APIs for the dropdowns and populate scoped APIs if needed
+  loadAPIs().then(() => {
+    if (scopedAPIs) {
+      // In scoped mode, select all scoped APIs by default
+      for (const api of scopedAPIs) {
+        const opts = Array.from(apiInput.options).filter(o => o.value === api);
+        for (const opt of opts) opt.selected = true;
+      }
+      updateActionDropdown();
+    }
+    fetchPage();
+  });
+}
+</script>
+{{- end -}}

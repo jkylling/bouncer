@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jkylling/bouncer/internal/control/store"
 	"github.com/jkylling/bouncer/internal/control/traffic"
 	"github.com/jkylling/bouncer/internal/server/admin"
 )
@@ -22,10 +21,7 @@ import (
 // against the package-shared dev keys.
 func newTrafficSrv(t *testing.T, principal admin.PrincipalExtractor) (*httptest.Server, traffic.Store, string) {
 	t.Helper()
-	s, err := traffic.Open(store.Memory(), traffic.Options{})
-	if err != nil {
-		t.Fatalf("traffic.Open: %v", err)
-	}
+	s := traffic.NewMemoryStore(traffic.Options{})
 	keys := newTestKeys(t)
 	r := authedRouter(keys)
 	admin.MountTraffic(r, s, principal)
@@ -189,52 +185,6 @@ func TestTrafficGetCrossSubject404(t *testing.T) {
 		t.Errorf("status = %d, want 404 for cross-subject access", resp.StatusCode)
 	}
 }
-
-func TestTrafficPinAndUnpin(t *testing.T) {
-	srv, store, bearer := newTrafficSrv(t, nil)
-	now := time.Now().UTC().Truncate(time.Millisecond).Add(-time.Minute)
-	ev := newEvent("gmail", traffic.DecisionPermit, "alice", now)
-	mustInsert(t, store, ev)
-
-	req := authedRequest(t, "PUT", srv.URL+"/_api/traffic/"+ev.ID.String()+"/pin", bearer)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("pin: %v", err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusNoContent {
-		t.Errorf("pin status = %d, want 204", resp.StatusCode)
-	}
-
-	got, _ := store.Get(context.Background(), ev.ID)
-	if !got.Pinned {
-		t.Error("Pinned = false after PUT pin")
-	}
-
-	req = authedRequest(t, "DELETE", srv.URL+"/_api/traffic/"+ev.ID.String()+"/pin", bearer)
-	resp, err = http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("unpin: %v", err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusNoContent {
-		t.Errorf("unpin status = %d, want 204", resp.StatusCode)
-	}
-}
-
-func TestTrafficPinUnknown404(t *testing.T) {
-	srv, _, bearer := newTrafficSrv(t, nil)
-	req := authedRequest(t, "PUT", srv.URL+"/_api/traffic/deadbeef/pin", bearer)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("pin: %v", err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("status = %d, want 404", resp.StatusCode)
-	}
-}
-
 func TestTrafficPagination(t *testing.T) {
 	srv, store, bearer := newTrafficSrv(t, nil)
 	base := time.Now().UTC().Truncate(time.Millisecond).Add(-time.Minute)
@@ -269,31 +219,6 @@ func TestTrafficPagination(t *testing.T) {
 // expected content type, and that a sentinel string from the page
 // shows up in the body so a future "wrong file embedded" regression
 // fails here.
-// TestTrafficProposeUIServesHTML pins the per-event propose page:
-// it lives at /_admin/traffic/{id}/propose, serves the embedded
-// HTML shell, and references the API endpoint it POSTs to so a
-// future rewire surfaces here.
-func TestTrafficProposeUIServesHTML(t *testing.T) {
-	srv, _, bearer := newTrafficSrv(t, nil)
-	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/_admin/traffic/evt_1/propose", nil)
-	req.Header.Set("Authorization", bearer)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
-	}
-	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
-		t.Errorf("content-type = %q", ct)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	if !strings.Contains(string(body), "propose-policy") {
-		t.Errorf("page does not reference /_api/.../propose-policy — JS won't post anywhere")
-	}
-}
-
 func TestTrafficUIServesHTML(t *testing.T) {
 	// UI shell now redirects anonymous callers to the login page,
 	// so we authenticate.
@@ -313,7 +238,7 @@ func TestTrafficUIServesHTML(t *testing.T) {
 		if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
 			t.Errorf("%s content-type = %q, want text/html prefix", path, ct)
 		}
-		if !strings.Contains(string(body), "Traffic viewer") {
+		if !strings.Contains(string(body), "<h1>Traffic</h1>") {
 			t.Errorf("%s body missing the page heading", path)
 		}
 	}

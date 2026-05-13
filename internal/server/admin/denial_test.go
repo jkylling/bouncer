@@ -34,9 +34,6 @@ func TestWriteDenialEmitsNextSteps(t *testing.T) {
 	if got.NextSteps.Policies != PoliciesPath {
 		t.Errorf("policies = %q", got.NextSteps.Policies)
 	}
-	if got.NextSteps.ProposePolicy != ProposalsPath {
-		t.Errorf("propose_policy = %q", got.NextSteps.ProposePolicy)
-	}
 	if got.NextSteps.Docs != DocsPath {
 		t.Errorf("docs = %q", got.NextSteps.Docs)
 	}
@@ -51,18 +48,18 @@ func TestWriteDenialEmitsNextSteps(t *testing.T) {
 // TestWriteDenialDetailIncludesAPIAndActions pins the policy-deny
 // body contract: when the data plane denies a request, the body
 // surfaces the matched API and the action names whose match logic
-// fired so the agent can draft a permitting proposal without a
+// fired so the agent can draft a permitting policy without a
 // separate GET /_api/apis round-trip.
 func TestWriteDenialDetailIncludesAPIAndActions(t *testing.T) {
 	w := httptest.NewRecorder()
 	WriteDenialDetail(w, http.StatusForbidden, "policy denied this request",
-		"gmail", []string{"get_message", "modify_message"})
+		"google.gmail", []string{"get_message", "modify_message"})
 
 	var got DenialResponse
 	if err := json.NewDecoder(w.Result().Body).Decode(&got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if got.API != "gmail" {
+	if got.API != "google.gmail" {
 		t.Errorf("api = %q, want gmail", got.API)
 	}
 	want := []string{"get_message", "modify_message"}

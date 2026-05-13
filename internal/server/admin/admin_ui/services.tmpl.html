@@ -1,0 +1,70 @@
+{{- /* services list — one row per bundle-declared service.
+
+   Reads /_api/services. Click a row to navigate to the
+   service-detail page (configure token + suggested policies).
+*/ -}}
+
+{{- define "body" -}}
+<div id="services">
+<h1>Services</h1>
+<p class="lede">
+  Upstream APIs bouncer can proxy. Connect once per service.
+</p>
+
+<div id="svc-host">
+  <div class="svc-empty">Loading…</div>
+</div>
+{{- end -}}
+
+{{- define "page-script" -}}
+<script>
+function initial(s) { return (s || "?").charAt(0).toUpperCase(); }
+
+async function render() {
+  const host = document.getElementById("svc-host");
+  let data;
+  try {
+    const resp = await fetch("/_api/services");
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    data = await resp.json();
+  } catch (err) {
+    host.innerHTML = `<div class="svc-empty err">Failed to load services: ${esc(err.message)}</div>`;
+    return;
+  }
+  const services = data.services || [];
+  if (services.length === 0) {
+    host.innerHTML = `<div class="svc-empty">
+      No services registered yet. Install a bundle with
+      <code>bouncer apis add github.com/&lt;org&gt;/&lt;bundle&gt;</code>
+      and reload.
+    </div>`;
+    return;
+  }
+  const sp = new URLSearchParams(window.location.search);
+  const ob = sp.get("onboarding") ? "?onboarding=1" : "";
+  host.innerHTML = `<div class="svc-list">` + services.map(s => {
+    const pills = [];
+    if (s.connected) {
+      pills.push(`<span class="svc-pill ok">connected${s.connected_variant ? " via " + esc(s.connected_variant) : ""}</span>`);
+    } else {
+      pills.push(`<span class="svc-pill warn">not configured</span>`);
+    }
+    if (s.oauth_available) pills.push(`<span class="svc-pill">OAuth</span>`);
+    return `
+      <a class="svc-card" href="/_admin/services/${esc(s.slug)}${ob}">
+        <div class="svc-icon">${esc(initial(s.title))}</div>
+        <div class="svc-meta">
+          <span class="svc-name">${esc(s.title)}</span>
+          ${s.description ? `<span class="svc-desc">${esc(s.description)}</span>` : ""}
+          <div class="svc-pills">${pills.join("")}</div>
+        </div>
+        <span class="svc-chev">›</span>
+      </a>
+    `;
+  }).join("") + `</div>`;
+}
+
+render();
+</script>
+</div>
+{{- end -}}
