@@ -22,7 +22,7 @@ func stageBundleDir(t *testing.T) string {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, bundles.APIsSubdir, "a.yaml"),
-		[]byte("name: gmail\nbase_url: https://x\npath_prefixes: [/g]\n"), 0o600); err != nil {
+		[]byte("name: google.gmail\nbase_url: https://x\npath_prefixes: [/g]\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
@@ -39,7 +39,8 @@ func TestRunAddFromDirInstallsBundle(t *testing.T) {
 	vendored := t.TempDir()
 
 	const refStr = "github.com/jkylling/bouncer-gws@dev"
-	if err := runAddFromDir(src, refStr, "", vendored, map[string]string{"gmail": "acme-gmail"}, true); err != nil {
+	o := &addOpts{FromDir: src, RefOverride: refStr, SkipAllowlist: true}
+	if err := runAddFromDir(o, vendored, map[string]string{"google.gmail": "acme-gmail"}); err != nil {
 		t.Fatalf("from-dir: %v", err)
 	}
 
@@ -67,7 +68,7 @@ func TestRunAddFromDirInstallsBundle(t *testing.T) {
 	if got.ResolvedSHA != "dev" {
 		t.Errorf("ResolvedSHA = %q, want dev", got.ResolvedSHA)
 	}
-	if got.APIRenames["gmail"] != "acme-gmail" {
+	if got.APIRenames["google.gmail"] != "acme-gmail" {
 		t.Errorf("rename not applied: %v", got.APIRenames)
 	}
 }
@@ -77,24 +78,27 @@ func TestRunAddFromDirRefusesIfInstalled(t *testing.T) {
 	vendored := t.TempDir()
 	const refStr = "github.com/jkylling/bouncer-gws@dev"
 
-	if err := runAddFromDir(src, refStr, "", vendored, nil, true); err != nil {
+	o := &addOpts{FromDir: src, RefOverride: refStr, SkipAllowlist: true}
+	if err := runAddFromDir(o, vendored, nil); err != nil {
 		t.Fatalf("first install: %v", err)
 	}
-	if err := runAddFromDir(src, refStr, "", vendored, nil, true); err == nil {
+	if err := runAddFromDir(o, vendored, nil); err == nil {
 		t.Fatal("second install: want error")
 	}
 }
 
 func TestRunAddFromDirRequiresRef(t *testing.T) {
 	src := stageBundleDir(t)
-	if err := runAddFromDir(src, "", "", t.TempDir(), nil, true); err == nil {
+	o := &addOpts{FromDir: src, SkipAllowlist: true}
+	if err := runAddFromDir(o, t.TempDir(), nil); err == nil {
 		t.Fatal("missing --ref: want error")
 	}
 }
 
 func TestRunAddFromDirRejectsMissingManifest(t *testing.T) {
 	dir := t.TempDir() // no apis.yaml
-	if err := runAddFromDir(dir, "github.com/x/y@v1", "", t.TempDir(), nil, true); err == nil {
+	o := &addOpts{FromDir: dir, RefOverride: "github.com/x/y@v1", SkipAllowlist: true}
+	if err := runAddFromDir(o, t.TempDir(), nil); err == nil {
 		t.Fatal("missing manifest: want error")
 	}
 }

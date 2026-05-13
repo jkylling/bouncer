@@ -70,7 +70,7 @@ func TestEnforceAllowlistRejectsUnlisted(t *testing.T) {
 	dir := t.TempDir()
 	_ = os.WriteFile(filepath.Join(dir, allowlistFile), []byte("apis:\n  allowlist: [github.com/acme/*]\n"), 0o600)
 	ref, _ := bundles.ParseRef("github.com/foo/pack@v1")
-	err := enforceAllowlist(dir, ref)
+	err := enforceAllowlist(dir, ref, false)
 	if err == nil || !strings.Contains(err.Error(), "not in the apis.allowlist") {
 		t.Fatalf("err = %v", err)
 	}
@@ -78,7 +78,16 @@ func TestEnforceAllowlistRejectsUnlisted(t *testing.T) {
 
 func TestEnforceAllowlistEmptyDataDirIsNoConstraint(t *testing.T) {
 	ref, _ := bundles.ParseRef("github.com/foo/pack@v1")
-	if err := enforceAllowlist("", ref); err != nil {
+	if err := enforceAllowlist("", ref, false); err != nil {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestEnforceAllowlistSkipShortCircuits(t *testing.T) {
+	dir := t.TempDir()
+	_ = os.WriteFile(filepath.Join(dir, allowlistFile), []byte("apis:\n  allowlist: [github.com/acme/*]\n"), 0o600)
+	ref, _ := bundles.ParseRef("github.com/foo/pack@v1")
+	if err := enforceAllowlist(dir, ref, true); err != nil {
+		t.Fatalf("skip=true should bypass: %v", err)
 	}
 }

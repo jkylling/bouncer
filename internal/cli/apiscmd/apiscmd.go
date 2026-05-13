@@ -18,13 +18,12 @@ package apiscmd
 
 import (
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
-	"github.com/jkylling/bouncer/internal/cli/initcmd"
+	"github.com/jkylling/bouncer/internal/datadir"
 )
 
 // nowUTCSecond returns time.Now().UTC().Truncate(time.Second). Tests
@@ -74,12 +73,11 @@ func execute(cmd *cobra.Command, args []string) error {
 	return cmd.Execute()
 }
 
-// resolveAPIsDir picks the unified apis directory. Precedence:
-//   - explicit --apis-dir
-//   - --data-dir/apis
-//   - $BOUNCER_APIS_DIR
-//   - cwd/apis, when cwd looks like a bouncer data dir
-//     (initcmd.IsInitialized — has secret.hex + admin-password.hash)
+// resolveAPIsDir picks the apis directory. Precedence:
+//
+//	--apis-dir → --data-dir/apis → $BOUNCER_APIS_DIR → cwd/apis
+//	(when cwd is an initialized data dir)
+//	→ $BOUNCER_DATA_DIR/apis
 //
 // Returns "" when nothing matches; the caller turns that into a
 // clear error.
@@ -88,13 +86,16 @@ func resolveAPIsDir(flagVal, dataDir string) string {
 		return flagVal
 	}
 	if dataDir != "" {
-		return filepath.Join(dataDir, "apis")
+		return datadir.Layout{Dir: dataDir}.APIs()
 	}
 	if env := strings.TrimSpace(os.Getenv("BOUNCER_APIS_DIR")); env != "" {
 		return env
 	}
-	if initcmd.IsInitialized(".") {
-		return filepath.Join(".", "apis")
+	if datadir.IsInitialized(".") {
+		return datadir.Layout{Dir: "."}.APIs()
+	}
+	if env := strings.TrimSpace(os.Getenv(datadir.EnvDataDir)); env != "" {
+		return datadir.Layout{Dir: env}.APIs()
 	}
 	return ""
 }

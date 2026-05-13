@@ -17,14 +17,13 @@ identifier ` + "`apis list`" + ` prints in the NAME column. Removing a bundle
 deletes its on-disk directory verbatim.`
 
 func removeCommand() *cobra.Command {
-	var dirs apisDirFlags
 	cmd := &cobra.Command{
 		Use:   "remove <name>",
 		Short: "Remove an installed bundle by name",
 		Long:  removeLong,
-		RunE:  func(_ *cobra.Command, args []string) error { return runRemoveImpl(args, &dirs) },
+		RunE:  runWithOpts(runRemoveImpl),
 	}
-	dirs.bind(cmd, "", "")
+	(&apisDirFlags{}).bind(cmd.Flags(), "")
 	return cmd
 }
 

@@ -5,13 +5,12 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
-	"syscall"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/jkylling/bouncer/internal/control/bundles"
 )
@@ -30,29 +29,28 @@ and removed only after the new directory is in place. A killed
 upgrade leaves the old bundle intact.`
 
 type upgradeOpts struct {
-	dirs   apisDirFlags
-	dryRun bool
+	Dirs   apisDirFlags `mapstructure:",squash"`
+	DryRun bool         `mapstructure:"dry-run"`
 }
 
-func (o *upgradeOpts) bind(cmd *cobra.Command) {
-	o.dirs.bind(cmd, "", "")
-	cmd.Flags().BoolVar(&o.dryRun, "dry-run", false, "do not modify disk; print what would change")
+func (o *upgradeOpts) bind(fs *pflag.FlagSet) {
+	o.Dirs.bind(fs, "")
+	fs.Bool("dry-run", false, "do not modify disk; print what would change")
 }
 
 func upgradeCommand() *cobra.Command {
-	var o upgradeOpts
 	cmd := &cobra.Command{
 		Use:   "upgrade [<name>]",
 		Short: "Re-resolve a bundle's ref against upstream",
 		Long:  upgradeLong,
-		RunE:  func(_ *cobra.Command, args []string) error { return runUpgrade(args, &o) },
+		RunE:  runWithOpts(runUpgrade),
 	}
-	o.bind(cmd)
+	(&upgradeOpts{}).bind(cmd.Flags())
 	return cmd
 }
 
 func runUpgrade(args []string, o *upgradeOpts) error {
-	root, err := o.dirs.resolve()
+	root, err := o.Dirs.resolve()
 	if err != nil {
 		return err
 	}
@@ -68,9 +66,9 @@ func runUpgrade(args []string, o *upgradeOpts) error {
 	if len(args) > 0 {
 		wantName = args[0]
 	}
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, cancel := signalContext()
 	defer cancel()
-	fetcher := bundles.NewFetcher(bundles.FetcherOpts{Token: os.Getenv("GITHUB_TOKEN")})
+	fetcher := newGitHubFetcher()
 	matched := false
 	for _, row := range rows {
 		ref, err := bundles.ParseRef(row.Ref)
@@ -81,7 +79,7 @@ func runUpgrade(args []string, o *upgradeOpts) error {
 			continue
 		}
 		matched = true
-		if err := upgradeOne(ctx, fetcher, root, ref, row, o.dryRun, os.Stdout); err != nil {
+		if err := upgradeOne(ctx, fetcher, root, ref, row, o.DryRun, os.Stdout); err != nil {
 			return err
 		}
 	}

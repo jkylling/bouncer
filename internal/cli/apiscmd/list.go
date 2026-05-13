@@ -22,16 +22,13 @@ manifest version, resolved SHA (short form), install time, count of
 APIs, count of renames.`
 
 func listCommand() *cobra.Command {
-	var dirs apisDirFlags
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List installed bundles",
 		Long:  listLong,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runList(&dirs)
-		},
+		RunE:  runWithOpts(func(_ []string, dirs *apisDirFlags) error { return runList(dirs) }),
 	}
-	dirs.bind(cmd, "where to look (defaults to $BOUNCER_APIS_DIR or <data-dir>/apis)", "")
+	(&apisDirFlags{}).bind(cmd.Flags(), "where to look (defaults to $BOUNCER_APIS_DIR or <data-dir>/apis)")
 	return cmd
 }
 

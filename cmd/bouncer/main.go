@@ -14,9 +14,10 @@ import (
 
 	"github.com/jkylling/bouncer/internal/buildinfo"
 	"github.com/jkylling/bouncer/internal/cli/apiscmd"
+	"github.com/jkylling/bouncer/internal/cli/connectionscmd"
 	"github.com/jkylling/bouncer/internal/cli/initcmd"
-	"github.com/jkylling/bouncer/internal/cli/issuetoken"
-	"github.com/jkylling/bouncer/internal/cli/serve"
+	"github.com/jkylling/bouncer/internal/cli/issuetokencmd"
+	"github.com/jkylling/bouncer/internal/cli/servecmd"
 )
 
 const rootLong = `Policy-enforcing HTTP proxy for upstream APIs.
@@ -39,9 +40,10 @@ func main() {
 	root.SetVersionTemplate("bouncer {{.Version}}\n")
 	root.AddCommand(
 		initcmd.Command(),
-		serve.Command(),
+		servecmd.Command(),
 		apiscmd.Command(),
-		issuetoken.Command(),
+		issuetokencmd.Command(),
+		connectionscmd.Command(),
 		versionCommand(root),
 	)
 	if err := root.Execute(); err != nil {

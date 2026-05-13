@@ -7,21 +7,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jkylling/bouncer/internal/control/store"
 	"github.com/jkylling/bouncer/internal/control/traffic"
 )
 
-// newMemStore returns an in-memory traffic store via the shared
-// backend abstraction. The test file's previous helper called the
-// removed memory.New constructor directly; this thin wrapper keeps
-// the test bodies short while routing through the public API.
+// newMemStore returns an in-memory traffic store via the public API.
+// Wrapped here so each test body stays focused on recorder
+// behaviour, not store wiring.
 func newMemStore(t *testing.T) traffic.Store {
 	t.Helper()
-	s, err := traffic.Open(store.Memory(), traffic.Options{})
-	if err != nil {
-		t.Fatalf("traffic.Open: %v", err)
-	}
-	return s
+	return traffic.NewMemoryStore(traffic.Options{})
 }
 
 func TestAsyncRecorderHappyPath(t *testing.T) {
@@ -34,7 +28,7 @@ func TestAsyncRecorderHappyPath(t *testing.T) {
 		rec.Record(context.Background(), traffic.Event{
 			ID:        traffic.NewEventID(),
 			Timestamp: now,
-			API:       "gmail",
+			API:       "google.gmail",
 			Decision:  traffic.DecisionPermit,
 		})
 	}
@@ -62,7 +56,7 @@ func TestAsyncRecorderSanitizes(t *testing.T) {
 	rec.Record(context.Background(), traffic.Event{
 		ID:        id,
 		Timestamp: time.Now().UTC().Truncate(time.Millisecond),
-		API:       "gmail",
+		API:       "google.gmail",
 		Decision:  traffic.DecisionPermit,
 		RequestHeaders: []traffic.KV{
 			{Key: "Authorization", Value: "Bearer secret"},
@@ -191,11 +185,8 @@ func (b *blockingStore) Get(ctx context.Context, id traffic.EventID) (traffic.Ev
 func (b *blockingStore) List(ctx context.Context, opts traffic.ListOpts) ([]traffic.Summary, traffic.Cursor, error) {
 	return nil, "", errors.New("not implemented")
 }
-func (b *blockingStore) Pin(ctx context.Context, id traffic.EventID) error {
-	return errors.New("not implemented")
-}
-func (b *blockingStore) Unpin(ctx context.Context, id traffic.EventID) error {
-	return errors.New("not implemented")
+func (b *blockingStore) Subjects(ctx context.Context) ([]traffic.SubjectSummary, error) {
+	return nil, errors.New("not implemented")
 }
 func (b *blockingStore) Close() error { return nil }
 

@@ -185,11 +185,11 @@ func TestSpecValidate(t *testing.T) {
 			spec: Spec{Subject: "s", AccessToken: "x"},
 			want: "ttl_seconds must be positive",
 		},
-		{
-			name: "no_credential_material",
-			spec: Spec{Subject: "s", TTLSeconds: 60},
-			want: "at least one of access_token or headers is required",
-		},
+		// Zero-credential JWTs are now allowed: they're the right
+		// shape for surfaces that don't forward upstream (e.g. an
+		// agent's /_api/mcp connection). The proxy's data plane
+		// returns its own "no upstream credential" error if anyone
+		// tries to use such a JWT on a forwarded request.
 		{
 			name: "header_missing_value",
 			spec: Spec{Subject: "s", TTLSeconds: 60, Headers: []auth.Header{{Name: "X"}}},

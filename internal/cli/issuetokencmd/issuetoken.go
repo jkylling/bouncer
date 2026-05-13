@@ -17,7 +17,7 @@
 //
 // The secret used here MUST be configured on the proxy (--secret-hex
 // or --dev-stub-secret on both sides).
-package issuetoken
+package issuetokencmd
 
 import (
 	"context"
@@ -32,11 +32,11 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
-	"github.com/spf13/viper"
 
 	"github.com/jkylling/bouncer/internal/auth"
-	"github.com/jkylling/bouncer/internal/cli/initcmd"
+	"github.com/jkylling/bouncer/internal/cli/cliconfig"
 	"github.com/jkylling/bouncer/internal/control/tokens"
+	"github.com/jkylling/bouncer/internal/datadir"
 )
 
 // defaultGoogleTokenURL is the upstream OAuth2 token endpoint for
@@ -75,8 +75,8 @@ Examples:
   # bouncer-gws/scripts/get_credentials.py.
 
 Environment:
-  Every flag has an ISSUE_TOKEN_<UPPER_SNAKE> env equivalent —
-  e.g. --secret-hex pairs with ISSUE_TOKEN_SECRET_HEX.`
+  Every flag has a BOUNCER_<UPPER_SNAKE> env equivalent —
+  e.g. --secret-hex pairs with BOUNCER_SECRET_HEX.`
 
 type config struct {
 	// Shared
@@ -137,8 +137,9 @@ func (c *config) mode() mode {
 func bindFlags(fs *pflag.FlagSet) {
 	// Shared
 	fs.String("subject", "", "JWT sub claim (typically the holder's identifier)")
-	fs.String("secret-hex", "", "32-byte server secret as 64 hex chars (or ISSUE_TOKEN_SECRET_HEX)")
+	fs.String("secret-hex", "", "32-byte server secret as 64 hex chars (or BOUNCER_SECRET_HEX)")
 	fs.Bool("dev-stub-secret", false, "use deterministic dev stub secret (NEVER use in prod)")
+	datadir.BindFlag(fs)
 
 	// Access-only
 	fs.String("access-token", "", "(access-only) upstream access token to embed (optional if --header is provided)")
@@ -158,21 +159,14 @@ func bindFlags(fs *pflag.FlagSet) {
 	fs.Bool("admin", false, "issue an admin JWT (authorised for /_api/* admin endpoints)")
 }
 
-// configFromFlags reads the bound flag set + ISSUE_TOKEN_* env into a
+// configFromFlags reads the bound flag set + BOUNCER_* env into a
 // *config. Validates before returning.
 func configFromFlags(fs *pflag.FlagSet) (*config, error) {
-	v := viper.New()
-	if err := v.BindPFlags(fs); err != nil {
-		return nil, fmt.Errorf("bind flags: %w", err)
-	}
-	v.SetEnvPrefix("ISSUE_TOKEN")
-	v.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
-	v.AutomaticEnv()
 	cfg := &config{}
-	if err := v.Unmarshal(cfg); err != nil {
-		return nil, fmt.Errorf("unmarshal config: %w", err)
+	if err := cliconfig.Load(fs, cfg); err != nil {
+		return nil, err
 	}
-	if err := defaultSecretHexFromCwd(cfg, fs); err != nil {
+	if err := defaultSecretFromDataDir(cfg, fs); err != nil {
 		return nil, err
 	}
 	if err := cfg.validate(); err != nil {
@@ -181,32 +175,30 @@ func configFromFlags(fs *pflag.FlagSet) (*config, error) {
 	return cfg, nil
 }
 
-// defaultSecretHexFromCwd reads ./secret.hex when neither
-// --secret-hex nor ISSUE_TOKEN_SECRET_HEX is set and the cwd looks
-// like an initialized bouncer data dir (`bouncer init` layout — both
-// secret.hex and admin-password.hash present). Lets an operator drop
-// into their data dir and run a bare `issue-token --subject ...
-// --access-token ...` without restating the secret each time.
-//
-// Idempotent and conservative: only triggers when the secret slot is
-// empty (so the flag/env always wins) and only when the cwd looks
-// initialized — a stray secret.hex in an unrelated dir is not
-// silently consumed.
-func defaultSecretHexFromCwd(cfg *config, fs *pflag.FlagSet) error {
+// defaultSecretFromDataDir reads <data-dir>/secret.hex when neither
+// --secret-hex nor BOUNCER_SECRET_HEX is set. The data dir resolves
+// via the standard precedence (--data-dir flag → $BOUNCER_DATA_DIR →
+// cwd-if-initialized) so an operator can drop into their data dir
+// and run a bare `issue-token --subject ... --access-token ...`.
+func defaultSecretFromDataDir(cfg *config, fs *pflag.FlagSet) error {
 	if cfg.SecretHex != "" || cfg.DevStubSecret {
 		return nil
 	}
 	if fs.Changed("secret-hex") {
 		return nil
 	}
-	if !initcmd.IsInitialized(".") {
+	dir := datadir.Resolve(fs)
+	if dir == "" {
 		return nil
 	}
-	raw, err := os.ReadFile(initcmd.SecretFile)
+	hex, err := datadir.Layout{Dir: dir}.ReadSecret()
 	if err != nil {
-		return fmt.Errorf("read %s from cwd: %w", initcmd.SecretFile, err)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read %s/%s: %w", dir, datadir.SecretFile, err)
 	}
-	cfg.SecretHex = strings.TrimSpace(string(raw))
+	cfg.SecretHex = hex
 	return nil
 }
 
@@ -269,7 +261,7 @@ func runIssueToken(cfg *config) error {
 // must be satisfied.
 func (c *config) validate() error {
 	if c.SecretHex == "" && !c.DevStubSecret {
-		return errors.New("must set --secret-hex (or ISSUE_TOKEN_SECRET_HEX), or pass --dev-stub-secret")
+		return errors.New("must set --secret-hex (or BOUNCER_SECRET_HEX), or pass --dev-stub-secret")
 	}
 	if c.SecretHex != "" && c.DevStubSecret {
 		return errors.New("--secret-hex and --dev-stub-secret are mutually exclusive")

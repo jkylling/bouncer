@@ -1,4 +1,4 @@
-package issuetoken
+package issuetokencmd
 
 import (
 	"context"
@@ -351,10 +351,10 @@ func chdirInitialized(t *testing.T, body string) string {
 
 // TestLoadConfigSecretHexAutoLoadFromCwd: when the cwd looks like a
 // `bouncer init` data dir and neither --secret-hex nor
-// ISSUE_TOKEN_SECRET_HEX is set, the secret is read from
+// BOUNCER_SECRET_HEX is set, the secret is read from
 // ./secret.hex.
 func TestLoadConfigSecretHexAutoLoadFromCwd(t *testing.T) {
-	t.Setenv("ISSUE_TOKEN_SECRET_HEX", "")
+	t.Setenv("BOUNCER_SECRET_HEX", "")
 	hex64 := strings.Repeat("ab", 32)
 	chdirInitialized(t, hex64+"\n")
 	cfg, err := loadConfig([]string{"--subject", "me", "--access-token", "x"})
@@ -365,7 +365,7 @@ func TestLoadConfigSecretHexAutoLoadFromCwd(t *testing.T) {
 // TestLoadConfigSecretHexFlagBeatsCwd: an explicit --secret-hex flag
 // always wins, even when ./secret.hex is present.
 func TestLoadConfigSecretHexFlagBeatsCwd(t *testing.T) {
-	t.Setenv("ISSUE_TOKEN_SECRET_HEX", "")
+	t.Setenv("BOUNCER_SECRET_HEX", "")
 	cwdHex := strings.Repeat("aa", 32)
 	flagHex := strings.Repeat("bb", 32)
 	chdirInitialized(t, cwdHex)
@@ -377,12 +377,12 @@ func TestLoadConfigSecretHexFlagBeatsCwd(t *testing.T) {
 	require.Equal(t, flagHex, cfg.SecretHex)
 }
 
-// TestLoadConfigSecretHexEnvBeatsCwd: ISSUE_TOKEN_SECRET_HEX wins
+// TestLoadConfigSecretHexEnvBeatsCwd: BOUNCER_SECRET_HEX wins
 // over ./secret.hex — the auto-load is the lowest-priority source.
 func TestLoadConfigSecretHexEnvBeatsCwd(t *testing.T) {
 	cwdHex := strings.Repeat("aa", 32)
 	envHex := strings.Repeat("bb", 32)
-	t.Setenv("ISSUE_TOKEN_SECRET_HEX", envHex)
+	t.Setenv("BOUNCER_SECRET_HEX", envHex)
 	chdirInitialized(t, cwdHex)
 	cfg, err := loadConfig([]string{"--subject", "me", "--access-token", "x"})
 	require.NoError(t, err)
@@ -394,7 +394,7 @@ func TestLoadConfigSecretHexEnvBeatsCwd(t *testing.T) {
 // the same "must set --secret-hex" error as if the file weren't
 // there at all.
 func TestLoadConfigSecretHexCwdNotInitialized(t *testing.T) {
-	t.Setenv("ISSUE_TOKEN_SECRET_HEX", "")
+	t.Setenv("BOUNCER_SECRET_HEX", "")
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, initcmd.SecretFile),
 		[]byte(strings.Repeat("aa", 32)), 0o600))
@@ -412,7 +412,7 @@ func TestLoadConfigSecretHexCwdNotInitialized(t *testing.T) {
 // would reject the dev-stub combo when an unrelated init data dir
 // happens to be cwd).
 func TestLoadConfigSecretHexCwdSkipsWhenDevStub(t *testing.T) {
-	t.Setenv("ISSUE_TOKEN_SECRET_HEX", "")
+	t.Setenv("BOUNCER_SECRET_HEX", "")
 	chdirInitialized(t, strings.Repeat("aa", 32))
 	cfg, err := loadConfig([]string{
 		"--subject", "me", "--access-token", "x",

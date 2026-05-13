@@ -44,9 +44,8 @@ func TestRecorderCapturesPermitForwardedRequest(t *testing.T) {
 
 	rt := loadGmailRuntime(t, upstream.URL)
 	keys := mustKeys(t)
-	srv := NewServer(rt, keys, upstream.Client(), gmailFactory, 0)
 	rec := &captureRecorder{}
-	srv.SetRecorder(rec)
+	srv := NewServer(Dependencies{Runtime: rt, Keys: keys, HTTPClient: upstream.Client(), APIFactory: gmailFactory, Recorder: rec})
 	proxy := httptest.NewServer(srv.Router())
 	defer proxy.Close()
 
@@ -64,7 +63,7 @@ func TestRecorderCapturesPermitForwardedRequest(t *testing.T) {
 		t.Fatalf("captured %d events, want 1", len(events))
 	}
 	ev := events[0]
-	if ev.Method != "GET" || ev.API != "gmail" {
+	if ev.Method != "GET" || ev.API != "google.gmail" {
 		t.Errorf("event = %+v, want method GET / api gmail", ev)
 	}
 	if ev.Decision != traffic.DecisionPermit {
@@ -90,9 +89,8 @@ func TestRecorderCapturesPermitForwardedRequest(t *testing.T) {
 func TestRecorderCapturesUnauthorized(t *testing.T) {
 	rt := loadGmailRuntime(t, "")
 	keys := mustKeys(t)
-	srv := NewServer(rt, keys, nil, gmailFactory, 0)
 	rec := &captureRecorder{}
-	srv.SetRecorder(rec)
+	srv := NewServer(Dependencies{Runtime: rt, Keys: keys, APIFactory: gmailFactory, Recorder: rec})
 	proxy := httptest.NewServer(srv.Router())
 	defer proxy.Close()
 
@@ -135,9 +133,8 @@ func TestRecorderCapturesPolicyEvaluations(t *testing.T) {
 
 	rt := loadGmailRuntime(t, upstream.URL)
 	keys := mustKeys(t)
-	srv := NewServer(rt, keys, upstream.Client(), gmailFactory, 0)
 	rec := &captureRecorder{}
-	srv.SetRecorder(rec)
+	srv := NewServer(Dependencies{Runtime: rt, Keys: keys, HTTPClient: upstream.Client(), APIFactory: gmailFactory, Recorder: rec})
 	proxy := httptest.NewServer(srv.Router())
 	defer proxy.Close()
 
@@ -200,7 +197,7 @@ func TestCloneRequestHeadersStripsCredentials(t *testing.T) {
 func TestRecorderNilSafe(t *testing.T) {
 	rt := loadGmailRuntime(t, "")
 	keys := mustKeys(t)
-	srv := NewServer(rt, keys, nil, gmailFactory, 0)
+	srv := NewServer(Dependencies{Runtime: rt, Keys: keys, APIFactory: gmailFactory})
 	// Deliberately leave srv.recorder == nil — handle must not
 	// panic and must work normally.
 	proxy := httptest.NewServer(srv.Router())

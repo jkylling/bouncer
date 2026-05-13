@@ -46,8 +46,8 @@ var DefaultSensitiveHeaders = []string{
 // contain user content and so should never be persisted. Operators
 // can extend the set via SanitizeOptions.NoBodyAPIs.
 var DefaultNoBodyAPIs = map[string]bool{
-	"gmail": true,
-	"drive": true,
+	"google.gmail": true,
+	"google.drive": true,
 }
 
 // Sanitize redacts an Event in place per opts. Safe to call on any

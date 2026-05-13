@@ -1,4 +1,4 @@
-package serve
+package servecmd
 
 import (
 	"net"
@@ -229,15 +229,11 @@ func TestLoadConfigTrafficDefaults(t *testing.T) {
 	if cfg.TrafficMaxAge != defaultTrafficMaxAge {
 		t.Errorf("TrafficMaxAge = %v, want %v", cfg.TrafficMaxAge, defaultTrafficMaxAge)
 	}
-	if cfg.TrafficMaxPinned != defaultTrafficMaxPinned {
-		t.Errorf("TrafficMaxPinned = %d, want %d", cfg.TrafficMaxPinned, defaultTrafficMaxPinned)
-	}
 }
 
 // TestLoadConfigStoreDefaults pins the default store kinds so a
 // fresh deployment behaves the same as before the unified-store
-// refactor: file-backed policies, in-memory proposals, no traffic
-// capture.
+// refactor: file-backed policies, no traffic capture.
 func TestLoadConfigStoreDefaults(t *testing.T) {
 	cfg, err := loadConfig([]string{"--dev-stub-secret"})
 	if err != nil {
@@ -245,9 +241,6 @@ func TestLoadConfigStoreDefaults(t *testing.T) {
 	}
 	if cfg.PoliciesStore != "file" {
 		t.Errorf("PoliciesStore = %q, want file", cfg.PoliciesStore)
-	}
-	if cfg.ProposalsStore != "memory" {
-		t.Errorf("ProposalsStore = %q, want memory", cfg.ProposalsStore)
 	}
 }
 
@@ -260,7 +253,6 @@ func TestLoadConfigStoreDBFallback(t *testing.T) {
 		"--dev-stub-secret",
 		"--traffic-store", "sqlite",
 		"--policies-store", "sqlite",
-		"--proposals-store", "sqlite",
 		"--store-db", "/tmp/all.db",
 	})
 	if err != nil {
@@ -284,19 +276,6 @@ func TestLoadConfigPoliciesStoreSqliteRequiresPath(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "policies-db") {
 		t.Errorf("err = %v, want one mentioning policies-db", err)
-	}
-}
-
-// TestLoadConfigTrafficMaxPinnedOverride pins that the flag plumbs
-// through to config so the per-deployment cap actually reaches the
-// store at boot.
-func TestLoadConfigTrafficMaxPinnedOverride(t *testing.T) {
-	cfg, err := loadConfig([]string{"--dev-stub-secret", "--traffic-max-pinned", "42"})
-	if err != nil {
-		t.Fatalf("loadConfig: %v", err)
-	}
-	if cfg.TrafficMaxPinned != 42 {
-		t.Errorf("TrafficMaxPinned = %d, want 42", cfg.TrafficMaxPinned)
 	}
 }
 
@@ -359,8 +338,9 @@ func TestDeriveSecretRejectsWrongLength(t *testing.T) {
 func TestLoadConfigInitDefaultsDataDirToCwd(t *testing.T) {
 	dir := t.TempDir()
 	chdirForTest(t, dir)
+	t.Setenv("BOUNCER_ADMIN_PASSWORD", "pw")
 
-	cfg, err := loadConfig([]string{"--init", "--admin-password", "pw"})
+	cfg, err := loadConfig([]string{"--init"})
 	if err != nil {
 		t.Fatalf("loadConfig: %v", err)
 	}
@@ -380,10 +360,11 @@ func TestLoadConfigInitDefaultsDataDirToCwd(t *testing.T) {
 // proof — a non-idempotent --init would have written a fresh one.
 func TestLoadConfigInitBootstrapsAndIsIdempotent(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "data")
+	t.Setenv("BOUNCER_ADMIN_PASSWORD", "pw")
 	// No --dev-stub-secret: the freshly-written secret.hex is what
 	// we want loadConfig to pick up via applyDataDir; mixing in the
 	// stub would trip the mutually-exclusive check.
-	args := []string{"--init", "--data-dir", dir, "--admin-password", "pw"}
+	args := []string{"--init", "--data-dir", dir}
 
 	cfg, err := loadConfig(args)
 	if err != nil {

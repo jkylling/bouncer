@@ -10,35 +10,44 @@ package initcmd
 
 import (
 	"bufio"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/bcrypt"
+	"golang.org/x/term"
 
+	"github.com/jkylling/bouncer/internal/control/bundles"
+	"github.com/jkylling/bouncer/internal/datadir"
 	"github.com/jkylling/bouncer/internal/server/mitm"
 )
 
-// Layout is the on-disk shape `init` writes and `serve --data-dir`
-// reads. Exported so callers (init here, serve elsewhere) refer to
-// the same path constants instead of stringly-duplicated literals.
+// Layout constants and IsInitialized live in internal/datadir; this
+// package writes through those names. The aliases keep the existing
+// external references (initcmd.SecretFile etc.) working.
 const (
-	SecretFile        = "secret.hex"
-	AdminPasswordFile = "admin-password.hash"
-	StoreDir          = "store"
-	APIsDir           = "apis"
-	PoliciesDir       = "policies"
-	MITMCertFile      = "mitm-ca.crt"
-	MITMKeyFile       = "mitm-ca.key"
-	ReadmeFile        = "README.md"
+	SecretFile        = datadir.SecretFile
+	AdminPasswordFile = datadir.AdminPasswordFile
+	StoreDir          = datadir.StoreDir
+	APIsDir           = datadir.APIsDir
+	PoliciesDir       = datadir.PoliciesDir
+	MITMCertFile      = datadir.MITMCertFile
+	MITMKeyFile       = datadir.MITMKeyFile
+	ReadmeFile        = datadir.ReadmeFile
 )
+
+// IsInitialized re-exports datadir.IsInitialized for back-compat.
+func IsInitialized(dir string) bool { return datadir.IsInitialized(dir) }
 
 const initLong = `Bootstrap a self-contained data directory.
 
@@ -59,62 +68,79 @@ After this completes, start the proxy with:
 
   bouncer serve --data-dir <dir>`
 
-// Options controls Bootstrap. Exposed so other entry points
-// (notably `bouncer serve --init`) can drive the same logic without
-// going through pflag a second time.
+// Options is the shared option set Run and Bootstrap accept.
 type Options struct {
-	// AdminPassword is the cleartext password to bcrypt into
-	// admin-password.hash. Empty means: read from
-	// $BOUNCER_ADMIN_PASSWORD, fall back to a stdin prompt.
+	// Empty AdminPassword falls through to $BOUNCER_ADMIN_PASSWORD,
+	// then to a stdin prompt.
 	AdminPassword string
 
-	// MITM, when true, generates a self-signed CA and writes
-	// mitm-ca.{crt,key} alongside the rest of the layout. Default
-	// behaviour because --mitm on serve also defaults on; the two
-	// happy-paths line up.
-	MITM bool
+	MITM           bool
+	MITMCommonName string // defaults to "bouncer MITM CA"
 
-	// MITMCommonName is stamped onto the generated CA. Defaults to
-	// "bouncer MITM CA" when empty.
-	MITMCommonName string
-
-	// Force recreates existing layout files. Without it, Bootstrap
-	// refuses to clobber a directory that already has a secret /
-	// admin-password / store.db / mitm-ca.* — overwriting any of
-	// those silently invalidates every JWT issued against the
-	// previous secret. Note: --force rotates the credential files
-	// but leaves an existing store.db in place; rows in it still
-	// reference principals issued under the old secret. Delete
-	// store.db separately if you want a fully clean slate.
+	// Force rotates the credential files but leaves an existing
+	// store.db in place — rows in it still reference principals
+	// issued under the previous secret. Delete store.db separately
+	// for a fully clean slate.
 	Force bool
+
+	// SkipIfInitialized makes Run a no-op when the dir already has
+	// secret.hex + admin-password.hash. On for `serve --init` so
+	// daemon restart is safe; off for `bouncer init` so an explicit
+	// re-init errors loudly instead of rotating the secret out from
+	// under previously issued JWTs.
+	SkipIfInitialized bool
+
+	// Quiet suppresses progress lines and the post-init "Ready"
+	// hint. `serve --init` sets this since serve logs its own
+	// listening banner immediately after.
+	Quiet bool
+
+	// WithApis runs through bundles.InstallRefs after bootstrap;
+	// already-vendored refs are skipped.
+	WithApis []string
 }
 
-// IsInitialized reports whether dir already holds a usable bouncer
-// data directory. Used by `serve --init` to no-op a second invocation
-// instead of refusing to start.
-func IsInitialized(dir string) bool {
-	for _, name := range []string{SecretFile, AdminPasswordFile} {
-		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
-			return false
+// Run is the shared entry for `bouncer init` and `bouncer serve --init`.
+func Run(dir string, opts Options) error {
+	if dir == "" {
+		dir = "."
+	}
+	skipBootstrap := opts.SkipIfInitialized && IsInitialized(dir)
+	w := io.Discard
+	if !opts.Quiet {
+		w = os.Stderr
+	}
+	if !skipBootstrap {
+		if err := bootstrap(dir, opts, w); err != nil {
+			return err
 		}
 	}
-	return true
+	// --with-apis runs on the skip-bootstrap path too, so a restart
+	// with a new ref picks it up. InstallRefs is idempotent.
+	if len(opts.WithApis) > 0 {
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer cancel()
+		if err := bundles.InstallRefs(ctx, filepath.Join(dir, APIsDir), opts.WithApis, w); err != nil {
+			return err
+		}
+	}
+	if !opts.Quiet && !skipBootstrap {
+		printReadyHint(dir)
+	}
+	return nil
 }
 
-// Bootstrap writes the data-directory layout. Idempotent only when
-// IsInitialized(dir) is true and Force is false: in that case the
-// caller is expected to short-circuit. With Force=true Bootstrap
-// recreates every layout file even if one already exists, which
-// invalidates previously issued JWTs.
+// Bootstrap writes the data-directory layout with progress suppressed.
+// Prefer Run for end-user-facing flows.
 func Bootstrap(dir string, opts Options) error {
+	return bootstrap(dir, opts, io.Discard)
+}
+
+func bootstrap(dir string, opts Options, w io.Writer) error {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return fmt.Errorf("resolve dir: %w", err)
 	}
-
-	// Refuse to clobber an existing setup unless --force. Picking up
-	// an in-progress dir would mean writing a fresh secret on top of
-	// the one operators already issued tokens against.
 	existing := existingLayoutFiles(abs)
 	if len(existing) > 0 && !opts.Force {
 		return fmt.Errorf("refusing to overwrite existing files in %s:\n  %s\n\nPass --force to recreate them (this invalidates every JWT issued against the previous secret)",
@@ -137,7 +163,7 @@ func Bootstrap(dir string, opts Options) error {
 	if err := writeSecret(filepath.Join(abs, SecretFile)); err != nil {
 		return fmt.Errorf("secret: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "  wrote %s\n", SecretFile)
+	fmt.Fprintf(w, "  wrote %s\n", SecretFile)
 
 	pw, err := resolvePassword(opts.AdminPassword)
 	if err != nil {
@@ -146,7 +172,7 @@ func Bootstrap(dir string, opts Options) error {
 	if err := writeBcrypt(filepath.Join(abs, AdminPasswordFile), pw); err != nil {
 		return fmt.Errorf("admin password hash: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "  wrote %s\n", AdminPasswordFile)
+	fmt.Fprintf(w, "  wrote %s\n", AdminPasswordFile)
 
 	if opts.MITM {
 		cn := opts.MITMCommonName
@@ -156,7 +182,7 @@ func Bootstrap(dir string, opts Options) error {
 		if err := writeMITMCA(abs, cn); err != nil {
 			return fmt.Errorf("mitm CA: %w", err)
 		}
-		fmt.Fprintf(os.Stderr, "  wrote %s + %s\n", MITMCertFile, MITMKeyFile)
+		fmt.Fprintf(w, "  wrote %s + %s\n", MITMCertFile, MITMKeyFile)
 	}
 
 	if err := os.WriteFile(filepath.Join(abs, ReadmeFile), []byte(readmeBody(abs, opts.MITM)), 0o644); err != nil {
@@ -165,12 +191,20 @@ func Bootstrap(dir string, opts Options) error {
 	return nil
 }
 
-// Command returns the `bouncer init` cobra subcommand.
+func printReadyHint(dir string) {
+	if dir == "." {
+		fmt.Fprint(os.Stderr, "\nReady. Start the proxy from this directory with:\n\n  bouncer serve\n\n")
+		return
+	}
+	fmt.Fprintf(os.Stderr, "\nReady. Start the proxy with:\n\n  bouncer serve --data-dir %s\n\n  # or `cd %s && bouncer serve` — `serve` auto-detects an initialized cwd.\n\n", dir, dir)
+}
+
 type initOpts struct {
 	mitmEnabled bool
 	mitmCN      string
 	password    string
 	force       bool
+	withApis    []string
 }
 
 func (o *initOpts) bind(cmd *cobra.Command) {
@@ -178,6 +212,7 @@ func (o *initOpts) bind(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&o.mitmCN, "mitm-ca-cn", "bouncer MITM CA", "Common Name on the generated MITM CA cert")
 	cmd.Flags().StringVar(&o.password, "admin-password", "", "admin password to hash; empty value reads from $BOUNCER_ADMIN_PASSWORD or prompts on stdin")
 	cmd.Flags().BoolVar(&o.force, "force", false, "overwrite existing files in the target dir (default: refuse if any layout file already exists)")
+	cmd.Flags().StringSliceVar(&o.withApis, "with-apis", nil, "install one or more bundle refs into <dir>/apis (e.g. github.com/jkylling/bouncer-gws@v0.1.0, or just github.com/jkylling/bouncer-gws to track main). Already-installed refs are skipped; repeat the flag for several bundles.")
 }
 
 func Command() *cobra.Command {
@@ -200,11 +235,8 @@ func runInit(args []string, o *initOpts) error {
 	if len(args) == 1 {
 		dir = args[0]
 	} else if !o.force {
-		// No arg: use cwd, but only if it looks empty. Refuse to
-		// scribble layout files into a populated working directory
-		// (e.g. the operator typed `bouncer init` in their home dir
-		// by accident). --force gates the override the same way it
-		// gates layout-file collisions inside Bootstrap.
+		// No arg: refuse to scribble layout files into a populated
+		// cwd. --force overrides, the same as for inside bootstrap.
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			return fmt.Errorf("read cwd: %w", err)
@@ -214,28 +246,15 @@ func runInit(args []string, o *initOpts) error {
 				n, plural(n))
 		}
 	}
-	if err := Bootstrap(dir, Options{
+	return Run(dir, Options{
 		AdminPassword:  o.password,
 		MITM:           o.mitmEnabled,
 		MITMCommonName: o.mitmCN,
 		Force:          o.force,
-	}); err != nil {
-		return err
-	}
-	// `bouncer serve` (no --data-dir) auto-detects an initialized
-	// cwd, so when the operator just init'd cwd they can drop the
-	// flag entirely. The explicit --data-dir form stays in the hint
-	// for the case where the init dir wasn't cwd.
-	if dir == "." {
-		fmt.Fprint(os.Stderr, "\nReady. Start the proxy from this directory with:\n\n  bouncer serve\n\n")
-	} else {
-		fmt.Fprintf(os.Stderr, "\nReady. Start the proxy with:\n\n  bouncer serve --data-dir %s\n\n  # or `cd %s && bouncer serve` — `serve` auto-detects an initialized cwd.\n\n", dir, dir)
-	}
-	return nil
+		WithApis:       o.withApis,
+	})
 }
 
-// existingLayoutFiles returns the layout-relative paths that already
-// exist under dir. The empty slice means a clean target.
 func existingLayoutFiles(dir string) []string {
 	var hits []string
 	for _, name := range []string{
@@ -249,9 +268,8 @@ func existingLayoutFiles(dir string) []string {
 	return hits
 }
 
-// writeSecret generates 32 random bytes, hex-encodes them, and
-// writes the result with mode 0600. Hex (rather than raw binary)
-// keeps the file copy-pastable and matches `--secret-hex` directly.
+// writeSecret writes 32 random bytes hex-encoded; hex (rather than
+// raw binary) keeps the file copy-pastable and matches --secret-hex.
 func writeSecret(path string) error {
 	var raw [32]byte
 	if _, err := rand.Read(raw[:]); err != nil {
@@ -261,17 +279,19 @@ func writeSecret(path string) error {
 	return os.WriteFile(path, []byte(enc), 0o600)
 }
 
-// resolvePassword picks the admin password from, in order:
-//   - the --admin-password flag (handy for scripted bootstrap),
-//   - the BOUNCER_ADMIN_PASSWORD env var,
-//   - an interactive read from stdin (no echo when stdin is a tty,
-//     plain read otherwise so a piped `echo … | bouncer init` works).
+// resolvePassword picks the password from, in order:
+// flagVal → $BOUNCER_ADMIN_PASSWORD → TTY prompt (no echo)
+// → plain line-read (for piped stdin).
 func resolvePassword(flagVal string) (string, error) {
 	if flagVal != "" {
 		return flagVal, nil
 	}
 	if env := os.Getenv("BOUNCER_ADMIN_PASSWORD"); env != "" {
 		return env, nil
+	}
+	stdinFD := int(os.Stdin.Fd())
+	if term.IsTerminal(stdinFD) {
+		return promptPasswordTTY(stdinFD)
 	}
 	fmt.Fprint(os.Stderr, "Admin password: ")
 	pw, err := readLine(os.Stdin)
@@ -286,11 +306,20 @@ func resolvePassword(flagVal string) (string, error) {
 	return pw, nil
 }
 
-// readLine reads one line from r. Echo suppression on a TTY would
-// require golang.org/x/term, which we keep out for now — operators
-// who care use --admin-password or BOUNCER_ADMIN_PASSWORD instead.
-// bufio handles arbitrary-length lines and short reads correctly,
-// unlike a single fixed-buffer Read.
+// promptPasswordTTY reads password with echo off.
+func promptPasswordTTY(fd int) (string, error) {
+	fmt.Fprint(os.Stderr, "Admin password: ")
+	pw, err := term.ReadPassword(fd)
+	fmt.Fprintln(os.Stderr)
+	if err != nil {
+		return "", err
+	}
+	if len(pw) == 0 {
+		return "", errors.New("empty password")
+	}
+	return string(pw), nil
+}
+
 func readLine(r io.Reader) (string, error) {
 	line, err := bufio.NewReader(r).ReadString('\n')
 	if err != nil && line == "" {
@@ -307,9 +336,6 @@ func writeBcrypt(path, password string) error {
 	return os.WriteFile(path, append(hash, '\n'), 0o600)
 }
 
-// writeMITMCA generates a fresh self-signed CA and writes the cert
-// + key to the data dir. Reuses the mitm package's helper so the
-// shape exactly matches what `bouncer serve --mitm` expects.
 func writeMITMCA(dir, cn string) error {
 	cert, key, err := mitm.GenerateCA(cn, 10*365*24*time.Hour)
 	if err != nil {
@@ -356,9 +382,8 @@ individual flag (e.g. --addr :8443) without unsetting --data-dir.
 	)
 }
 
-// nonHiddenCount counts directory entries whose names don't start
-// with `.`. Hidden files (notably `.git`) are tolerated so an
-// operator can `bouncer init` inside an existing repo's worktree.
+// nonHiddenCount ignores `.git` and friends so init can run inside
+// an existing repo worktree.
 func nonHiddenCount(entries []os.DirEntry) int {
 	n := 0
 	for _, e := range entries {

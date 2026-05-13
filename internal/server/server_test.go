@@ -99,7 +99,7 @@ func loadGmailRuntime(t *testing.T, baseURL string) *runtime.Runtime {
 	}
 	var gmail *models.API
 	for i := range apis {
-		if apis[i].Name == "gmail" {
+		if apis[i].Name == "google.gmail" {
 			gmail = &apis[i]
 		}
 	}
@@ -118,7 +118,7 @@ func loadGmailRuntime(t *testing.T, baseURL string) *runtime.Runtime {
 		t.Fatalf("build: %v", err)
 	}
 	for i := range policies {
-		if policies[i].API != "gmail" {
+		if policies[i].API != "google.gmail" {
 			continue
 		}
 		if err := rt.AddPolicy(&policies[i]); err != nil {
@@ -146,7 +146,7 @@ func TestPermitsAndForwards(t *testing.T) {
 
 	rt := loadGmailRuntime(t, upstream.URL)
 	keys := mustKeys(t)
-	srv := NewServer(rt, keys, upstream.Client(), gmailFactory, 0)
+	srv := NewServer(Dependencies{Runtime: rt, Keys: keys, HTTPClient: upstream.Client(), APIFactory: gmailFactory})
 	proxy := httptest.NewServer(srv.Router())
 	defer proxy.Close()
 
@@ -184,7 +184,7 @@ func TestAccessDeniedStatusOverrideRemapsDeny(t *testing.T) {
 	defer upstream.Close()
 
 	api := &models.API{
-		Name:               "slack",
+		Name:               "slack.api",
 		BaseURL:            upstream.URL,
 		PathPrefixes:       []string{"/api"},
 		AccessDeniedStatus: 200,
@@ -202,7 +202,7 @@ func TestAccessDeniedStatusOverrideRemapsDeny(t *testing.T) {
 	}
 
 	keys := mustKeys(t)
-	srv := NewServer(rt, keys, upstream.Client(), gmailFactory, 0)
+	srv := NewServer(Dependencies{Runtime: rt, Keys: keys, HTTPClient: upstream.Client(), APIFactory: gmailFactory})
 	proxy := httptest.NewServer(srv.Router())
 	defer proxy.Close()
 
@@ -227,7 +227,7 @@ func TestAccessDeniedStatusOverrideRemapsDeny(t *testing.T) {
 	if got, ok := body["ok"]; !ok || got != false {
 		t.Errorf("ok = %v (present=%v), want false", got, ok)
 	}
-	if body["api"] != "slack" {
+	if body["api"] != "slack.api" {
 		t.Errorf("api = %v, want slack", body["api"])
 	}
 	// Wire status remapped to 200, but the semantic label stays
@@ -246,7 +246,7 @@ func TestAccessDeniedStatusOverrideRemapsDeny(t *testing.T) {
 // nonsensical to a Slack-style client).
 func TestAccessDeniedStatusOverrideRemapsAuthFail(t *testing.T) {
 	api := &models.API{
-		Name:               "slack",
+		Name:               "slack.api",
 		BaseURL:            "https://slack.example",
 		PathPrefixes:       []string{"/api"},
 		AccessDeniedStatus: 200,
@@ -261,7 +261,7 @@ func TestAccessDeniedStatusOverrideRemapsAuthFail(t *testing.T) {
 	}
 
 	keys := mustKeys(t)
-	srv := NewServer(rt, keys, nil, gmailFactory, 0)
+	srv := NewServer(Dependencies{Runtime: rt, Keys: keys, APIFactory: gmailFactory})
 	proxy := httptest.NewServer(srv.Router())
 	defer proxy.Close()
 
@@ -294,7 +294,7 @@ func TestAccessDeniedStatusOverrideRemapsAuthFail(t *testing.T) {
 func TestAuthFail401StaysWhenNoAPIMatched(t *testing.T) {
 	rt := loadGmailRuntime(t, "https://example.invalid")
 	keys := mustKeys(t)
-	srv := NewServer(rt, keys, nil, gmailFactory, 0)
+	srv := NewServer(Dependencies{Runtime: rt, Keys: keys, APIFactory: gmailFactory})
 	proxy := httptest.NewServer(srv.Router())
 	defer proxy.Close()
 
@@ -326,7 +326,7 @@ func TestFormUrlencodedBodyDoesNotFailParse(t *testing.T) {
 
 	rt := loadGmailRuntime(t, upstream.URL)
 	keys := mustKeys(t)
-	srv := NewServer(rt, keys, upstream.Client(), gmailFactory, 0)
+	srv := NewServer(Dependencies{Runtime: rt, Keys: keys, HTTPClient: upstream.Client(), APIFactory: gmailFactory})
 	proxy := httptest.NewServer(srv.Router())
 	defer proxy.Close()
 
@@ -365,7 +365,7 @@ func TestForwardStripsCookieAndProxyAuth(t *testing.T) {
 
 	rt := loadGmailRuntime(t, upstream.URL)
 	keys := mustKeys(t)
-	srv := NewServer(rt, keys, upstream.Client(), gmailFactory, 0)
+	srv := NewServer(Dependencies{Runtime: rt, Keys: keys, HTTPClient: upstream.Client(), APIFactory: gmailFactory})
 	proxy := httptest.NewServer(srv.Router())
 	defer proxy.Close()
 
@@ -411,7 +411,7 @@ func TestForwardAppliesHeadersAndCookies(t *testing.T) {
 
 	rt := loadGmailRuntime(t, upstream.URL)
 	keys := mustKeys(t)
-	srv := NewServer(rt, keys, upstream.Client(), gmailFactory, 0)
+	srv := NewServer(Dependencies{Runtime: rt, Keys: keys, HTTPClient: upstream.Client(), APIFactory: gmailFactory})
 	proxy := httptest.NewServer(srv.Router())
 	defer proxy.Close()
 
@@ -468,7 +468,7 @@ func TestForwardWorksWithoutAccessToken(t *testing.T) {
 
 	rt := loadGmailRuntime(t, upstream.URL)
 	keys := mustKeys(t)
-	srv := NewServer(rt, keys, upstream.Client(), gmailFactory, 0)
+	srv := NewServer(Dependencies{Runtime: rt, Keys: keys, HTTPClient: upstream.Client(), APIFactory: gmailFactory})
 	proxy := httptest.NewServer(srv.Router())
 	defer proxy.Close()
 
@@ -539,7 +539,7 @@ func TestUpstreamMetaErrorMaps(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			factory := func(string, auth.AccessCreds) (compiled.PhysicalAPI, error) { return tc.api, nil }
-			srv := NewServer(rt, keys, nil, factory, 0)
+			srv := NewServer(Dependencies{Runtime: rt, Keys: keys, APIFactory: factory})
 			proxy := httptest.NewServer(srv.Router())
 			defer proxy.Close()
 
@@ -573,7 +573,7 @@ func (e errorAPI) Call(_ context.Context, _ *pb.MetaRequest) (*pb.Response, erro
 func TestMissingAuthReturns401(t *testing.T) {
 	rt := loadGmailRuntime(t, "")
 	keys := mustKeys(t)
-	srv := NewServer(rt, keys, nil, gmailFactory, 0)
+	srv := NewServer(Dependencies{Runtime: rt, Keys: keys, APIFactory: gmailFactory})
 	proxy := httptest.NewServer(srv.Router())
 	defer proxy.Close()
 
@@ -595,7 +595,7 @@ func TestMissingAuthReturns401(t *testing.T) {
 func TestRequestBodyOverCapReturns413(t *testing.T) {
 	rt := loadGmailRuntime(t, "http://upstream.invalid")
 	keys := mustKeys(t)
-	srv := NewServer(rt, keys, nil, gmailFactory, 0)
+	srv := NewServer(Dependencies{Runtime: rt, Keys: keys, APIFactory: gmailFactory})
 	proxy := httptest.NewServer(srv.Router())
 	defer proxy.Close()
 
@@ -623,7 +623,7 @@ func TestRequestBodyOverCapReturns413(t *testing.T) {
 func TestErrorResponsesDoNotLeakInternals(t *testing.T) {
 	rt := loadGmailRuntime(t, "http://upstream.invalid")
 	keys := mustKeys(t)
-	srv := NewServer(rt, keys, nil, gmailFactory, 0)
+	srv := NewServer(Dependencies{Runtime: rt, Keys: keys, APIFactory: gmailFactory})
 	proxy := httptest.NewServer(srv.Router())
 	defer proxy.Close()
 
@@ -668,7 +668,7 @@ func TestDenyReturns403(t *testing.T) {
 		t.Fatalf("build: %v", err)
 	}
 	keys := mustKeys(t)
-	srv := NewServer(rt, keys, nil, gmailFactory, 0)
+	srv := NewServer(Dependencies{Runtime: rt, Keys: keys, APIFactory: gmailFactory})
 	proxy := httptest.NewServer(srv.Router())
 	defer proxy.Close()
 
@@ -700,7 +700,7 @@ func TestDenyReturns403(t *testing.T) {
 	if !ok {
 		t.Fatalf("denial body missing next_steps: %v", body)
 	}
-	for _, key := range []string{"supported_apis", "policies", "propose_policy", "docs"} {
+	for _, key := range []string{"supported_apis", "policies", "docs"} {
 		if v, _ := steps[key].(string); v == "" {
 			t.Errorf("next_steps.%s missing or empty: %+v", key, steps)
 		}
@@ -710,7 +710,7 @@ func TestDenyReturns403(t *testing.T) {
 // TestDenyBodyCarriesMatchedActions pins the contract that a
 // 403 from policy denial includes the api the request routed to
 // and every action whose match logic fired. Agents reading the
-// body draft a permitting proposal off this list rather than
+// body draft a permitting policy off this list rather than
 // re-walking /_api/apis to figure out what they hit.
 func TestDenyBodyCarriesMatchedActions(t *testing.T) {
 	api := &models.API{
@@ -731,7 +731,7 @@ func TestDenyBodyCarriesMatchedActions(t *testing.T) {
 		t.Fatalf("build: %v", err)
 	}
 	keys := mustKeys(t)
-	srv := NewServer(rt, keys, nil, gmailFactory, 0)
+	srv := NewServer(Dependencies{Runtime: rt, Keys: keys, APIFactory: gmailFactory})
 	proxy := httptest.NewServer(srv.Router())
 	defer proxy.Close()
 
@@ -780,7 +780,7 @@ func TestDenyBodyCarriesMatchedActions(t *testing.T) {
 func TestDoubleSlashIsForbidden(t *testing.T) {
 	rt := loadGmailRuntime(t, "")
 	keys := mustKeys(t)
-	srv := NewServer(rt, keys, nil, gmailFactory, 0)
+	srv := NewServer(Dependencies{Runtime: rt, Keys: keys, APIFactory: gmailFactory})
 	proxy := httptest.NewServer(srv.Router())
 	defer proxy.Close()
 
@@ -848,9 +848,14 @@ func TestRoutesAcrossMultipleApis(t *testing.T) {
 	}
 
 	keys := mustKeys(t)
-	srv := NewServer(rt, keys, http.DefaultClient, func(string, auth.AccessCreds) (compiled.PhysicalAPI, error) {
-		return fakeGmailAPI{}, nil
-	}, 0)
+	srv := NewServer(Dependencies{
+		Runtime:    rt,
+		Keys:       keys,
+		HTTPClient: http.DefaultClient,
+		APIFactory: func(string, auth.AccessCreds) (compiled.PhysicalAPI, error) {
+			return fakeGmailAPI{}, nil
+		},
+	})
 	proxy := httptest.NewServer(srv.Router())
 	defer proxy.Close()
 

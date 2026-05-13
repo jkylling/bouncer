@@ -55,11 +55,11 @@ func TestUpgradeOneLiveSwapsBundle(t *testing.T) {
 	root := t.TempDir()
 	oldSHA := "0000000000000000000000000000000000000001"
 	newSHA := "1111111111111111111111111111111111111111"
-	oldDir := installFixture(t, root, "github.com/acme/pack", oldSHA, "1.0.0", map[string]string{"gmail": "acme-gmail"})
+	oldDir := installFixture(t, root, "github.com/acme/pack", oldSHA, "1.0.0", map[string]string{"google.gmail": "acme-gmail"})
 
 	newBundle := gzipBundle(t, "pack-1111111", map[string]string{
 		"bouncer.yaml": "schema_version: 1\nname: pack\nversion: 1.1.0\napis: [apis/a.yaml]\n",
-		"apis/a.yaml":  "name: gmail\nbase_url: https://x\npath_prefixes: [/g]\n",
+		"apis/a.yaml":  "name: google.gmail\nbase_url: https://x\npath_prefixes: [/g]\n",
 	})
 	srv := upgradeFakeServer(t, newSHA, newBundle)
 	f := bundles.NewFetcher(bundles.FetcherOpts{APIBase: srv.URL, CodeloadBase: srv.URL})
@@ -95,7 +95,7 @@ func TestUpgradeOneLiveSwapsBundle(t *testing.T) {
 	if src.ResolvedSHA != newSHA {
 		t.Fatalf("source sha = %q", src.ResolvedSHA)
 	}
-	if src.APIRenames["gmail"] != "acme-gmail" {
+	if src.APIRenames["google.gmail"] != "acme-gmail" {
 		t.Fatalf("renames lost: %v", src.APIRenames)
 	}
 	if !strings.Contains(out.String(), "upgraded") {
@@ -139,8 +139,8 @@ func TestUpgradeOneDryRunDoesNotWrite(t *testing.T) {
 
 	newBundle := gzipBundle(t, "pack-2222222", map[string]string{
 		"bouncer.yaml": "schema_version: 1\nname: pack\nversion: 2.0.0\napis: [apis/a.yaml, apis/b.yaml]\n",
-		"apis/a.yaml":  "name: gmail\n",
-		"apis/b.yaml":  "name: drive\n",
+		"apis/a.yaml":  "name: google.gmail\n",
+		"apis/b.yaml":  "name: google.drive\n",
 	})
 	srv := upgradeFakeServer(t, newSHA, newBundle)
 	f := bundles.NewFetcher(bundles.FetcherOpts{APIBase: srv.URL, CodeloadBase: srv.URL})

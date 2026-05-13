@@ -60,7 +60,7 @@ func TestSanitizeKeepsBodyUnderCap(t *testing.T) {
 
 func TestSanitizeNoBodyAPIs(t *testing.T) {
 	ev := &Event{
-		API:          "gmail",
+		API:          "google.gmail",
 		RequestBody:  []byte("user content"),
 		UpstreamBody: []byte("more user content"),
 	}
@@ -77,7 +77,7 @@ func TestSanitizeNoBodyAPIs(t *testing.T) {
 }
 
 func TestSanitizeNoBodyAPIPreservesEmpty(t *testing.T) {
-	ev := &Event{API: "gmail"}
+	ev := &Event{API: "google.gmail"}
 	Sanitize(ev, SanitizeOptions{})
 	if ev.Truncated {
 		t.Error("Truncated set on a no-body API with no body — should stay false")
@@ -119,10 +119,10 @@ func TestSanitizeCustomSensitiveHeadersExtendsFloor(t *testing.T) {
 
 func TestSanitizeCustomNoBodyAPIs(t *testing.T) {
 	ev := &Event{
-		API:         "calendar",
+		API:         "google.calendar",
 		RequestBody: []byte("event body"),
 	}
-	Sanitize(ev, SanitizeOptions{NoBodyAPIs: map[string]bool{"calendar": true}})
+	Sanitize(ev, SanitizeOptions{NoBodyAPIs: map[string]bool{"google.calendar": true}})
 	if ev.RequestBody != nil {
 		t.Errorf("request body = %q, want nil for custom no-body API", ev.RequestBody)
 	}
@@ -135,10 +135,10 @@ func TestSanitizeCustomNoBodyAPIs(t *testing.T) {
 // non-nil map.
 func TestSanitizeNoBodyAPIsPreservesDefaultFloor(t *testing.T) {
 	ev := &Event{
-		API:         "gmail",
+		API:         "google.gmail",
 		RequestBody: []byte("user mail"),
 	}
-	Sanitize(ev, SanitizeOptions{NoBodyAPIs: map[string]bool{"calendar": true}})
+	Sanitize(ev, SanitizeOptions{NoBodyAPIs: map[string]bool{"google.calendar": true}})
 	if ev.RequestBody != nil {
 		t.Error("gmail body must be redacted even when custom NoBodyAPIs is set")
 	}
@@ -170,10 +170,10 @@ func TestSanitizeTruncatesMetaFetchBodies(t *testing.T) {
 
 func TestSanitizeMetaFetchHonoursNoBodyAPIByFetchAPI(t *testing.T) {
 	ev := &Event{
-		API: "calendar", // outer event API is fine
+		API: "google.calendar", // outer event API is fine
 		MetaFetches: []MetaFetch{{
 			Meta:         "drive.file",
-			API:          "drive", // sensitive upstream
+			API:          "google.drive", // sensitive upstream
 			RequestBody:  []byte("q"),
 			ResponseBody: []byte("r"),
 		}},
@@ -194,10 +194,10 @@ func TestSanitizeMetaFetchRedactedWhenOuterAPIIsNoBody(t *testing.T) {
 	// Outer event API is gmail (NoBody) — all fetch bodies must drop
 	// even if the fetch's own API is not redacted on its own.
 	ev := &Event{
-		API: "gmail",
+		API: "google.gmail",
 		MetaFetches: []MetaFetch{{
 			Meta:         "calendar.event",
-			API:          "calendar",
+			API:          "google.calendar",
 			RequestBody:  []byte("q"),
 			ResponseBody: []byte("r"),
 		}},

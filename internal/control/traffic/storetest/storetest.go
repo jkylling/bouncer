@@ -10,7 +10,6 @@ package storetest
 
 import (
 	"context"
-	"fmt"
 	"testing"
 	"time"
 
@@ -49,12 +48,7 @@ func Run(t *testing.T, cfg Config) {
 	t.Run("ListFiltersAND", func(t *testing.T) { testListFilters(t, cfg) })
 	t.Run("ListSubjectFilter", func(t *testing.T) { testListSubject(t, cfg) })
 	t.Run("ListPagination", func(t *testing.T) { testListPagination(t, cfg) })
-	t.Run("PinAndUnpin", func(t *testing.T) { testPinUnpin(t, cfg) })
-	t.Run("PinIsIdempotent", func(t *testing.T) { testPinIdempotent(t, cfg) })
-	t.Run("PinUnknownReturnsNotFound", func(t *testing.T) { testPinUnknown(t, cfg) })
 	t.Run("EvictionRespectsByteBudget", func(t *testing.T) { testEvictionByteBudget(t, cfg) })
-	t.Run("EvictionRespectsPinned", func(t *testing.T) { testEvictionPinned(t, cfg) })
-	t.Run("ListPinnedOnly", func(t *testing.T) { testListPinnedOnly(t, cfg) })
 }
 
 func newEvent(api, action string, decision traffic.Decision, subject string, ts time.Time) traffic.Event {
@@ -236,60 +230,8 @@ func testListPagination(t *testing.T, cfg Config) {
 	}
 }
 
-func testPinUnpin(t *testing.T, cfg Config) {
-	s := cfg.New(t)
-	defer s.Close()
-	ev := newEvent("gmail", "a", traffic.DecisionPermit, "alice", time.Now().UTC().Truncate(time.Millisecond))
-	mustInsert(t, s, ev)
-	if err := s.Pin(context.Background(), ev.ID); err != nil {
-		t.Fatalf("Pin: %v", err)
-	}
-	got, err := s.Get(context.Background(), ev.ID)
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if !got.Pinned {
-		t.Error("after Pin: Pinned = false, want true")
-	}
-	if err := s.Unpin(context.Background(), ev.ID); err != nil {
-		t.Fatalf("Unpin: %v", err)
-	}
-	got, _ = s.Get(context.Background(), ev.ID)
-	if got.Pinned {
-		t.Error("after Unpin: Pinned = true, want false")
-	}
-}
-
-func testPinIdempotent(t *testing.T, cfg Config) {
-	s := cfg.New(t)
-	defer s.Close()
-	ev := newEvent("gmail", "a", traffic.DecisionPermit, "alice", time.Now().UTC().Truncate(time.Millisecond))
-	mustInsert(t, s, ev)
-	for i := 0; i < 3; i++ {
-		if err := s.Pin(context.Background(), ev.ID); err != nil {
-			t.Fatalf("Pin #%d: %v", i, err)
-		}
-	}
-	for i := 0; i < 3; i++ {
-		if err := s.Unpin(context.Background(), ev.ID); err != nil {
-			t.Fatalf("Unpin #%d: %v", i, err)
-		}
-	}
-}
-
-func testPinUnknown(t *testing.T, cfg Config) {
-	s := cfg.New(t)
-	defer s.Close()
-	if err := s.Pin(context.Background(), "deadbeef"); err != traffic.ErrNotFound {
-		t.Errorf("Pin unknown = %v, want ErrNotFound", err)
-	}
-	if err := s.Unpin(context.Background(), "deadbeef"); err != traffic.ErrNotFound {
-		t.Errorf("Unpin unknown = %v, want ErrNotFound", err)
-	}
-}
-
 // testEvictionByteBudget fills the store past its byte budget and
-// asserts the oldest non-pinned rows are gone.
+// asserts the oldest rows are gone.
 func testEvictionByteBudget(t *testing.T, cfg Config) {
 	s := cfg.New(t)
 	defer s.Close()
@@ -327,62 +269,5 @@ func testEvictionByteBudget(t *testing.T, cfg Config) {
 	// Oldest gone.
 	if _, err := s.Get(context.Background(), ids[0]); err != traffic.ErrNotFound {
 		t.Errorf("oldest Get = %v, want ErrNotFound after eviction", err)
-	}
-}
-
-// testEvictionPinned asserts a pinned row survives even when newer
-// non-pinned rows displace it.
-func testEvictionPinned(t *testing.T, cfg Config) {
-	s := cfg.New(t)
-	defer s.Close()
-	bigBody := make([]byte, 4*1024)
-	base := time.Now().UTC().Truncate(time.Millisecond).Add(-time.Minute)
-	pinned := newEvent("gmail", "pinned-action", traffic.DecisionPermit, "alice", base)
-	pinned.RequestBody = bigBody
-	mustInsert(t, s, pinned)
-	if err := s.Pin(context.Background(), pinned.ID); err != nil {
-		t.Fatalf("Pin: %v", err)
-	}
-	const N = 64
-	for i := 0; i < N; i++ {
-		ev := newEvent("gmail", "a", traffic.DecisionPermit, "alice", base.Add(time.Duration(i+1)*time.Second))
-		ev.RequestBody = bigBody
-		mustInsert(t, s, ev)
-	}
-	got, err := s.Get(context.Background(), pinned.ID)
-	if err != nil {
-		t.Fatalf("pinned Get after eviction storm: %v", err)
-	}
-	if !got.Pinned {
-		t.Errorf("pinned event lost its pin: got %+v", got)
-	}
-}
-
-func testListPinnedOnly(t *testing.T, cfg Config) {
-	s := cfg.New(t)
-	defer s.Close()
-	base := time.Now().UTC().Truncate(time.Millisecond).Add(-time.Minute)
-	pinIDs := map[traffic.EventID]bool{}
-	for i := 0; i < 5; i++ {
-		ev := newEvent("gmail", fmt.Sprintf("a%d", i), traffic.DecisionPermit, "alice", base.Add(time.Duration(i)*time.Second))
-		mustInsert(t, s, ev)
-		if i%2 == 0 {
-			if err := s.Pin(context.Background(), ev.ID); err != nil {
-				t.Fatalf("Pin: %v", err)
-			}
-			pinIDs[ev.ID] = true
-		}
-	}
-	rows, _ := mustList(t, s, traffic.ListOpts{PinnedOnly: true})
-	if len(rows) != 3 {
-		t.Errorf("PinnedOnly → %d rows, want 3", len(rows))
-	}
-	for _, r := range rows {
-		if !r.Pinned {
-			t.Errorf("PinnedOnly row %s not pinned", r.ID)
-		}
-		if !pinIDs[r.ID] {
-			t.Errorf("PinnedOnly row %s not in expected pin set", r.ID)
-		}
 	}
 }

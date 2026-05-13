@@ -2,13 +2,15 @@
 // control-plane stores (traffic, policies, proposals) build on top
 // of. Each domain still owns its own data shape, schema, and queries
 // — what's shared here is *where the bits live*: a SQLite database
-// handle, a filesystem root, or an in-process marker.
+// handle or a filesystem root.
 //
 // A deployment can wire one Backend across every domain (a single
 // sqlite file with multiple tables, a single root directory with
 // per-domain subdirs) or hand each domain its own — `traffic.Open`
 // and `policies.Open` accept any compatible Backend independently,
-// so split deployments are first-class.
+// so split deployments are first-class. In-memory operation is not a
+// Backend; each domain exposes a `NewMemoryStore` constructor whose
+// state is private to the returned store.
 //
 // Backends do not own the lifecycle of the resources they expose.
 // The application (typically `cmd/bouncer`) opens a Backend,
@@ -27,9 +29,9 @@ import (
 // backends to close at shutdown without caring which kind they are.
 //
 // Domain stores accept the more specific interfaces below
-// (SQLBackend, FSBackend, MemoryBackend) and type-assert at Open
-// time — an unsupported pairing (e.g. traffic on FSBackend) becomes
-// a clear error at boot rather than a silent degradation later.
+// (SQLBackend, FSBackend) and type-assert at Open time — an
+// unsupported pairing (e.g. traffic on FSBackend) becomes a clear
+// error at boot rather than a silent degradation later.
 type Backend interface {
 	// Close releases the backend's underlying resources (DB handle,
 	// open file descriptors, etc). Idempotent: subsequent calls
@@ -75,17 +77,6 @@ type FSBackend interface {
 	// same namespace always resolves to the same path inside the
 	// root.
 	Subdir(namespace string) (string, error)
-}
-
-// MemoryBackend is the in-process marker. It carries no state of
-// its own — domain stores allocate their own maps when handed one —
-// but having a typed value to pass through keeps the Open signatures
-// homogeneous across backend types.
-type MemoryBackend interface {
-	Backend
-
-	memoryMarker() // unexported so external impls can't accidentally
-	// satisfy the interface and bypass the type switch.
 }
 
 // ErrUnsupportedBackend is returned by a domain's Open when the

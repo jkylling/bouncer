@@ -1,16 +1,13 @@
 package apiscmd
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
-	"sort"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/jkylling/bouncer/internal/control/bundles"
 )
@@ -40,24 +37,23 @@ Expected layout under <dir>:
                         surface at /_api/apis/<name>/readme`
 
 type packOpts struct {
-	output string
-	refStr string
+	Output string `mapstructure:"output"`
+	RefStr string `mapstructure:"ref"`
 }
 
-func (o *packOpts) bind(cmd *cobra.Command) {
-	cmd.Flags().StringVar(&o.output, "output", "", "output tarball path (required)")
-	cmd.Flags().StringVar(&o.refStr, "ref", "", "ref to record in source.yaml (required, e.g. github.com/me/bouncer-svc@v0.1.0)")
+func (o *packOpts) bind(fs *pflag.FlagSet) {
+	fs.String("output", "", "output tarball path (required)")
+	fs.String("ref", "", "ref to record in source.yaml (required, e.g. github.com/me/bouncer-svc@v0.1.0)")
 }
 
 func packCommand() *cobra.Command {
-	var o packOpts
 	cmd := &cobra.Command{
 		Use:   "pack <dir>",
 		Short: "Pack a local bundle directory into a tarball",
 		Long:  packLong,
-		RunE:  func(_ *cobra.Command, args []string) error { return runPackImpl(args, &o) },
+		RunE:  runWithOpts(runPackImpl),
 	}
-	o.bind(cmd)
+	(&packOpts{}).bind(cmd.Flags())
 	return cmd
 }
 
@@ -69,13 +65,13 @@ func runPackImpl(args []string, o *packOpts) error {
 	if len(args) != 1 {
 		return fmt.Errorf("expected one directory argument; got %d", len(args))
 	}
-	if o.output == "" {
+	if o.Output == "" {
 		return errors.New("--output is required")
 	}
-	if o.refStr == "" {
+	if o.RefStr == "" {
 		return errors.New("--ref is required (the install record needs a ref)")
 	}
-	ref, err := bundles.ParseRef(o.refStr)
+	ref, err := bundles.ParseRef(o.RefStr)
 	if err != nil {
 		return fmt.Errorf("ref: %w", err)
 	}
@@ -112,7 +108,7 @@ func runPackImpl(args []string, o *packOpts) error {
 	if err := copyTree(srcDir, stage); err != nil {
 		return fmt.Errorf("stage: %w", err)
 	}
-	sha, err := contentSHA(stage)
+	sha, err := bundles.ContentSHA(stage)
 	if err != nil {
 		return fmt.Errorf("content sha: %w", err)
 	}
@@ -125,60 +121,10 @@ func runPackImpl(args []string, o *packOpts) error {
 		return fmt.Errorf("write source.yaml: %w", err)
 	}
 	prefix := mf.Name + "-" + mf.Version
-	if err := writeBundleTarballWithPrefix(o.output, stage, prefix); err != nil {
+	if err := bundles.WriteTarball(o.Output, stage, prefix); err != nil {
 		return err
 	}
 	fmt.Fprintf(os.Stdout, "wrote %s\n  bundle %s@%s\n  ref %s\n  sha %s\n",
-		o.output, mf.Name, mf.Version, ref, sha)
+		o.Output, mf.Name, mf.Version, ref, sha)
 	return nil
-}
-
-// contentSHA produces a deterministic 40-hex digest over every
-// regular file under root. Each file contributes its relative path
-// + a NUL + its bytes + a NUL; the sorted concatenation is hashed
-// with sha256 and truncated to match git's display width. Identical
-// trees (modulo file mode + mtime) hash identically across machines,
-// so a `pack` rerun against the same source tree produces an
-// identical install record.
-func contentSHA(root string) (string, error) {
-	type entry struct {
-		rel  string
-		body []byte
-	}
-	var entries []entry
-	walk := func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if !info.Mode().IsRegular() {
-			return nil
-		}
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		// Skip the source.yaml we're about to write — its content
-		// embeds the SHA we're computing, which would be circular.
-		if filepath.ToSlash(rel) == bundles.SourceFile {
-			return nil
-		}
-		body, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		entries = append(entries, entry{rel: filepath.ToSlash(rel), body: body})
-		return nil
-	}
-	if err := filepath.Walk(root, walk); err != nil {
-		return "", err
-	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].rel < entries[j].rel })
-	h := sha256.New()
-	for _, e := range entries {
-		_, _ = io.WriteString(h, e.rel)
-		_, _ = h.Write([]byte{0})
-		_, _ = h.Write(e.body)
-		_, _ = h.Write([]byte{0})
-	}
-	return hex.EncodeToString(h.Sum(nil))[:40], nil
 }

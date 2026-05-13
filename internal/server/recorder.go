@@ -94,6 +94,7 @@ func (s *Server) newRecorderHook(r *http.Request) *recorderHook {
 	if s.recorder == nil {
 		return &recorderHook{} // commit is a no-op
 	}
+	api := getRequestAPI(r.URL.Path)
 	return &recorderHook{
 		rec:      s.recorder,
 		id:       traffic.NewEventID(),
@@ -101,8 +102,20 @@ func (s *Server) newRecorderHook(r *http.Request) *recorderHook {
 		method:   r.Method,
 		url:      sanitizeURL(r.URL.RequestURI()),
 		headers:  cloneRequestHeaders(r.Header),
+		api:      api,
 		decision: traffic.DecisionError, // overwritten on success paths
 	}
+}
+
+// getRequestAPI returns the API type based on the request path.
+func getRequestAPI(path string) string {
+	if strings.HasPrefix(path, "/_admin") {
+		return "admin"
+	}
+	if strings.HasPrefix(path, "/_api/mcp") {
+		return "mcp"
+	}
+	return ""
 }
 
 // attachObservers returns ctx augmented with the hook's runtime
@@ -193,6 +206,10 @@ func (h *recorderHook) commit(ctx context.Context) {
 	if h.forwarded {
 		upstream = h.forwardedStatus
 	}
+	api := h.api
+	if api == "" {
+		api = "unknown"
+	}
 	ev := traffic.Event{
 		ID:                h.id,
 		Timestamp:         h.started.UTC(),
@@ -200,7 +217,7 @@ func (h *recorderHook) commit(ctx context.Context) {
 		Method:            h.method,
 		URL:               h.url,
 		RequestHeaders:    h.headers,
-		API:               h.api,
+		API:               api,
 		Decision:          h.decision,
 		Action:            h.action,
 		Policy:            h.policy,

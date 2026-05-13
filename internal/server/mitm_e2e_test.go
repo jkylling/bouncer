@@ -45,7 +45,7 @@ func TestMITMUnmodifiedClient(t *testing.T) {
 
 	rt := loadGmailRuntime(t, upstream.URL)
 	keys := mustKeys(t)
-	srv := NewServer(rt, keys, upstream.Client(), gmailFactory, 0)
+	srv := NewServer(Dependencies{Runtime: rt, Keys: keys, HTTPClient: upstream.Client(), APIFactory: gmailFactory})
 
 	caCertPEM, caKeyPEM, err := mitm.GenerateCAForTest()
 	if err != nil {

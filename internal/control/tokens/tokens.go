@@ -61,15 +61,15 @@ type Spec struct {
 
 // Validate checks the cross-field shape invariants
 // `auth.IssueAccessToken` does not. The verifier accepts any
-// AccessCreds, but a token issued with no credential material at all
-// 401s on first use — surfacing the problem here turns "issue
-// succeeds, every later request fails" into "issue refuses".
+// AccessCreds; a token issued with no credential material is valid
+// for surfaces that don't forward upstream (e.g. the MCP control
+// plane at /_api/mcp). The proxy's data-plane path still refuses to
+// forward such a JWT with a clear "no upstream credential" error,
+// turning "issue succeeds, forward fails" into a single understandable
+// failure rather than a silent denial.
 func (s *Spec) Validate() error {
 	if s.Subject == "" {
 		return errors.New("subject required")
-	}
-	if s.AccessToken == "" && len(s.Headers) == 0 {
-		return errors.New("at least one of access_token or headers is required")
 	}
 	for i, h := range s.Headers {
 		if h.Name == "" || h.Value == "" {

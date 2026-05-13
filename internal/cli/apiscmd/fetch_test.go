@@ -10,7 +10,7 @@ import (
 )
 
 // TestFetchPackThenInstallFromTarball drives the full air-gap loop:
-// pack a fetched bundle into a tarball via writeBundleTarball, then
+// pack a fetched bundle into a tarball via bundles.WriteTarball, then
 // install it back via runAddFromTarball, with no network in between.
 // Mirrors the operator workflow `apis fetch ... | scp ... | apis add
 // --from-tarball ...`.
@@ -24,7 +24,7 @@ func TestFetchPackThenInstallFromTarball(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(staging, bundles.APIsSubdir, "a.yaml"),
-		[]byte("name: gmail\nbase_url: https://x\npath_prefixes: [/g]\n"), 0o600); err != nil {
+		[]byte("name: google.gmail\nbase_url: https://x\npath_prefixes: [/g]\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	src := &bundles.SourceRecord{
@@ -37,7 +37,7 @@ func TestFetchPackThenInstallFromTarball(t *testing.T) {
 
 	ref, _ := bundles.ParseRef(src.Ref)
 	tarball := filepath.Join(t.TempDir(), "pack.tgz")
-	if err := writeBundleTarball(tarball, staging, ref, src.ResolvedSHA); err != nil {
+	if err := bundles.WriteTarball(tarball, staging, ref.Repo+"-"+src.ResolvedSHA); err != nil {
 		t.Fatalf("pack: %v", err)
 	}
 	if _, err := os.Stat(tarball); err != nil {
@@ -45,7 +45,8 @@ func TestFetchPackThenInstallFromTarball(t *testing.T) {
 	}
 
 	vendored := t.TempDir()
-	if err := runAddFromTarball(tarball, "", "", vendored, map[string]string{"gmail": "acme-gmail"}, true); err != nil {
+	o := &addOpts{FromTarball: tarball, SkipAllowlist: true}
+	if err := runAddFromTarball(o, vendored, map[string]string{"google.gmail": "acme-gmail"}); err != nil {
 		t.Fatalf("from-tarball: %v", err)
 	}
 	finalDir := bundles.BundleDir(vendored, "pack")
@@ -57,7 +58,7 @@ func TestFetchPackThenInstallFromTarball(t *testing.T) {
 	if err != nil {
 		t.Fatalf("source: %v", err)
 	}
-	if got.APIRenames["gmail"] != "acme-gmail" {
+	if got.APIRenames["google.gmail"] != "acme-gmail" {
 		t.Fatalf("rename not applied: %v", got.APIRenames)
 	}
 	if !got.FetchedAt.After(src.FetchedAt) && !got.FetchedAt.Equal(src.FetchedAt) {
@@ -70,21 +71,22 @@ func TestRunAddFromTarballRefusesIfInstalled(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(staging, bundles.ManifestFile),
 		[]byte("schema_version: 1\nname: pack\nversion: 1.0.0\napis: [apis/a.yaml]\n"), 0o600)
 	_ = os.MkdirAll(filepath.Join(staging, bundles.APIsSubdir), 0o755)
-	_ = os.WriteFile(filepath.Join(staging, bundles.APIsSubdir, "a.yaml"), []byte("name: gmail\n"), 0o600)
+	_ = os.WriteFile(filepath.Join(staging, bundles.APIsSubdir, "a.yaml"), []byte("name: google.gmail\n"), 0o600)
 	sha := "7a3c1f4abcdef0123456789abcdef0123456789a"
 	_ = bundles.WriteSource(filepath.Join(staging, bundles.SourceFile), &bundles.SourceRecord{
 		Ref: "github.com/acme/pack@v1.0.0", ResolvedSHA: sha,
 	})
 	ref, _ := bundles.ParseRef("github.com/acme/pack@v1.0.0")
 	tarball := filepath.Join(t.TempDir(), "pack.tgz")
-	if err := writeBundleTarball(tarball, staging, ref, sha); err != nil {
+	if err := bundles.WriteTarball(tarball, staging, ref.Repo+"-"+sha); err != nil {
 		t.Fatal(err)
 	}
 	vendored := t.TempDir()
-	if err := runAddFromTarball(tarball, "", "", vendored, nil, true); err != nil {
+	o := &addOpts{FromTarball: tarball, SkipAllowlist: true}
+	if err := runAddFromTarball(o, vendored, nil); err != nil {
 		t.Fatalf("first install: %v", err)
 	}
-	if err := runAddFromTarball(tarball, "", "", vendored, nil, true); err == nil {
+	if err := runAddFromTarball(o, vendored, nil); err == nil {
 		t.Fatal("second install: want error")
 	}
 }
@@ -93,7 +95,7 @@ func TestFetchEndToEnd(t *testing.T) {
 	sha := "7a3c1f4abcdef0123456789abcdef0123456789a"
 	bundle := gzipBundle(t, "pack-7a3c1f4", map[string]string{
 		"bouncer.yaml": "schema_version: 1\nname: pack\nversion: 1.0.0\napis: [apis/a.yaml]\n",
-		"apis/a.yaml":  "name: gmail\nbase_url: https://x\npath_prefixes: [/g]\n",
+		"apis/a.yaml":  "name: google.gmail\nbase_url: https://x\npath_prefixes: [/g]\n",
 	})
 	srv := fakeServer(t, sha, bundle)
 
@@ -119,7 +121,7 @@ func TestFetchEndToEnd(t *testing.T) {
 	if err := bundles.WriteSource(filepath.Join(work, bundles.SourceFile), src); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeBundleTarball(out, work, ref, resolved); err != nil {
+	if err := bundles.WriteTarball(out, work, ref.Repo+"-"+resolved); err != nil {
 		t.Fatal(err)
 	}
 
@@ -154,19 +156,20 @@ func TestRunAddFromTarballHonoursRefOverride(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(staging, bundles.ManifestFile),
 		[]byte("schema_version: 1\nname: pack\nversion: 1.0.0\napis: [apis/a.yaml]\n"), 0o600)
 	_ = os.MkdirAll(filepath.Join(staging, bundles.APIsSubdir), 0o755)
-	_ = os.WriteFile(filepath.Join(staging, bundles.APIsSubdir, "a.yaml"), []byte("name: gmail\n"), 0o600)
+	_ = os.WriteFile(filepath.Join(staging, bundles.APIsSubdir, "a.yaml"), []byte("name: google.gmail\n"), 0o600)
 	sha := "7a3c1f4abcdef0123456789abcdef0123456789a"
 	_ = bundles.WriteSource(filepath.Join(staging, bundles.SourceFile), &bundles.SourceRecord{
 		Ref: "github.com/acme/pack@v1.0.0", ResolvedSHA: sha,
 	})
 	ref, _ := bundles.ParseRef("github.com/acme/pack@v1.0.0")
 	tarball := filepath.Join(t.TempDir(), "pack.tgz")
-	if err := writeBundleTarball(tarball, staging, ref, sha); err != nil {
+	if err := bundles.WriteTarball(tarball, staging, ref.Repo+"-"+sha); err != nil {
 		t.Fatal(err)
 	}
 
 	vendored := t.TempDir()
-	if err := runAddFromTarball(tarball, "github.com/foo/forked@v0.1.0", "", vendored, nil, true); err != nil {
+	o := &addOpts{FromTarball: tarball, RefOverride: "github.com/foo/forked@v0.1.0", SkipAllowlist: true}
+	if err := runAddFromTarball(o, vendored, nil); err != nil {
 		t.Fatalf("override: %v", err)
 	}
 	// The on-disk path is keyed by manifest name (still "pack");

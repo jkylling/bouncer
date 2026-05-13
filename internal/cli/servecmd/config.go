@@ -1,4 +1,4 @@
-package serve
+package servecmd
 
 import (
 	"context"
@@ -7,27 +7,19 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"path/filepath"
-	"strings"
 	"syscall"
 	"time"
 
-	"github.com/go-viper/mapstructure/v2"
 	"github.com/spf13/pflag"
-	"github.com/spf13/viper"
-	"golang.org/x/crypto/bcrypt"
 
 	"github.com/jkylling/bouncer/internal/auth"
+	"github.com/jkylling/bouncer/internal/cli/cliconfig"
 	"github.com/jkylling/bouncer/internal/cli/initcmd"
 	"github.com/jkylling/bouncer/internal/control/bundles"
+	"github.com/jkylling/bouncer/internal/datadir"
 	"github.com/jkylling/bouncer/internal/observability"
+	"github.com/jkylling/bouncer/internal/server/admin"
 )
-
-// defaultBundleBranch is the version `--with-apis github.com/x/y`
-// (no @ref) installs from. GitHub's commits API resolves it to
-// whatever main currently points at; an `apis upgrade` later picks
-// up the new SHA without changing the recorded ref.
-const defaultBundleBranch = "main"
 
 // Default HTTP timeouts. Conservative defaults for a JSON
 // control-plane proxy; non-zero so the slowloris / hung-upstream
@@ -41,7 +33,6 @@ const (
 	defaultUpstreamCallTimeout      = 30 * time.Second
 	defaultTrafficBudget            = 16 * 1024 * 1024
 	defaultTrafficMaxAge            = 24 * time.Hour
-	defaultTrafficMaxPinned         = 1000
 )
 
 // config is the resolved set of knobs the binary needs at boot. It is
@@ -93,11 +84,10 @@ type config struct {
 	// unwired and the /_api/traffic routes unmounted — no overhead.
 	// `memory` is in-process (lost on restart). `sqlite` writes to
 	// TrafficDB. The byte and age budgets cap retention.
-	TrafficStore     TrafficStoreKind `mapstructure:"traffic-store"`
-	TrafficDB        string           `mapstructure:"traffic-db"`
-	TrafficBudget    int              `mapstructure:"traffic-budget"`
-	TrafficMaxAge    time.Duration    `mapstructure:"traffic-max-age"`
-	TrafficMaxPinned int              `mapstructure:"traffic-max-pinned"`
+	TrafficStore  TrafficStoreKind `mapstructure:"traffic-store"`
+	TrafficDB     string           `mapstructure:"traffic-db"`
+	TrafficBudget int              `mapstructure:"traffic-budget"`
+	TrafficMaxAge time.Duration    `mapstructure:"traffic-max-age"`
 
 	// Policies storage. PoliciesStore picks the backend kind:
 	//   - "file": YAML files under --policies-dir (current default).
@@ -108,18 +98,11 @@ type config struct {
 	PoliciesDB    string            `mapstructure:"policies-db"`
 
 	// PoliciesReadOnly disables every mutating control-plane endpoint
-	// (POST/PUT/DELETE on /_api/policies and the proposal-approve flow
-	// that ultimately calls Service.Replace). The list / get / dryRun
+	// (POST/PUT/DELETE on /_api/policies). The list / get / dryRun
 	// endpoints and the read-only UI keep working. Useful for
 	// production deployments that want the policies viewer without
 	// risking accidental edits from a shared admin host.
 	PoliciesReadOnly bool `mapstructure:"policies-readonly"`
-
-	// Proposals storage. ProposalsStore picks the backend kind:
-	//   - "memory": in-process map, lost on restart (current default).
-	//   - "sqlite": one row per proposal under --proposals-db.
-	ProposalsStore ProposalsStoreKind `mapstructure:"proposals-store"`
-	ProposalsDB    string             `mapstructure:"proposals-db"`
 
 	// StoreDB is the convenience shortcut: any domain whose own
 	// --*-db flag is empty falls back to this when its backend is
@@ -129,17 +112,11 @@ type config struct {
 	StoreDB string `mapstructure:"store-db"`
 
 	// AdminPasswordHash is the bcrypt hash POST /_api/admin/login
-	// compares against. Mutually exclusive with AdminPassword (which
-	// hashes its cleartext at boot for dev convenience). Empty leaves
-	// the login endpoint wired but serving 503; bootstrap then runs
-	// through `cmd/issue-token --admin`.
+	// compares against. Empty leaves the login endpoint wired but
+	// serving 503; bootstrap then runs through `cmd/issue-token
+	// --admin`. With --data-dir, auto-loaded from
+	// `<data-dir>/admin-password.hash`.
 	AdminPasswordHash string `mapstructure:"admin-password-hash"`
-
-	// AdminPassword is the cleartext form, hashed at boot. Dev-only:
-	// printed-cmdline secrets are unsafe in production, so the flag
-	// log-warns when it's set. Production deployments should pass
-	// AdminPasswordHash via env (or the env-mounted hash file).
-	AdminPassword string `mapstructure:"admin-password"`
 
 	// DataDir, when non-empty, is a directory laid out by
 	// `bouncer init` — secret.hex, admin-password.hash, store.db,
@@ -162,6 +139,13 @@ type config struct {
 	// already-installed ref (regardless of SHA) is skipped with a log
 	// line so re-running `serve --init --with-apis ...` is safe.
 	WithApis []string `mapstructure:"with-apis"`
+
+	// InternalPolicies picks the embedded policy set that gates the
+	// /_admin and /_api control-plane surface. One of demo / simple /
+	// production; default `simple` mirrors the pre-policy behaviour.
+	// See bouncer/internal/server/admin/internal_apis/policies for
+	// each set's contents.
+	InternalPolicies string `mapstructure:"internal-policies"`
 }
 
 // serveLong is the prose description cobra prints under `serve --help`.
@@ -250,19 +234,16 @@ func bindServeFlags(fs *pflag.FlagSet) {
 	fs.String("traffic-store", "none", "traffic-viewer storage backend (none|memory|sqlite); none disables capture and the query API")
 	fs.String("traffic-db", "", "path to the sqlite DB file when --traffic-store=sqlite (falls back to --store-db)")
 	fs.Int("traffic-budget", defaultTrafficBudget, "byte budget for non-pinned traffic events; older rows evict past this")
-	fs.Duration("traffic-max-age", defaultTrafficMaxAge, "max age of non-pinned traffic events; older rows evict regardless of byte pressure")
-	fs.Int("traffic-max-pinned", defaultTrafficMaxPinned, "hard cap on pinned traffic events; pin requests past this return 409")
+	fs.Duration("traffic-max-age", defaultTrafficMaxAge, "max age of traffic events; older rows evict regardless of byte pressure")
 	fs.String("policies-store", "file", "policies storage backend (file|memory|sqlite); file uses --policies-dir")
 	fs.String("policies-db", "", "path to the sqlite DB file when --policies-store=sqlite (falls back to --store-db)")
-	fs.Bool("policies-readonly", false, "reject every mutating policy endpoint (and proposal approval); the policies viewer stays available")
-	fs.String("proposals-store", "memory", "proposals storage backend (memory|sqlite); memory loses drafts on restart")
-	fs.String("proposals-db", "", "path to the sqlite DB file when --proposals-store=sqlite (falls back to --store-db)")
+	fs.Bool("policies-readonly", false, "reject every mutating policy endpoint; the policies viewer stays available")
 	fs.String("store-db", "", "shared sqlite DB path; any domain set to sqlite without its own --*-db falls back to this so all three can live in one file")
-	fs.String("admin-password-hash", "", "bcrypt hash for the /_api/admin/login flow; generate via `htpasswd -bnBC 12 \"\" <pw> | tr -d ':\\n'`")
-	fs.String("admin-password", "", "cleartext admin password; hashed at boot. DEV ONLY — production deployments must use --admin-password-hash via env so the cleartext is not visible in `ps`.")
+	fs.String("admin-password-hash", "", "bcrypt hash for the /_api/admin/login flow. Auto-loaded from `<data-dir>/admin-password.hash` when --data-dir is set; otherwise generate via `htpasswd -bnBC 12 \"\" <pw> | tr -d ':\\n'`.")
 	fs.String("data-dir", "", "directory created by `bouncer init`. Defaults to the current working directory when it looks like an initialized data dir (secret.hex + admin-password.hash present), or when --init is set. When set, defaults --secret-hex, --apis-dir, --policies-dir, --admin-password-hash, --store-db, and --mitm-ca-cert/key from the layout files (any explicit flag overrides).")
 	fs.Bool("init", false, "bootstrap --data-dir if it isn't already initialized (equivalent to running `bouncer init <data-dir>` first). Defaults --data-dir to the current working directory when unset. No-op when the dir already has a secret + admin-password hash.")
 	fs.StringSlice("with-apis", nil, "install one or more bundle refs before serving (e.g. github.com/jkylling/bouncer-gws@v0.1.0, or just github.com/jkylling/bouncer-gws to track main). Already-installed refs are skipped; repeat the flag for several bundles.")
+	fs.String("internal-policies", "simple", "embedded policy set gating the control-plane surface (/_admin + /_api): demo (open except admin), simple (mirrors current access control), production (admin-only)")
 }
 
 // buildConfig reads viper + post-parse setup against an already-bound
@@ -272,33 +253,23 @@ func bindServeFlags(fs *pflag.FlagSet) {
 // callers should treat this as the single boot-time entry rather
 // than a pure parser.
 func buildConfig(fs *pflag.FlagSet) (*config, error) {
-	v := viper.New()
-	if err := v.BindPFlags(fs); err != nil {
-		return nil, fmt.Errorf("bind flags: %w", err)
-	}
-	v.SetEnvPrefix("BOUNCER")
-	v.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
-	v.AutomaticEnv()
-
 	cfg := &config{}
-	if err := v.Unmarshal(cfg, viper.DecodeHook(mapstructure.ComposeDecodeHookFunc(
-		// Default viper hooks we'd otherwise lose by overriding.
-		mapstructure.StringToTimeDurationHookFunc(),
-		mapstructure.StringToSliceHookFunc(","),
-		// Lets typed fields (slog.Level, observability.LogFormat,
-		// observability.Exporter) parse via their UnmarshalText.
-		mapstructure.TextUnmarshallerHookFunc(),
-	))); err != nil {
-		return nil, fmt.Errorf("unmarshal config: %w", err)
+	if err := cliconfig.Load(fs, cfg); err != nil {
+		return nil, err
 	}
 	defaultDataDirFromCwd(cfg)
 	if err := bootstrapIfRequested(cfg); err != nil {
 		return nil, err
 	}
-	if err := installRequestedBundles(cfg, fs); err != nil {
+	// applyDataDir before installRequestedBundles so cfg.ApisDir
+	// reflects the data-dir layout when the operator passes
+	// --data-dir without an explicit --apis-dir; otherwise
+	// --with-apis would install into the default ./apis instead of
+	// <data-dir>/apis.
+	if err := applyDataDir(cfg, fs); err != nil {
 		return nil, err
 	}
-	if err := applyDataDir(cfg, fs); err != nil {
+	if err := installRequestedBundles(cfg); err != nil {
 		return nil, err
 	}
 	resolveMITMDefault(cfg, fs)
@@ -320,114 +291,29 @@ func loadConfig(args []string) (*config, error) {
 	return buildConfig(fs)
 }
 
-// bootstrapIfRequested runs `initcmd.Bootstrap` against --data-dir
-// when --init is set and the dir is not already initialized. The
-// idempotent-skip is what makes `serve --init --with-apis ...` safe
-// to re-run on every restart; a blanket re-init would invalidate
-// every JWT issued against the previous secret.
+// bootstrapIfRequested dispatches `--init` to the shared initcmd.Run
+// with daemon-friendly defaults (idempotent on re-init, quiet).
 func bootstrapIfRequested(cfg *config) error {
 	if !cfg.Init {
 		return nil
 	}
-	// --admin-password under --init means "use this for the bootstrap";
-	// after bootstrap admin-password.hash is on disk and applyDataDir
-	// will pick it up. Clear the cleartext unconditionally so the
-	// idempotent-skip path also avoids the "password + hash both set"
-	// mutex downstream.
-	pw := cfg.AdminPassword
-	cfg.AdminPassword = ""
-	if initcmd.IsInitialized(cfg.DataDir) {
-		return nil
-	}
-	// MITM CA generation tracks the serve --mitm flag — when MITM is
-	// enabled (default), init writes the cert + key so serve picks
-	// them up via the data-dir auto-derive. AdminPassword falls back
-	// to env / stdin via Bootstrap's resolvePassword.
-	return initcmd.Bootstrap(cfg.DataDir, initcmd.Options{
-		AdminPassword: pw,
-		MITM:          cfg.MITM,
+	return initcmd.Run(cfg.DataDir, initcmd.Options{
+		MITM:              cfg.MITM,
+		SkipIfInitialized: true,
+		Quiet:             true,
+		WithApis:          cfg.WithApis,
 	})
 }
 
-// installRequestedBundles runs each --with-apis ref through the same
-// install path as `bouncer apis add`. Refs already vendored at any
-// SHA are skipped — re-running `serve --with-apis foo` after a
-// successful first run is a no-op rather than an error.
-func installRequestedBundles(cfg *config, fs *pflag.FlagSet) error {
-	if len(cfg.WithApis) == 0 {
+// installRequestedBundles handles --with-apis for the non-init serve
+// path; --init routes through initcmd.Run instead.
+func installRequestedBundles(cfg *config) error {
+	if cfg.Init || len(cfg.WithApis) == 0 {
 		return nil
 	}
-	root := installRoot(cfg)
-	if err := os.MkdirAll(root, 0o755); err != nil {
-		return fmt.Errorf("apis dir: %w", err)
-	}
-	fetcher := bundles.NewFetcher(bundles.FetcherOpts{Token: os.Getenv("GITHUB_TOKEN")})
-	for _, raw := range cfg.WithApis {
-		ref, err := bundles.ParseRef(raw)
-		if err != nil {
-			return fmt.Errorf("--with-apis %q: %w", raw, err)
-		}
-		if ref.Version == "" {
-			// Refs without a version track the upstream default
-			// branch. The recorded source.yaml#ref keeps "main" so a
-			// later `apis upgrade` re-resolves it the same way.
-			ref.Version = defaultBundleBranch
-		}
-		installed, err := refAlreadyInstalled(root, ref)
-		if err != nil {
-			return fmt.Errorf("--with-apis %q: %w", raw, err)
-		}
-		if installed {
-			fmt.Fprintf(os.Stderr, "with-apis: %s already installed, skipping\n", ref)
-			continue
-		}
-		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-		dest, err := fetcher.Install(ctx, root, ref, nil)
-		cancel()
-		if err != nil {
-			return fmt.Errorf("--with-apis %s: %w", raw, err)
-		}
-		fmt.Fprintf(os.Stderr, "with-apis: installed %s at %s\n", ref, dest)
-	}
-	return nil
-}
-
-// installRoot returns the directory --with-apis should install
-// into. Just the apis dir under the new unified layout.
-func installRoot(cfg *config) string {
-	return cfg.ApisDir
-}
-
-// refAlreadyInstalled scans the apis dir for any installed bundle
-// whose source.yaml#ref slug matches ref's slug. We don't compare
-// SHAs because the goal of --with-apis is "make the bundle available
-// before serve starts": if the operator wants a different SHA they
-// should run `bouncer apis upgrade` explicitly.
-func refAlreadyInstalled(root string, ref bundles.Ref) (bool, error) {
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		}
-		return false, err
-	}
-	for _, e := range entries {
-		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
-			continue
-		}
-		src, err := bundles.LoadSource(filepath.Join(root, e.Name(), bundles.SourceFile))
-		if err != nil {
-			continue // not a bundle, or malformed source.yaml — skip
-		}
-		installedRef, err := bundles.ParseRef(src.Ref)
-		if err != nil {
-			continue
-		}
-		if installedRef.Slug() == ref.Slug() {
-			return true, nil
-		}
-	}
-	return false, nil
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	return bundles.InstallRefs(ctx, cfg.ApisDir, cfg.WithApis, os.Stderr)
 }
 
 // resolveMITMDefault is the "default-on" softening. When the
@@ -464,7 +350,7 @@ func defaultDataDirFromCwd(cfg *config) {
 	if cfg.DataDir != "" {
 		return
 	}
-	if cfg.Init || initcmd.IsInitialized(".") {
+	if cfg.Init || datadir.IsInitialized(".") {
 		cfg.DataDir = "."
 	}
 }
@@ -477,33 +363,22 @@ func applyDataDir(cfg *config, fs *pflag.FlagSet) error {
 	if cfg.DataDir == "" {
 		return nil
 	}
-	dir := cfg.DataDir
-	read := func(name string) (string, error) {
-		raw, err := os.ReadFile(filepath.Join(dir, name))
-		if err != nil {
-			return "", err
-		}
-		return strings.TrimSpace(string(raw)), nil
-	}
-	exists := func(name string) bool {
-		_, err := os.Stat(filepath.Join(dir, name))
-		return err == nil
-	}
+	l := datadir.Layout{Dir: cfg.DataDir}
 	if !fs.Changed("secret-hex") && cfg.SecretHex == "" {
-		if v, err := read("secret.hex"); err == nil {
+		if v, err := l.ReadSecret(); err == nil {
 			cfg.SecretHex = v
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("data-dir secret.hex: %w", err)
 		}
 	}
-	if !fs.Changed("apis-dir") && exists("apis") {
-		cfg.ApisDir = filepath.Join(dir, "apis")
+	if !fs.Changed("apis-dir") && datadir.Exists(l.APIs()) {
+		cfg.ApisDir = l.APIs()
 	}
-	if !fs.Changed("policies-dir") && exists("policies") {
-		cfg.PoliciesDir = filepath.Join(dir, "policies")
+	if !fs.Changed("policies-dir") && datadir.Exists(l.Policies()) {
+		cfg.PoliciesDir = l.Policies()
 	}
 	if !fs.Changed("admin-password-hash") && cfg.AdminPasswordHash == "" {
-		if v, err := read("admin-password.hash"); err == nil {
+		if v, err := l.ReadAdminHash(); err == nil {
 			cfg.AdminPasswordHash = v
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("data-dir admin-password.hash: %w", err)
@@ -514,26 +389,22 @@ func applyDataDir(cfg *config, fs *pflag.FlagSet) error {
 	// store/ subdir is created lazily — sqlite refuses to open a
 	// file under a missing parent directory.
 	if !fs.Changed("store-db") && cfg.StoreDB == "" {
-		storeDir := filepath.Join(dir, "store")
-		if err := os.MkdirAll(storeDir, 0o755); err != nil {
+		if err := os.MkdirAll(l.Store(), 0o755); err != nil {
 			return fmt.Errorf("data-dir store/: %w", err)
 		}
-		cfg.StoreDB = filepath.Join(storeDir, "store.db")
+		cfg.StoreDB = l.StoreDB()
 		if !fs.Changed("traffic-store") {
 			cfg.TrafficStore = TrafficStoreSqlite
 		}
 		if !fs.Changed("policies-store") {
 			cfg.PoliciesStore = PoliciesStoreSqlite
 		}
-		if !fs.Changed("proposals-store") {
-			cfg.ProposalsStore = ProposalsStoreSqlite
-		}
 	}
-	if !fs.Changed("mitm-ca-cert") && exists("mitm-ca.crt") {
-		cfg.MITMCAPath = filepath.Join(dir, "mitm-ca.crt")
+	if !fs.Changed("mitm-ca-cert") && datadir.Exists(l.MITMCert()) {
+		cfg.MITMCAPath = l.MITMCert()
 	}
-	if !fs.Changed("mitm-ca-key") && exists("mitm-ca.key") {
-		cfg.MITMCAKey = filepath.Join(dir, "mitm-ca.key")
+	if !fs.Changed("mitm-ca-key") && datadir.Exists(l.MITMKey()) {
+		cfg.MITMCAKey = l.MITMKey()
 	}
 	return nil
 }
@@ -558,11 +429,11 @@ func (c *config) validate() error {
 	if err := validateStoreDB("policies", c.PoliciesStore == PoliciesStoreSqlite, c.PoliciesDB, c.StoreDB); err != nil {
 		return err
 	}
-	if err := validateStoreDB("proposals", c.ProposalsStore == ProposalsStoreSqlite, c.ProposalsDB, c.StoreDB); err != nil {
-		return err
+	if err := admin.PolicySet(c.InternalPolicies).Validate(); err != nil {
+		return fmt.Errorf("--internal-policies: %w", err)
 	}
-	if c.AdminPasswordHash != "" && c.AdminPassword != "" {
-		return fmt.Errorf("--admin-password and --admin-password-hash are mutually exclusive")
+	if err := admin.PolicySet(c.InternalPolicies).Validate(); err != nil {
+		return fmt.Errorf("--internal-policies: %w", err)
 	}
 	return nil
 }
@@ -590,24 +461,4 @@ func deriveSecret(cfg *config) ([32]byte, error) {
 		return auth.DevStubSecret(), nil
 	}
 	return auth.SecretFromHex(cfg.SecretHex)
-}
-
-// resolveAdminPasswordHash returns the bcrypt hash to wire into the
-// login flow. --admin-password-hash passes through verbatim;
-// --admin-password is hashed at boot for dev convenience and
-// log-warns so it cannot quietly become a production pattern.
-// Neither flag set returns "" — the login endpoint then serves 503.
-func resolveAdminPasswordHash(cfg *config) (string, error) {
-	if cfg.AdminPasswordHash != "" {
-		return cfg.AdminPasswordHash, nil
-	}
-	if cfg.AdminPassword == "" {
-		return "", nil
-	}
-	slog.Warn("hashing --admin-password at boot — dev only; production should set BOUNCER_ADMIN_PASSWORD_HASH instead so the cleartext is not visible in `ps`")
-	hashed, err := bcrypt.GenerateFromPassword([]byte(cfg.AdminPassword), bcrypt.DefaultCost)
-	if err != nil {
-		return "", fmt.Errorf("hash admin password: %w", err)
-	}
-	return string(hashed), nil
 }

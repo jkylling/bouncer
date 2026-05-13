@@ -15,17 +15,16 @@ import (
 //
 // Implementation: every event lands in a map keyed by id and an
 // insertion-order doubly-linked list. Eviction walks the list from
-// the oldest end, skipping pinned rows, until the byte and age
-// budgets are met. List queries iterate the map and sort by ts —
-// fine for the small (~1k row) buffer this backend is sized for.
+// the oldest end until the byte and age budgets are met. List queries
+// iterate the map and sort by ts — fine for the small (~1k row)
+// buffer this backend is sized for.
 type memoryStore struct {
 	opts Options
 
-	mu     sync.Mutex
-	byID   map[EventID]*list.Element // id → *list.Element holding *entry
-	ll     *list.List                // oldest at Front, newest at Back
-	bytes  int                       // sum of non-pinned size_bytes
-	pinned int                       // count of pinned entries
+	mu    sync.Mutex
+	byID  map[EventID]*list.Element // id → *list.Element holding *entry
+	ll    *list.List                // oldest at Front, newest at Back
+	bytes int                       // sum of size_bytes
 }
 
 type entry struct {
@@ -43,9 +42,6 @@ func newMemoryStore(opts Options) *memoryStore {
 	if opts.MaxAge <= 0 {
 		opts.MaxAge = DefaultMaxAge
 	}
-	if opts.MaxPinned <= 0 {
-		opts.MaxPinned = DefaultMaxPinned
-	}
 	return &memoryStore{
 		opts: opts,
 		byID: map[EventID]*list.Element{},
@@ -54,27 +50,21 @@ func newMemoryStore(opts Options) *memoryStore {
 }
 
 // Insert adds ev to the store and runs eviction. The event's ID
-// drives uniqueness — re-inserting the same id replaces the prior
-// entry. Pinned-ness is preserved across replacement.
+// drives uniqueness — re-inserting the same id replaces the prior entry.
 func (s *memoryStore) Insert(ctx context.Context, ev Event) error {
 	size := approxSize(&ev)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if old, ok := s.byID[ev.ID]; ok {
 		oldEntry := old.Value.(*entry)
-		ev.Pinned = oldEntry.ev.Pinned // preserve pin
-		if !oldEntry.ev.Pinned {
-			s.bytes -= oldEntry.size
-		}
+		s.bytes -= oldEntry.size
 		s.ll.Remove(old)
 		delete(s.byID, ev.ID)
 	}
 	e := &entry{ev: ev, size: size}
 	el := s.ll.PushBack(e)
 	s.byID[ev.ID] = el
-	if !ev.Pinned {
-		s.bytes += size
-	}
+	s.bytes += size
 	s.evictLocked(time.Now())
 	return nil
 }
@@ -90,49 +80,6 @@ func (s *memoryStore) Get(ctx context.Context, id EventID) (Event, error) {
 		return Event{}, ErrNotFound
 	}
 	return cloneEvent(el.Value.(*entry).ev), nil
-}
-
-// Pin marks id as pinned. ErrNotFound if the id is unknown,
-// ErrPinnedFull if MaxPinned is already reached. Idempotent on a
-// row that is already pinned.
-func (s *memoryStore) Pin(ctx context.Context, id EventID) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	el, ok := s.byID[id]
-	if !ok {
-		return ErrNotFound
-	}
-	e := el.Value.(*entry)
-	if e.ev.Pinned {
-		return nil
-	}
-	if s.pinned >= s.opts.MaxPinned {
-		return ErrPinnedFull
-	}
-	e.ev.Pinned = true
-	s.pinned++
-	s.bytes -= e.size // pinned rows don't count toward byte budget
-	return nil
-}
-
-// Unpin clears the pinned flag on id. ErrNotFound if the id is
-// unknown. Idempotent on a row that is not pinned.
-func (s *memoryStore) Unpin(ctx context.Context, id EventID) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	el, ok := s.byID[id]
-	if !ok {
-		return ErrNotFound
-	}
-	e := el.Value.(*entry)
-	if !e.ev.Pinned {
-		return nil
-	}
-	e.ev.Pinned = false
-	s.pinned--
-	s.bytes += e.size
-	s.evictLocked(time.Now())
-	return nil
 }
 
 // List returns summaries for events matching opts, newest first,
@@ -193,23 +140,58 @@ func (s *memoryStore) List(ctx context.Context, opts ListOpts) ([]Summary, Curso
 	return out, next, nil
 }
 
+// Subjects walks the in-memory ring once, aggregating per-subject
+// first/last seen + request count. O(n) over stored events; the
+// store's byte budget caps n at a few thousand, well within "build
+// the response without paging."
+func (s *memoryStore) Subjects(_ context.Context) ([]SubjectSummary, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	agg := map[string]*SubjectSummary{}
+	for el := s.ll.Front(); el != nil; el = el.Next() {
+		ev := el.Value.(*Event)
+		if ev.Subject == "" {
+			continue
+		}
+		row, ok := agg[ev.Subject]
+		if !ok {
+			row = &SubjectSummary{
+				Subject:   ev.Subject,
+				FirstSeen: ev.Timestamp,
+				LastSeen:  ev.Timestamp,
+			}
+			agg[ev.Subject] = row
+		}
+		row.RequestCount++
+		if ev.Timestamp.Before(row.FirstSeen) {
+			row.FirstSeen = ev.Timestamp
+		}
+		if ev.Timestamp.After(row.LastSeen) {
+			row.LastSeen = ev.Timestamp
+		}
+	}
+	out := make([]SubjectSummary, 0, len(agg))
+	for _, r := range agg {
+		out = append(out, *r)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].LastSeen.After(out[j].LastSeen) })
+	return out, nil
+}
+
 // Close is a no-op for the in-memory store.
 func (s *memoryStore) Close() error { return nil }
 
-// evictLocked enforces the byte and age budgets. Caller must hold
-// s.mu. Pinned entries are skipped, never removed.
+// evictLocked enforces the byte and age budgets. Caller must hold s.mu.
 func (s *memoryStore) evictLocked(now time.Time) {
 	ageCutoff := now.Add(-s.opts.MaxAge)
 	for el := s.ll.Front(); el != nil; {
 		next := el.Next()
 		e := el.Value.(*entry)
 		drop := false
-		if !e.ev.Pinned {
-			if s.bytes > s.opts.MaxBytes {
-				drop = true
-			} else if !e.ev.Timestamp.IsZero() && e.ev.Timestamp.Before(ageCutoff) {
-				drop = true
-			}
+		if s.bytes > s.opts.MaxBytes {
+			drop = true
+		} else if !e.ev.Timestamp.IsZero() && e.ev.Timestamp.Before(ageCutoff) {
+			drop = true
 		}
 		if drop {
 			s.bytes -= e.size
@@ -264,10 +246,18 @@ func cloneEvent(ev Event) Event {
 // ignored. Subject is a pointer so a non-nil filter on the empty
 // string still matches empty-subject events.
 func match(ev Event, opts ListOpts) bool {
-	if opts.PinnedOnly && !ev.Pinned {
-		return false
-	}
-	if opts.API != "" && ev.API != opts.API {
+	if len(opts.APIs) > 0 {
+		found := false
+		for _, a := range opts.APIs {
+			if ev.API == a {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	} else if opts.API != "" && ev.API != opts.API {
 		return false
 	}
 	if opts.Action != "" && ev.Action != opts.Action {
@@ -310,7 +300,6 @@ func summary(ev Event) Summary {
 		Policy:         ev.Policy,
 		UpstreamStatus: ev.UpstreamStatus,
 		LatencyMS:      ev.LatencyMS,
-		Pinned:         ev.Pinned,
 	}
 }
 

@@ -1,7 +1,6 @@
 package apiscmd
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,11 +12,8 @@ import (
 // runAddFromTarball installs from a tarball produced by apis fetch.
 // The tarball embeds source.yaml so the install can run without
 // network access; --ref overrides the embedded ref.
-func runAddFromTarball(tarballPath, refOverride, dataDir, apisDir string, renames map[string]string, skipAllowlist bool) error {
-	if apisDir == "" {
-		return errors.New(errMissingAPIsDir)
-	}
-	in, err := os.Open(tarballPath)
+func runAddFromTarball(o *addOpts, apisDir string, renames map[string]string) error {
+	in, err := os.Open(o.FromTarball)
 	if err != nil {
 		return err
 	}
@@ -29,7 +25,7 @@ func runAddFromTarball(tarballPath, refOverride, dataDir, apisDir string, rename
 	}
 	defer os.RemoveAll(work)
 	if err := bundles.ExtractTarGz(in, work); err != nil {
-		return fmt.Errorf("extract %s: %w", tarballPath, err)
+		return fmt.Errorf("extract %s: %w", o.FromTarball, err)
 	}
 	manifest, err := bundles.LoadManifest(filepath.Join(work, bundles.ManifestFile))
 	if err != nil {
@@ -39,25 +35,21 @@ func runAddFromTarball(tarballPath, refOverride, dataDir, apisDir string, rename
 	if err != nil {
 		return fmt.Errorf("tarball missing source.yaml (was it produced by `apis fetch`?): %w", err)
 	}
-
 	refStr := embedded.Ref
-	if strings.TrimSpace(refOverride) != "" {
-		refStr = refOverride
+	if strings.TrimSpace(o.RefOverride) != "" {
+		refStr = o.RefOverride
 	}
 	ref, err := bundles.ParseRef(refStr)
 	if err != nil {
 		return fmt.Errorf("ref %q: %w", refStr, err)
 	}
-	if !skipAllowlist {
-		if err := enforceAllowlist(dataDir, ref); err != nil {
-			return err
-		}
+	if err := enforceAllowlist(o.Dirs.DataDir, ref, o.SkipAllowlist); err != nil {
+		return err
 	}
 	sha := embedded.ResolvedSHA
 	if !bundles.IsFullSHA(sha) {
 		return fmt.Errorf("embedded source.yaml resolved_sha %q is not a 40-char SHA", sha)
 	}
-
 	src := &bundles.SourceRecord{
 		Ref:         ref.String(),
 		ResolvedSHA: sha,

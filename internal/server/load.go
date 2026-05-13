@@ -10,9 +10,13 @@ import (
 
 	"github.com/jkylling/bouncer/internal/apiclient"
 	"github.com/jkylling/bouncer/internal/auth"
+	"github.com/jkylling/bouncer/internal/control/agents"
+	"github.com/jkylling/bouncer/internal/control/agentseen"
 	"github.com/jkylling/bouncer/internal/control/bundles"
+	"github.com/jkylling/bouncer/internal/control/connections"
 	"github.com/jkylling/bouncer/internal/control/policies"
-	"github.com/jkylling/bouncer/internal/control/proposals"
+	"github.com/jkylling/bouncer/internal/control/services"
+	"github.com/jkylling/bouncer/internal/control/traffic"
 	"github.com/jkylling/bouncer/internal/runtime"
 	"github.com/jkylling/bouncer/internal/runtime/compiled"
 	"github.com/jkylling/bouncer/internal/server/admin"
@@ -44,10 +48,6 @@ type Config struct {
 	// write paths are gated.
 	PolicyStoreReadOnly bool
 
-	// ProposalStore is the backing for human-reviewed policy drafts.
-	// Same shape as PolicyStore — caller-supplied, required.
-	ProposalStore proposals.Store
-
 	// UpstreamCallTimeout caps every upstream HTTP call (forward path
 	// and meta side calls share one client). Zero means "no timeout"
 	// — production wiring should always set this.
@@ -73,6 +73,45 @@ type Config struct {
 	// bytes. Empty leaves the endpoint mounted but 404'ing — fine
 	// for non-MITM deployments.
 	MITMCAPath string
+
+	// ConnectionStore persists wizard-pasted upstream credentials.
+	// Used by both /_api/connections/* (the wizard's CRUD surface)
+	// and the MCP `get_{service}_token` tools. nil leaves both routes
+	// unmounted and the MCP tools returning service_not_connected.
+	ConnectionStore *connections.Store
+
+	// ProvidersInfo is the frozen-at-boot map of per-provider
+	// connect-mode availability. Drives the wizard's two-tab panel.
+	// Empty / nil is fine; the wizard then only offers "Paste
+	// credentials." See connections.ProviderAvailability.
+	ProvidersInfo map[string]connections.ProviderInfo
+
+	// AgentStore tracks pending + approved agent registrations
+	// (/_api/agents/*). Optional — when nil the routes aren't mounted.
+	AgentStore *agents.Store
+
+	// Env is the frozen-at-boot env snapshot the services registry
+	// reads to decide which bundles' OAuth tabs to light up. Pass the
+	// same map the connections.ProviderAvailability call consumes;
+	// nil yields a registry where no service reports OAuthAvailable.
+	Env map[string]string
+
+	// InternalPolicies picks the embedded policy set that gates the
+	// control-plane HTTP surface (`/_admin` + `/_api`). Empty
+	// defaults to admin.PolicySetSimple — matches today's access
+	// control. The middleware loads exactly one set at boot; an
+	// unknown name fails Load loudly rather than silently falling
+	// back.
+	InternalPolicies admin.PolicySet
+
+	// TrafficStore backs the read side of the traffic viewer
+	// (`/_api/traffic`). nil leaves the routes unmounted.
+	TrafficStore traffic.Store
+
+	// Recorder is the per-request write-side observer. Operationally
+	// independent of TrafficStore (production wires both to one
+	// store; tests can opt into either alone).
+	Recorder Recorder
 }
 
 // Load compiles the on-disk API/policy spec into a ready-to-serve
@@ -108,12 +147,9 @@ func Load(cfg *Config, keys *auth.ServerKeys) (*Server, error) {
 	// validate-then-persist-then-apply pipeline used by the control
 	// plane also drives the boot-time load. Calling LoadFromStore
 	// here (rather than walking models.FromYAMLDir directly) means
-	// boot, CRUD writes, and proposal approval all share one path.
+	// boot and CRUD writes share one path.
 	if cfg.PolicyStore == nil {
 		return nil, fmt.Errorf("Config.PolicyStore is required")
-	}
-	if cfg.ProposalStore == nil {
-		return nil, fmt.Errorf("Config.ProposalStore is required")
 	}
 	policyService := policies.New(rt, cfg.PolicyStore)
 	if err := policyService.LoadFromStore(context.Background()); err != nil {
@@ -161,16 +197,40 @@ func Load(cfg *Config, keys *auth.ServerKeys) (*Server, error) {
 		}
 		return apiclient.New(httpClient, api.BaseURL(), creds.AccessToken, extra)
 	}
-	srv := NewServer(rt, keys, httpClient, factory, cfg.RefreshTTL)
-	srv.SetPolicyService(policyService)
-	srv.SetProposalService(proposals.New(cfg.ProposalStore, policyService))
-	srv.SetAdminPasswordHash(cfg.AdminPasswordHash)
-	srv.SetMITMCAPath(cfg.MITMCAPath)
-	srv.SetBundleData(admin.BundleData{
-		Readmes:   bundles.Readmes(loaded),
-		APIBundle: bundles.APIBundles(loaded),
-	})
-	return srv, nil
+	internalSet := cfg.InternalPolicies
+	if internalSet == "" {
+		internalSet = admin.PolicySetSimple
+	}
+	internalRT, err := admin.LoadInternalRuntime(internalSet)
+	if err != nil {
+		return nil, fmt.Errorf("load internal-policies %q: %w", internalSet, err)
+	}
+
+	loadedServices := bundles.Services(loaded)
+	return NewServer(Dependencies{
+		Runtime:           rt,
+		Keys:              keys,
+		HTTPClient:        httpClient,
+		APIFactory:        factory,
+		RefreshTTL:        cfg.RefreshTTL,
+		Recorder:          cfg.Recorder,
+		TrafficStore:      cfg.TrafficStore,
+		PolicyService:     policyService,
+		AdminPasswordHash: cfg.AdminPasswordHash,
+		MITMCAPath:        cfg.MITMCAPath,
+		BundleData: admin.BundleData{
+			Readmes:      bundles.Readmes(loaded),
+			APIBundle:    bundles.APIBundles(loaded),
+			TokenBundles: bundles.TokenBundles(loaded),
+			Services:     loadedServices,
+		},
+		ConnectionStore:  cfg.ConnectionStore,
+		ProvidersInfo:    cfg.ProvidersInfo,
+		AgentStore:       cfg.AgentStore,
+		SeenTracker:      agentseen.New(),
+		ServicesRegistry: services.New(loadedServices, cfg.Env, cfg.ConnectionStore),
+		InternalRuntime:  internalRT,
+	}), nil
 }
 
 // APINames returns the names of every API mounted on the server. It is

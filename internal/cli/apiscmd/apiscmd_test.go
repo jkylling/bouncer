@@ -75,7 +75,7 @@ func TestParseRenamesRejectsDuplicate(t *testing.T) {
 func TestScanInstalledBundles(t *testing.T) {
 	root := t.TempDir()
 	installFixture(t, root, "github.com/acme/pack", "7a3c1f4abcdef0123456789abcdef0123456789a", "1.0.0", nil)
-	installFixture(t, root, "github.com/foo/bar", "0000000000000000000000000000000000000001", "0.5.0", map[string]string{"gmail": "foo-gmail"})
+	installFixture(t, root, "github.com/foo/bar", "0000000000000000000000000000000000000001", "0.5.0", map[string]string{"google.gmail": "foo-gmail"})
 	got, err := scanInstalledBundles(root)
 	if err != nil {
 		t.Fatalf("scan: %v", err)

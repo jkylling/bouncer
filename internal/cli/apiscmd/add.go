@@ -1,15 +1,13 @@
 package apiscmd
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
-	"os/signal"
 	"strings"
-	"syscall"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/jkylling/bouncer/internal/control/bundles"
 )
@@ -39,27 +37,24 @@ flags compose. Use this when two installed bundles ship an API of
 the same name.`
 
 type addOpts struct {
-	dirs          apisDirFlags
-	renames       []string
-	fromTarball   string
-	fromDir       string
-	refOverride   string
-	skipAllowlist bool
+	Dirs          apisDirFlags `mapstructure:",squash"`
+	Renames       []string     `mapstructure:"rename"`
+	FromTarball   string       `mapstructure:"from-tarball"`
+	FromDir       string       `mapstructure:"from-dir"`
+	RefOverride   string       `mapstructure:"ref"`
+	SkipAllowlist bool         `mapstructure:"skip-allowlist"`
 }
 
-func (o *addOpts) bind(cmd *cobra.Command) {
-	o.dirs.bind(cmd,
-		"where to install (defaults to $BOUNCER_APIS_DIR or <data-dir>/apis)",
-		"data directory (e.g. ./bouncer-data); used to derive --apis-dir and to read bouncer.yaml#apis.allowlist")
-	cmd.Flags().StringSliceVar(&o.renames, "rename", nil, "rename an upstream API on install (--rename gmail=acme-gmail). May repeat.")
-	cmd.Flags().StringVar(&o.fromTarball, "from-tarball", "", "install from a tarball produced by `apis fetch` instead of contacting GitHub")
-	cmd.Flags().StringVar(&o.fromDir, "from-dir", "", "install from a local directory (e.g. a working tree of bouncer-gws). Requires --ref.")
-	cmd.Flags().StringVar(&o.refOverride, "ref", "", "ref to record in source.yaml. Required with --from-dir; with --from-tarball, overrides the tarball's embedded ref.")
-	cmd.Flags().BoolVar(&o.skipAllowlist, "skip-allowlist", false, "bypass the bouncer.yaml#apis.allowlist check (use sparingly)")
+func (o *addOpts) bind(fs *pflag.FlagSet) {
+	o.Dirs.bind(fs, "where to install (defaults to $BOUNCER_APIS_DIR or <data-dir>/apis)")
+	fs.StringSlice("rename", nil, "rename an upstream API on install (--rename gmail=acme-gmail). May repeat.")
+	fs.String("from-tarball", "", "install from a tarball produced by `apis fetch` instead of contacting GitHub")
+	fs.String("from-dir", "", "install from a local directory (e.g. a working tree of bouncer-gws). Requires --ref.")
+	fs.String("ref", "", "ref to record in source.yaml. Required with --from-dir; with --from-tarball, overrides the tarball's embedded ref.")
+	fs.Bool("skip-allowlist", false, "bypass the bouncer.yaml#apis.allowlist check (use sparingly)")
 }
 
 func addCommand() *cobra.Command {
-	var o addOpts
 	cmd := &cobra.Command{
 		Use:   "add <ref>",
 		Short: "Fetch and install a bundle from GitHub",
@@ -67,35 +62,35 @@ func addCommand() *cobra.Command {
 		Example: `  bouncer apis add github.com/jkylling/bouncer-gws@v0.1.0
   bouncer apis add --from-tarball ./bundle.tar.gz
   bouncer apis add --from-dir ./bouncer-gws --ref dev`,
-		RunE: func(_ *cobra.Command, args []string) error { return runAdd(args, &o) },
+		RunE: runWithOpts(runAdd),
 	}
-	o.bind(cmd)
+	(&addOpts{}).bind(cmd.Flags())
 	return cmd
 }
 
 func runAdd(args []string, o *addOpts) error {
-	if o.fromTarball != "" && o.fromDir != "" {
+	if o.FromTarball != "" && o.FromDir != "" {
 		return errors.New("--from-tarball and --from-dir are mutually exclusive")
 	}
-	root, err := o.dirs.resolve()
+	root, err := o.Dirs.resolve()
 	if err != nil {
 		return err
 	}
-	renameMap, err := parseRenames(o.renames)
+	renameMap, err := parseRenames(o.Renames)
 	if err != nil {
 		return err
 	}
-	if o.fromTarball != "" {
+	if o.FromTarball != "" {
 		if len(args) != 0 {
-			return fmt.Errorf("--from-tarball does not accept a positional ref; use --ref instead")
+			return errors.New("--from-tarball does not accept a positional ref; use --ref instead")
 		}
-		return runAddFromTarball(o.fromTarball, o.refOverride, o.dirs.dataDir, root, renameMap, o.skipAllowlist)
+		return runAddFromTarball(o, root, renameMap)
 	}
-	if o.fromDir != "" {
+	if o.FromDir != "" {
 		if len(args) != 0 {
-			return fmt.Errorf("--from-dir does not accept a positional ref; use --ref instead")
+			return errors.New("--from-dir does not accept a positional ref; use --ref instead")
 		}
-		return runAddFromDir(o.fromDir, o.refOverride, o.dirs.dataDir, root, renameMap, o.skipAllowlist)
+		return runAddFromDir(o, root, renameMap)
 	}
 	if len(args) != 1 {
 		return fmt.Errorf("expected one ref argument; got %d", len(args))
@@ -110,15 +105,12 @@ func runAdd(args []string, o *addOpts) error {
 		// way, so the install stays follow-the-branch.
 		ref.Version = "main"
 	}
-	if !o.skipAllowlist {
-		if err := enforceAllowlist(o.dirs.dataDir, ref); err != nil {
-			return err
-		}
+	if err := enforceAllowlist(o.Dirs.DataDir, ref, o.SkipAllowlist); err != nil {
+		return err
 	}
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, cancel := signalContext()
 	defer cancel()
-	fetcher := bundles.NewFetcher(bundles.FetcherOpts{Token: os.Getenv("GITHUB_TOKEN")})
-	dest, err := fetcher.Install(ctx, root, ref, renameMap)
+	dest, err := newGitHubFetcher().Install(ctx, root, ref, renameMap)
 	if err != nil {
 		return err
 	}

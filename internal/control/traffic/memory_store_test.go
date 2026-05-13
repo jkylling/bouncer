@@ -4,7 +4,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jkylling/bouncer/internal/control/store"
 	"github.com/jkylling/bouncer/internal/control/traffic"
 	"github.com/jkylling/bouncer/internal/control/traffic/storetest"
 )
@@ -17,11 +16,7 @@ func TestMemoryStoreContract(t *testing.T) {
 	const maxAge = time.Hour
 	storetest.Run(t, storetest.Config{
 		New: func(t *testing.T) traffic.Store {
-			s, err := traffic.Open(store.Memory(), traffic.Options{MaxBytes: maxBytes, MaxAge: maxAge})
-			if err != nil {
-				t.Fatalf("traffic.Open: %v", err)
-			}
-			return s
+			return traffic.NewMemoryStore(traffic.Options{MaxBytes: maxBytes, MaxAge: maxAge})
 		},
 		MaxBytes: maxBytes,
 		MaxAge:   maxAge,

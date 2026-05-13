@@ -11,10 +11,10 @@ import (
 //   - store.SQLBackend → sqlite-backed store sharing b's *sql.DB
 //   - store.FSBackend → YAML files under <root>/policies, matching
 //     the existing hand-edited layout (one canonical file per API)
-//   - store.MemoryBackend → in-process map, ephemeral
 //
-// Other backend kinds return ErrUnsupportedBackend so a misconfigured
-// deployment fails at boot rather than silently degrading.
+// In-memory deployments call NewMemoryStore directly. Other backend
+// kinds return ErrUnsupportedBackend so a misconfigured deployment
+// fails at boot rather than silently degrading.
 func Open(b store.Backend) (Store, error) {
 	switch backend := b.(type) {
 	case store.SQLBackend:
@@ -25,8 +25,6 @@ func Open(b store.Backend) (Store, error) {
 			return nil, fmt.Errorf("policies: subdir: %w", err)
 		}
 		return NewFileStore(dir)
-	case store.MemoryBackend:
-		return NewMemoryStore(), nil
 	default:
 		return nil, fmt.Errorf("policies: %w (got %T)", store.ErrUnsupportedBackend, b)
 	}

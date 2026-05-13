@@ -1,5 +1,5 @@
 // Package serve implements the `bouncer serve` subcommand: load
-// configuration, build the policy/proposal/traffic stores, wire the
+// configuration, build the policy/traffic stores, wire the
 // HTTP server, and run until SIGINT/SIGTERM. The dispatcher in
 // cmd/bouncer hands raw argv (without the subcommand) to Run.
 //
@@ -17,7 +17,7 @@
 // has a `BOUNCER_<UPPER_SNAKE>` env equivalent — e.g. `--secret-hex`
 // pairs with `BOUNCER_SECRET_HEX`. All non-trivial behaviour is in
 // `internal/server`; this file is the configuration entry point.
-package serve
+package servecmd
 
 import (
 	"context"
@@ -27,15 +27,20 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/jkylling/bouncer/internal/auth"
+	"github.com/jkylling/bouncer/internal/control/agents"
+	"github.com/jkylling/bouncer/internal/control/connections"
 	"github.com/jkylling/bouncer/internal/control/traffic"
+	"github.com/jkylling/bouncer/internal/datadir"
 	"github.com/jkylling/bouncer/internal/observability"
 	"github.com/jkylling/bouncer/internal/server"
+	"github.com/jkylling/bouncer/internal/server/admin"
 	"github.com/jkylling/bouncer/internal/server/mitm"
 )
 
@@ -44,6 +49,21 @@ import (
 // connection) cannot pin the process past a reasonable supervisor
 // retry interval.
 const shutdownTimeout = 10 * time.Second
+
+// envSnapshot freezes os.Environ() into the map shape
+// connections.ProviderAvailability consumes. Captured once at boot
+// so a runtime change to the process env doesn't flicker the wizard
+// UI mid-session.
+func envSnapshot() map[string]string {
+	pairs := os.Environ()
+	out := make(map[string]string, len(pairs))
+	for _, p := range pairs {
+		if i := strings.IndexByte(p, '='); i > 0 {
+			out[p[:i]] = p[i+1:]
+		}
+	}
+	return out
+}
 
 // Command returns the `bouncer serve` cobra subcommand.
 func Command() *cobra.Command {
@@ -93,33 +113,10 @@ func runServe(cfg *config) error {
 		cache.closeAll()
 		return fmt.Errorf("policy store: %w", err)
 	}
-	proposalStore, err := buildProposalStore(cfg, cache)
-	if err != nil {
-		cache.closeAll()
-		return fmt.Errorf("proposal store: %w", err)
-	}
-
-	adminHash, err := resolveAdminPasswordHash(cfg)
-	if err != nil {
-		cache.closeAll()
-		return fmt.Errorf("admin password: %w", err)
-	}
-
-	srv, err := server.Load(&server.Config{
-		ApisDir:             cfg.ApisDir,
-		PolicyStore:         policyStore,
-		PolicyStoreReadOnly: cfg.PoliciesReadOnly,
-		ProposalStore:       proposalStore,
-		UpstreamCallTimeout: cfg.UpstreamCallTimeout,
-		RefreshTTL:          cfg.RefreshTTL,
-		AdminPasswordHash:   adminHash,
-		// Populated only when --mitm is on; otherwise empty and the
-		// /_api/ca.crt endpoint serves 404.
-		MITMCAPath: caDownloadPath(cfg),
-	}, keys)
-	if err != nil {
-		cache.closeAll()
-		return fmt.Errorf("server load: %w", err)
+	connStore := buildConnectionStore(cfg)
+	var agentStore *agents.Store
+	if cfg.DataDir != "" {
+		agentStore = agents.NewStore(datadir.Layout{Dir: cfg.DataDir}.Agents())
 	}
 
 	trafficStore, recorder, err := buildTraffic(cfg, cache)
@@ -127,9 +124,28 @@ func runServe(cfg *config) error {
 		cache.closeAll()
 		return fmt.Errorf("traffic store: %w", err)
 	}
-	if trafficStore != nil {
-		srv.SetTrafficStore(trafficStore)
-		srv.SetRecorder(recorder)
+
+	srv, err := server.Load(&server.Config{
+		ApisDir:             cfg.ApisDir,
+		PolicyStore:         policyStore,
+		PolicyStoreReadOnly: cfg.PoliciesReadOnly,
+		UpstreamCallTimeout: cfg.UpstreamCallTimeout,
+		RefreshTTL:          cfg.RefreshTTL,
+		AdminPasswordHash:   cfg.AdminPasswordHash,
+		// Populated only when --mitm is on; otherwise empty and the
+		// /_api/ca.crt endpoint serves 404.
+		MITMCAPath:       caDownloadPath(cfg),
+		ConnectionStore:  connStore,
+		ProvidersInfo:    connections.ProviderAvailability(envSnapshot()),
+		AgentStore:       agentStore,
+		Env:              envSnapshot(),
+		InternalPolicies: admin.PolicySet(cfg.InternalPolicies),
+		TrafficStore:     trafficStore,
+		Recorder:         recorder,
+	}, keys)
+	if err != nil {
+		cache.closeAll()
+		return fmt.Errorf("server load: %w", err)
 	}
 
 	handler, err := buildListenerHandler(cfg, srv)

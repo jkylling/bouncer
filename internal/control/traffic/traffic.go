@@ -9,21 +9,16 @@
 // that a third-party backend (Postgres, ClickHouse, an S3 archive) is
 // plausible. Two built-in implementations ship in this module:
 //
-//   - `memory` — bounded ring buffer + id map + pinned set, no
-//     persistence. Default when `--traffic-store=memory`. Used for
-//     local development, integration tests, and the contract test
-//     suite shared between backends.
+//   - `memory` — bounded ring buffer + id map, no persistence.
+//     Default when `--traffic-store=memory`. Used for local
+//     development, integration tests, and the contract test suite
+//     shared between backends.
 //   - `sqlite` — single-file modernc.org/sqlite (pure Go, no cgo)
-//     with one events table. Eviction respects the pinned flag so
-//     pinned rows survive past the byte/age budget.
+//     with one events table.
 //
 // The store is byte-budgeted (default 16 MiB) and age-budgeted
-// (default 24h). On each `Insert` the store removes the oldest
-// non-pinned rows until both budgets are met. Pinned rows are capped
-// by count (default 1000) and rejected with `ErrPinnedFull` past the
-// cap — they exist precisely to survive eviction so a user-pinned
-// request can be one-clicked into a policy proposal later (see
-// design 5).
+// (default 24h). On each `Insert` the store removes the oldest rows
+// until both budgets are met.
 //
 // `Event.Binds` carries the resolved bind values from policy
 // evaluation. They are stored opaquely (`json.RawMessage`) so the
@@ -81,12 +76,6 @@ type Event struct {
 	LatencyMS         int64              `json:"latency_ms"`
 	Error             string             `json:"error,omitempty"`
 	Truncated         bool               `json:"truncated,omitempty"`
-	// Pinned is mirrored from the store's pinned column on read and
-	// not part of the persisted JSON payload, so an Insert that
-	// flips pinned doesn't have to re-marshal the event. The column
-	// is the source of truth; the JSON form is the immutable
-	// snapshot of everything else.
-	Pinned bool `json:"-"`
 }
 
 // PolicyEvaluation records one (policy, action) condition evaluation
@@ -162,7 +151,6 @@ type Summary struct {
 	Policy         string    `json:"policy,omitempty"`
 	UpstreamStatus int       `json:"upstream_status,omitempty"`
 	LatencyMS      int64     `json:"latency_ms"`
-	Pinned         bool      `json:"pinned,omitempty"`
 }
 
 // ListOpts carries the filters and pagination state for `Store.List`.
@@ -175,7 +163,15 @@ type Summary struct {
 // `Cursor` is opaque to the caller; pass back what `List` returned to
 // page forward.
 type ListOpts struct {
-	API        string
+	// API filters to events whose api equals this value. Mutually
+	// exclusive with APIs (which takes precedence when non-empty).
+	API string
+
+	// APIs filters to events whose api is in this set. Non-empty
+	// overrides API. Used by the per-service traffic view, which
+	// scopes to the bundle's full API set in one query.
+	APIs []string
+
 	Action     string
 	Method     string
 	Decision   Decision
@@ -183,7 +179,6 @@ type ListOpts struct {
 	Since      time.Time
 	Until      time.Time
 	Subject    *string
-	PinnedOnly bool
 	Limit      int
 	Cursor     Cursor
 }
@@ -196,8 +191,7 @@ type Cursor string
 // Errors stores may return. HTTP-status mapping lives in
 // internal/server/admin.
 var (
-	ErrNotFound   = errors.New("traffic: event not found")
-	ErrPinnedFull = errors.New("traffic: pinned cap reached")
+	ErrNotFound = errors.New("traffic: event not found")
 )
 
 // Store is the persistence interface backing the traffic viewer.
@@ -206,16 +200,32 @@ var (
 // reads (`List`, `Get`) happen on inbound HTTP requests in parallel.
 //
 // `Insert` is responsible for honouring the byte and age budgets the
-// implementation was constructed with. Pinned rows are excluded from
-// eviction. `Pin` upserts a row's pinned flag; `Unpin` clears it.
-// Both are idempotent.
+// implementation was constructed with.
 type Store interface {
 	Insert(ctx context.Context, ev Event) error
 	List(ctx context.Context, opts ListOpts) ([]Summary, Cursor, error)
 	Get(ctx context.Context, id EventID) (Event, error)
-	Pin(ctx context.Context, id EventID) error
-	Unpin(ctx context.Context, id EventID) error
+
+	// Subjects returns one row per distinct JWT subject observed in
+	// stored traffic, with first-seen, last-seen, and request count.
+	// Empty-subject (unauthenticated) events are excluded — callers
+	// asking "which agents have authenticated" don't want them. The
+	// returned slice is sorted last-seen-descending.
+	Subjects(ctx context.Context) ([]SubjectSummary, error)
+
 	Close() error
+}
+
+// SubjectSummary is one row of the Subjects query — a per-JWT-subject
+// roll-up of stored traffic. Drives the Agents-page "agents that have
+// authenticated" list; nothing depends on it being stable across a
+// proxy restart since the source data is the traffic store, which is
+// itself ephemeral by design.
+type SubjectSummary struct {
+	Subject      string    `json:"subject"`
+	FirstSeen    time.Time `json:"first_seen"`
+	LastSeen     time.Time `json:"last_seen"`
+	RequestCount int64     `json:"request_count"`
 }
 
 // Tunables live here so the package doc can't drift from the actual
@@ -229,11 +239,6 @@ const (
 	// DefaultMaxAge is the age budget when Options leaves MaxAge
 	// zero.
 	DefaultMaxAge = 24 * time.Hour
-
-	// DefaultMaxPinned caps the count of pinned rows. Sized large
-	// enough for human curation without letting an automated pin
-	// loop run forever.
-	DefaultMaxPinned = 1000
 
 	// DefaultListLimit is the page size List falls back to when
 	// ListOpts.Limit is zero.

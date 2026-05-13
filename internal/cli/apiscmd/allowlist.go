@@ -85,13 +85,15 @@ func matchAllowlist(allowlist []string, ref bundles.Ref) bool {
 	return false
 }
 
-// enforceAllowlist returns an error if ref isn't allowed. Used by
-// `apis add` and `apis fetch` (any verb that introduces a new ref to
-// the operator's environment). `apis remove` / `apis upgrade` work
-// against already-installed bundles, so they don't run this check —
-// removing or refreshing a bundle that snuck through pre-allowlist
-// is the operator's problem to revisit at install time.
-func enforceAllowlist(dataDir string, ref bundles.Ref) error {
+// enforceAllowlist returns an error if ref isn't allowed. skip
+// short-circuits to nil so callers don't repeat the if-check.
+// `apis remove` / `apis upgrade` work against already-installed
+// bundles and don't run this — letting an existing install through is
+// the operator's problem to revisit on the next add/fetch.
+func enforceAllowlist(dataDir string, ref bundles.Ref, skip bool) error {
+	if skip {
+		return nil
+	}
 	allow, err := loadAllowlist(dataDir)
 	if err != nil {
 		return err

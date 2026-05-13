@@ -13,14 +13,11 @@ import (
 // GitHub round-trip). The ref's version is recorded in source.yaml's
 // resolved_sha field for upgrade-time bookkeeping; the install path
 // is just <apisDir>/<bundle-name>/.
-func runAddFromDir(srcDir, refStr, dataDir, apisDir string, renames map[string]string, skipAllowlist bool) error {
-	if apisDir == "" {
-		return errors.New(errMissingAPIsDir)
-	}
-	if refStr == "" {
+func runAddFromDir(o *addOpts, apisDir string, renames map[string]string) error {
+	if o.RefOverride == "" {
 		return errors.New("--from-dir requires --ref <ref> (e.g. --ref github.com/jkylling/bouncer-gws@dev)")
 	}
-	srcDir = filepath.Clean(srcDir)
+	srcDir := filepath.Clean(o.FromDir)
 	info, err := os.Stat(srcDir)
 	if err != nil {
 		return fmt.Errorf("--from-dir %s: %w", srcDir, err)
@@ -32,20 +29,16 @@ func runAddFromDir(srcDir, refStr, dataDir, apisDir string, renames map[string]s
 	if err != nil {
 		return fmt.Errorf("%s: %w", srcDir, err)
 	}
-
-	ref, err := bundles.ParseRef(refStr)
+	ref, err := bundles.ParseRef(o.RefOverride)
 	if err != nil {
 		return err
 	}
 	if ref.Version == "" {
 		return fmt.Errorf("ref %s: a version is required", ref)
 	}
-	if !skipAllowlist {
-		if err := enforceAllowlist(dataDir, ref); err != nil {
-			return err
-		}
+	if err := enforceAllowlist(o.Dirs.DataDir, ref, o.SkipAllowlist); err != nil {
+		return err
 	}
-
 	src := &bundles.SourceRecord{
 		Ref:         ref.String(),
 		ResolvedSHA: ref.Version,
