@@ -10,7 +10,7 @@
 #   setting          (settings.*)
 #   color            (colors.*)
 
-name: calendar
+name: google.calendar
 base_url: "https://www.googleapis.com"
 path_prefixes:
 - /calendar/v3

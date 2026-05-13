@@ -156,7 +156,7 @@ func TestFetcherInstallEndToEnd(t *testing.T) {
 	sha := "7a3c1f4abcdef0123456789abcdef0123456789a"
 	bundle := fakeBundle(t, "api-pack-7a3c1f4", map[string]string{
 		"bouncer.yaml": "schema_version: 1\nname: api-pack\nversion: 1.0.0\napis: [apis/a.yaml]\n",
-		"apis/a.yaml":  "name: gmail\n",
+		"apis/a.yaml":  "name: google.gmail\n",
 	})
 	_, base := installFakeServer(t, sha, bundle)
 	apisDir := t.TempDir()
@@ -165,7 +165,7 @@ func TestFetcherInstallEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse ref: %v", err)
 	}
-	got, err := f.Install(context.Background(), apisDir, ref, map[string]string{"gmail": "acme-gmail"})
+	got, err := f.Install(context.Background(), apisDir, ref, map[string]string{"google.gmail": "acme-gmail"})
 	if err != nil {
 		t.Fatalf("install: %v", err)
 	}
@@ -184,7 +184,7 @@ func TestFetcherInstallEndToEnd(t *testing.T) {
 	if src.Ref != ref.String() || src.ResolvedSHA != sha {
 		t.Fatalf("source = %+v", src)
 	}
-	if src.APIRenames["gmail"] != "acme-gmail" {
+	if src.APIRenames["google.gmail"] != "acme-gmail" {
 		t.Fatalf("renames = %v", src.APIRenames)
 	}
 }
@@ -193,7 +193,7 @@ func TestFetcherInstallRefusesExisting(t *testing.T) {
 	sha := "7a3c1f4abcdef0123456789abcdef0123456789a"
 	bundle := fakeBundle(t, "api-pack-7a3c1f4", map[string]string{
 		"bouncer.yaml": "schema_version: 1\nname: api-pack\nversion: 1.0.0\napis: [apis/a.yaml]\n",
-		"apis/a.yaml":  "name: gmail\n",
+		"apis/a.yaml":  "name: google.gmail\n",
 	})
 	_, base := installFakeServer(t, sha, bundle)
 	vendored := t.TempDir()

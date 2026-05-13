@@ -29,14 +29,14 @@ func writeBundle(t *testing.T, apisDir, name, manifest string, apis map[string]s
 
 func TestLoadAllLooseTopLevel(t *testing.T) {
 	apis := t.TempDir()
-	if err := os.WriteFile(filepath.Join(apis, "gmail.yaml"), []byte("name: gmail\nbase_url: https://x\npath_prefixes: [/gmail]\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(apis, "gmail.yaml"), []byte("name: google.gmail\nbase_url: https://x\npath_prefixes: [/gmail]\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	got, err := LoadAll(LoadOptions{APIsDir: apis})
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if len(got) != 1 || got[0].Spec.Name != "gmail" {
+	if len(got) != 1 || got[0].Spec.Name != "google.gmail" {
 		t.Fatalf("got = %+v", got)
 	}
 	if got[0].BundleDir != "" {

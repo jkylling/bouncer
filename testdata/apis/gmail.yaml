@@ -20,7 +20,7 @@
 # `format=metadata` is used on reads so we don't pull full message bodies
 # for every policy check.
 
-name: gmail
+name: google.gmail
 base_url: "https://gmail.googleapis.com"
 path_prefixes:
 - /gmail/v1
@@ -70,6 +70,21 @@ meta:
     expr: response.body.payload.?headers
   - name: mimeType
     expr: response.body.payload.?mimeType
+  # RFC-5322 recipient/sender headers, lifted out of `payload.headers`
+  # so policies can read `message.to` / `message.from` directly. Each
+  # field is the list of matching header values (typically zero or one
+  # element; an RFC-5322 header value is itself a comma-separated
+  # address list, which the policy can split if needed). Note that
+  # `bcc` is stripped on delivery, so it's only meaningful on drafts
+  # and on messages the agent itself just sent.
+  - name: to
+    expr: response.body.payload.?headers.orValue([]).filter(h, h.name == 'To').map(h, h.value)
+  - name: from
+    expr: response.body.payload.?headers.orValue([]).filter(h, h.name == 'From').map(h, h.value)
+  - name: cc
+    expr: response.body.payload.?headers.orValue([]).filter(h, h.name == 'Cc').map(h, h.value)
+  - name: bcc
+    expr: response.body.payload.?headers.orValue([]).filter(h, h.name == 'Bcc').map(h, h.value)
   # Cross-resource ref: the parent thread, by the threadId in this
   # message's body. Resolved lazily on access (the .thread.X traversal
   # triggers the thread meta's GET). Lets policies on get_message reason
@@ -104,6 +119,18 @@ meta:
     expr: response.body.id
   - name: message
     expr: response.body.message
+  # Same RFC-5322 recipient/sender lift as on `message`, but reaching
+  # through the draft's embedded `message.payload.headers`. Drafts are
+  # the natural place to gate outbound mail before it leaves the
+  # outbox, so the four address fields are directly readable.
+  - name: to
+    expr: response.body.?message.?payload.?headers.orValue([]).filter(h, h.name == 'To').map(h, h.value)
+  - name: from
+    expr: response.body.?message.?payload.?headers.orValue([]).filter(h, h.name == 'From').map(h, h.value)
+  - name: cc
+    expr: response.body.?message.?payload.?headers.orValue([]).filter(h, h.name == 'Cc').map(h, h.value)
+  - name: bcc
+    expr: response.body.?message.?payload.?headers.orValue([]).filter(h, h.name == 'Bcc').map(h, h.value)
   # Reply target — only present when the draft is a reply within an
   # existing thread. `?thread_id:` makes the bind a no-op when threadId
   # is absent, so policies see `draft.thread` as empty rather than failing.

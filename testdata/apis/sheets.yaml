@@ -8,7 +8,7 @@
 # So there's one meta (`spreadsheet`) and every per-resource action binds
 # to it.
 
-name: sheets
+name: google.sheets
 base_url: "https://sheets.googleapis.com"
 path_prefixes:
 - /v4/spreadsheets
@@ -96,7 +96,7 @@ actions:
     - |
       spreadsheet{ id: match.id }
     - |
-      drive.file{ file_id: match.id }
+      google.drive.file{ file_id: match.id }
 
 - name: get_spreadsheet_by_data_filter
   method: POST
@@ -105,7 +105,7 @@ actions:
     - |
       spreadsheet{ id: match.id }
     - |
-      drive.file{ file_id: match.id }
+      google.drive.file{ file_id: match.id }
 
 - name: batch_update_spreadsheet
   method: POST
@@ -114,7 +114,7 @@ actions:
     - |
       spreadsheet{ id: match.id }
     - |
-      drive.file{ file_id: match.id }
+      google.drive.file{ file_id: match.id }
 
 # ---- values (A1-range CRUD) -------------------------------------------
 # Paths: /v4/spreadsheets/{id}/values/{range}
@@ -135,7 +135,7 @@ actions:
     - |
       spreadsheet{ id: match.id }
     - |
-      drive.file{ file_id: match.id }
+      google.drive.file{ file_id: match.id }
 
 - name: update_values
   method: PUT
@@ -146,7 +146,7 @@ actions:
     - |
       spreadsheet{ id: match.id }
     - |
-      drive.file{ file_id: match.id }
+      google.drive.file{ file_id: match.id }
 
 # `:append` and `:clear` are method-suffixes on the final segment, so the
 # `{range}` capture also pulls in the suffix; an extra filter narrows the
@@ -162,7 +162,7 @@ actions:
     - |
       spreadsheet{ id: match.id }
     - |
-      drive.file{ file_id: match.id }
+      google.drive.file{ file_id: match.id }
 
 - name: clear_values
   method: POST
@@ -174,7 +174,7 @@ actions:
     - |
       spreadsheet{ id: match.id }
     - |
-      drive.file{ file_id: match.id }
+      google.drive.file{ file_id: match.id }
 
 - name: batch_get_values
   method: GET
@@ -183,7 +183,7 @@ actions:
     - |
       spreadsheet{ id: match.id }
     - |
-      drive.file{ file_id: match.id }
+      google.drive.file{ file_id: match.id }
 
 - name: batch_update_values
   method: POST
@@ -192,7 +192,7 @@ actions:
     - |
       spreadsheet{ id: match.id }
     - |
-      drive.file{ file_id: match.id }
+      google.drive.file{ file_id: match.id }
 
 - name: batch_clear_values
   method: POST
@@ -201,7 +201,7 @@ actions:
     - |
       spreadsheet{ id: match.id }
     - |
-      drive.file{ file_id: match.id }
+      google.drive.file{ file_id: match.id }
 
 - name: batch_get_values_by_data_filter
   method: POST
@@ -210,7 +210,7 @@ actions:
     - |
       spreadsheet{ id: match.id }
     - |
-      drive.file{ file_id: match.id }
+      google.drive.file{ file_id: match.id }
 
 - name: batch_update_values_by_data_filter
   method: POST
@@ -219,7 +219,7 @@ actions:
     - |
       spreadsheet{ id: match.id }
     - |
-      drive.file{ file_id: match.id }
+      google.drive.file{ file_id: match.id }
 
 - name: batch_clear_values_by_data_filter
   method: POST
@@ -228,7 +228,7 @@ actions:
     - |
       spreadsheet{ id: match.id }
     - |
-      drive.file{ file_id: match.id }
+      google.drive.file{ file_id: match.id }
 
 # ---- sheets ------------------------------------------------------------
 - name: copy_sheet_to
@@ -238,7 +238,7 @@ actions:
     - |
       spreadsheet{ id: match.id }
     - |
-      drive.file{ file_id: match.id }
+      google.drive.file{ file_id: match.id }
 
 # ---- developerMetadata -------------------------------------------------
 - name: get_developer_metadata
@@ -248,7 +248,7 @@ actions:
     - |
       developer_metadata{ spreadsheet: match.id, id: match.metadata_id }
     - |
-      drive.file{ file_id: match.id }
+      google.drive.file{ file_id: match.id }
 
 - name: search_developer_metadata
   method: POST
@@ -257,4 +257,4 @@ actions:
     - |
       spreadsheet{ id: match.id }
     - |
-      drive.file{ file_id: match.id }
+      google.drive.file{ file_id: match.id }

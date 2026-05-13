@@ -6,7 +6,7 @@
 # inside the document and is manipulated via `documents.batchUpdate`
 # sub-requests — there's no separate endpoint to authorize on.
 
-name: docs
+name: google.docs
 base_url: "https://docs.googleapis.com"
 path_prefixes:
 - /v1/documents
@@ -65,7 +65,7 @@ actions:
     - |
       document{ id: match.id }
     - |
-      drive.file{ file_id: match.id }
+      google.drive.file{ file_id: match.id }
 
 - name: batch_update_document
   method: POST
@@ -74,4 +74,4 @@ actions:
     - |
       document{ id: match.id }
     - |
-      drive.file{ file_id: match.id }
+      google.drive.file{ file_id: match.id }

@@ -13,7 +13,7 @@
 # `fields=*` is requested on reads so output expressions can pick any
 # exposed field (Drive defaults to a sparse subset without it).
 
-name: drive
+name: google.drive
 base_url: "https://www.googleapis.com"
 path_prefixes:
 - /drive/v3
@@ -150,7 +150,7 @@ meta:
   - name: linkShareMetadata
     expr: response.body.?linkShareMetadata
   # Shared drive this file lives in. `?drive_id:` skips the bind for files
-  # in My Drive (no driveId set). Lets policies read drive.restrictions
+  # in My Drive (no driveId set). Lets policies read google.drive.restrictions
   # alongside file metadata.
   - name: drive
     expr: 'drive{?drive_id: response.body.?driveId}'
