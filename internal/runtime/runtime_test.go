@@ -192,7 +192,7 @@ func TestRuntimeDispatchesByMatchingAPI(t *testing.T) {
 // prefix like `/api` from accidentally swallowing `/api2/x`.
 func TestRoutingIsSegmentAware(t *testing.T) {
 	api := &models.API{
-		Name:         "drive",
+		Name:         "google.drive",
 		BaseURL:      "https://drive",
 		PathPrefixes: []string{"/drive"},
 		Actions:      []models.Action{{Name: "any", Method: "GET", Path: "/drive/{id}"}},
@@ -206,7 +206,7 @@ func TestRoutingIsSegmentAware(t *testing.T) {
 		t.Fatalf("build: %v", err)
 	}
 	if err := rt.AddPolicy(&models.Policy{
-		API: "drive", Name: "open", Action: `action.name == "any"`,
+		API: "google.drive", Name: "open", Action: `action.name == "any"`,
 		Condition: "true", Result: models.Permit,
 	}); err != nil {
 		t.Fatalf("policy: %v", err)
@@ -225,7 +225,7 @@ func TestRoutingIsSegmentAware(t *testing.T) {
 	name, decision, err = rt.Evaluate(t.Context(), constantResolver(staticAPI{}), &pb.Request{
 		Method: "GET", Path: "/drive/1", PathSegments: []string{"drive", "1"},
 	}, stubPrincipal())
-	if err != nil || name != "drive" || decision != models.Permit {
+	if err != nil || name != "google.drive" || decision != models.Permit {
 		t.Fatalf("/drive/1: name=%q decision=%s err=%v", name, decision, err)
 	}
 }
@@ -237,7 +237,7 @@ func TestRoutingIsSegmentAware(t *testing.T) {
 // canonical ones.
 func TestRoutingHonoursMultiplePrefixes(t *testing.T) {
 	api := &models.API{
-		Name:         "drive",
+		Name:         "google.drive",
 		BaseURL:      "https://drive",
 		PathPrefixes: []string{"/drive/v3", "/upload/drive/v3"},
 		Actions: []models.Action{
@@ -254,8 +254,8 @@ func TestRoutingHonoursMultiplePrefixes(t *testing.T) {
 		t.Fatalf("build: %v", err)
 	}
 	for _, p := range []models.Policy{
-		{API: "drive", Name: "ok_get", Action: `action.name == "get"`, Condition: "true", Result: models.Permit},
-		{API: "drive", Name: "ok_upload", Action: `action.name == "upload"`, Condition: "true", Result: models.Permit},
+		{API: "google.drive", Name: "ok_get", Action: `action.name == "get"`, Condition: "true", Result: models.Permit},
+		{API: "google.drive", Name: "ok_upload", Action: `action.name == "upload"`, Condition: "true", Result: models.Permit},
 	} {
 		if err := rt.AddPolicy(&p); err != nil {
 			t.Fatalf("policy: %v", err)
@@ -273,7 +273,7 @@ func TestRoutingHonoursMultiplePrefixes(t *testing.T) {
 		name, decision, err := rt.Evaluate(t.Context(), constantResolver(staticAPI{}), &pb.Request{
 			Method: c.method, Path: c.path, PathSegments: c.segs,
 		}, stubPrincipal())
-		if err != nil || name != "drive" || decision != models.Permit {
+		if err != nil || name != "google.drive" || decision != models.Permit {
 			t.Errorf("%s %s: name=%q decision=%s err=%v", c.method, c.path, name, decision, err)
 		}
 	}

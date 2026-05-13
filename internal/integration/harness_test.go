@@ -242,7 +242,12 @@ func BuildProxy(t *testing.T, apiName string, policies []models.Policy) *Proxy {
 		return apiclient.New(httpClient, api.BaseURL(), creds.AccessToken, extra)
 	}
 
-	srv := server.NewServer(runtime, keys, httpClient, factory, 0)
+	srv := server.NewServer(server.Dependencies{
+		Runtime:    runtime,
+		Keys:       keys,
+		HTTPClient: httpClient,
+		APIFactory: factory,
+	})
 	hs := httptest.NewServer(srv.Router())
 
 	jwt, err := auth.IssueAccessToken(keys, proxyUser, auth.AccessCreds{AccessToken: access}, time.Hour, false)

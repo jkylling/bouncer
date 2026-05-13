@@ -348,10 +348,28 @@ func TestMCPInitializeAndToolsList(t *testing.T) {
 			}
 		}
 	}
-	for _, name := range []string{"list_apis", "list_policies", "propose_policy", "approve_proposal"} {
+	for _, name := range []string{"list_apis", "list_policies", "connections", "credentials_staged"} {
 		if !have[name] {
 			t.Errorf("tools/list missing %q (have: %v)", name, have)
 		}
+	}
+
+	// Prompts surface (the setup body the agent walks
+	// through). One smoke check; per-bundle token prompts depend on
+	// installed bundles which this admin fixture doesn't load.
+	prompts := post("prompts/list", nil)
+	pResult, _ := prompts["result"].(map[string]any)
+	pArr, _ := pResult["prompts"].([]any)
+	havePrompt := map[string]bool{}
+	for _, x := range pArr {
+		if m, ok := x.(map[string]any); ok {
+			if name, _ := m["name"].(string); name != "" {
+				havePrompt[name] = true
+			}
+		}
+	}
+	if !havePrompt["setup"] {
+		t.Errorf("prompts/list missing setup (have: %v)", havePrompt)
 	}
 }
 
@@ -394,6 +412,72 @@ func TestCADownload404sWithoutMITM(t *testing.T) {
 	resp, _ := httpDo(t, httpClient(), http.MethodGet, srv.BaseURL+"/_api/ca.crt", nil, nil)
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("status=%d, want 404 (mitm disabled)", resp.StatusCode)
+	}
+}
+
+// TestInstallWrapperBakesProxyURL pins GET /install/bouncer-wrap:
+// admin-authenticated request returns a POSIX shell script with the
+// caller's reachable URL baked in. The /bouncer:setup MCP prompt
+// instructs the agent to curl this endpoint and write the body to
+// ~/.local/bin/bouncer-wrap; a regression that changes the rendered
+// shape (env vars set, sha256 header) would break the bootstrap.
+func TestInstallWrapperBakesProxyURL(t *testing.T) {
+	f := newAdminFixture(t)
+	resp, raw := httpDo(t, httpClient(), http.MethodGet,
+		f.srv.BaseURL+"/install/bouncer-wrap", nil,
+		http.Header{"Authorization": []string{"Bearer " + f.jwt}})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d body=%s", resp.StatusCode, raw)
+	}
+	body := string(raw)
+	if !strings.HasPrefix(body, "#!/bin/sh") {
+		t.Errorf("body lacks shebang:\n%s", body)
+	}
+	if !strings.Contains(body, `BOUNCER_PROXY="`+f.srv.BaseURL+`"`) {
+		t.Errorf("body does not bake proxy URL %q:\n%s", f.srv.BaseURL, body)
+	}
+	if !strings.Contains(body, "HTTPS_PROXY=") || !strings.Contains(body, "SSL_CERT_FILE=") {
+		t.Errorf("body missing required env exports:\n%s", body)
+	}
+	if resp.Header.Get("X-Bouncer-Sha256") == "" {
+		t.Error("X-Bouncer-Sha256 header missing")
+	}
+}
+
+// TestInstallWrapperRequiresAuth pins the gating contract: an
+// anonymous caller is rejected so the per-tenant render isn't leaked
+// to unauthenticated requests. The error body shape mirrors other
+// admin denials.
+func TestInstallWrapperRequiresAuth(t *testing.T) {
+	dir := mustInit(t, initOpts{Password: "admin"})
+	srv := startServe(t, serveOpts{DataDir: dir})
+
+	resp, _ := httpDo(t, httpClient(), http.MethodGet, srv.BaseURL+"/install/bouncer-wrap", nil, nil)
+	if resp.StatusCode != http.StatusUnauthorized && resp.StatusCode != http.StatusForbidden {
+		t.Errorf("status=%d, want 401 or 403 for anonymous", resp.StatusCode)
+	}
+}
+
+// TestInstallCAServesPEM pins GET /install/ca.pem: same bytes as
+// /_api/ca.crt but auth-gated and served as ca.pem rather than
+// bouncer-mitm-ca.crt so the /bouncer:setup prompt's
+// `~/.config/bouncer/ca.pem` filename lands without renaming.
+func TestInstallCAServesPEM(t *testing.T) {
+	f := newAdminFixture(t)
+	resp, raw := httpDo(t, httpClient(), http.MethodGet,
+		f.srv.BaseURL+"/install/ca.pem", nil,
+		http.Header{"Authorization": []string{"Bearer " + f.jwt}})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d body=%s", resp.StatusCode, raw)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/x-pem-file" {
+		t.Errorf("Content-Type=%q, want application/x-pem-file", ct)
+	}
+	if cd := resp.Header.Get("Content-Disposition"); !strings.Contains(cd, `filename="ca.pem"`) {
+		t.Errorf("Content-Disposition=%q, want filename=\"ca.pem\"", cd)
+	}
+	if !strings.Contains(string(raw), "BEGIN CERTIFICATE") {
+		t.Errorf("body lacks PEM marker: %s", raw)
 	}
 }
 

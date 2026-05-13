@@ -19,7 +19,7 @@ CI. The full list lives in the `Makefile`; the ones worth knowing:
 | `make staticcheck` | `go tool staticcheck ./...` — honnef.co/go/tools pinned via the `tool` directive in go.mod. |
 | `make build`    | Host-platform binaries into `./bin/`.                                                   |
 | `make release`  | Cross-compile every cmd × OS/arch into `./dist/` with version stamping. Tag-driven CI.  |
-| `make test-e2e` | Multi-arch e2e fan-out across lima/tart VMs. Operator-only; not part of `ci`.           |
+| `make ui`       | Browser tests under `uitest/`. Drives `bouncer serve` + a real Chromium via playwright-go; saves screenshots to `uitest/screenshots/`. **Not** part of `make ci`. |
 
 `make ci` is the per-PR gate. Run it after any non-trivial change.
 
@@ -31,6 +31,44 @@ harness; ordinary changes don't need them.
 ```sh
 go test -tags=integration ./internal/integration/...
 ```
+
+Browser (`ui`) tests are gated by `-tags=ui` and require a
+one-time playwright-go bundle download (~150 MB into
+`~/.cache/ms-playwright/`):
+
+```sh
+go run ./uitest/cmd/install-playwright   # once per machine
+make ui                                  # ~3 s, headless
+```
+
+Touch them when changing onboarding-wizard UI, the dashboard
+sidebar, or the wire shape any of those pages POST to
+(`/_api/connections`, `/_api/recipes/*`, `/_api/agents/*`).
+Ordinary changes don't need them.
+
+### Screenshot tool — `uitest/cmd/screenshot`
+
+Iterating on visuals goes through `uitest/cmd/screenshot`. It logs
+into a running bouncer, captures every dashboard page at one or
+more viewports, and (optionally) screenshots the hosted-mockup as
+a side-by-side reference:
+
+```sh
+# Live UI only, both wide and narrow viewports
+go run ./uitest/cmd/screenshot \
+    -live http://127.0.0.1:8080 -password <admin-pw>
+
+# Live + mockup, screenshots into /tmp/screens/
+go run ./uitest/cmd/screenshot \
+    -live http://127.0.0.1:8080 -password <admin-pw> \
+    -mockup file:///path/to/hosted-mockup/0/index.html \
+    -out /tmp/screens
+```
+
+Use it when polishing CSS / layout — make a change, restart
+bouncer, re-run the tool, open the PNGs. Headless playwright, ~1
+second per page, requires the same one-time `install-playwright`
+download as `make ui`.
 
 ## Documentation
 

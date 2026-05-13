@@ -15,7 +15,7 @@ func TestAPIYAMLLoads(t *testing.T) {
 	if len(apis) == 0 {
 		t.Fatal("no apis loaded")
 	}
-	want := map[string]bool{"gmail": false, "drive": false, "calendar": false, "sheets": false, "docs": false}
+	want := map[string]bool{"google.gmail": false, "google.drive": false, "google.calendar": false, "google.sheets": false, "google.docs": false}
 	for _, a := range apis {
 		if _, ok := want[a.Name]; ok {
 			want[a.Name] = true

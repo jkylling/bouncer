@@ -12,60 +12,97 @@ swapped in only on a Permit decision.
 
 ## Quickstart
 
-### Google Workspace
+The recommended flow is MCP-driven: install bouncer, point your agent
+at the proxy's MCP server, then run two slash-commands. See
+`plans/bouncer_setup_mcp_tool.md` and
+`plans/bouncer_service_token_prompts.md` for the design rationale.
+
+### From your agent (recommended)
 
 ```sh
-# Install:
+# 1. Install + boot the proxy (host this on your laptop or a server).
 curl -fsSL https://raw.githubusercontent.com/jkylling/bouncer/main/install.sh | sh
 
+bouncer serve --init \
+    --with-apis github.com/jkylling/bouncer-gws \
+    --with-apis github.com/jkylling/bouncer-slack \
+    --admin-password <secret-password>
+
+# 2. Issue an admin-capable bouncer JWT for the MCP add step.
+BOUNCER_JWT=$(bouncer issue-token --subject my-agent --admin)
+
+# 3. Point your agent at bouncer's remote MCP server (Claude Code shown;
+#    Cursor / Cline / Zed / Windsurf accept the same URL + bearer in
+#    their own MCP config).
+claude mcp add --transport http bouncer \
+    http://localhost:8080/_api/mcp \
+    --header "Authorization: Bearer $BOUNCER_JWT"
+
+# 4. In the agent, run:
+#       /bouncer:setup           — installs `bouncer-wrap` + CA cert
+#                                   and writes the project-level
+#                                   instruction fragment.
+#       /google-token            — once Google is connected to your
+#       /slack-token             — bouncer instance, stages local
+#                                   credentials for the matching CLI.
+#
+#    The agent then prefixes upstream calls with `bouncer-wrap`:
+#       bouncer-wrap gws drive list
+#       bouncer-wrap curl https://slack.com/api/conversations.list
+```
+
+Connections (the upstream credentials bouncer wraps into per-service
+bearers) live encrypted at rest under `<data-dir>/connections/`.
+Populating them in v1 is operator-side — drop a JSON file or use the
+admin endpoints; a dashboard-OAuth flow is the planned successor.
+
+### Manual flow (no MCP)
+
+If your harness doesn't support remote MCP, you can wire bouncer
+directly. Same install, then:
+
+```sh
+# Issue a JWT carrying your real upstream credential.
+BOUNCER_JWT=$(bouncer issue-token --subject my-agent --access-token ya29...)
+
+# Trust the proxy's CA and route via HTTPS_PROXY.
+curl -fsS http://localhost:8080/_api/ca.crt -o ca.crt \
+  && export SSL_CERT_FILE=$PWD/ca.crt HTTPS_PROXY=http://localhost:8080
+
+# Then use the upstream CLI as-is.
+gws drive list
+```
+
+### Google Workspace (manual specifics)
+
+```sh
 # 1a. For simple testing, get an access token from https://developers.google.com/oauthplayground with scope https://www.googleapis.com/auth/gmail.modify
 # 1b. Or follow the steps [here](https://github.com/jkylling/bouncer-gws#Authentication) to set up a Google project
 
-# 2. Start the proxy
 bouncer serve --init \
     --with-apis github.com/jkylling/bouncer-gws \
     --admin-password <secret-password>
 
-# 3. Issue a bouncer access token from the Google access/refresh token.
-BOUNCER_JWT=$(bouncer issue-token \
-    --subject my-agent \
-    --access-token ya29...)
+BOUNCER_JWT=$(bouncer issue-token --subject my-agent --access-token ya29...)
 
-# 4a. (optional) Install [gws-cli](https://github.com/googleworkspace/cli): `brew install googleworkspace-cli`
-# 4b. (optional) Install [gogcli](https://github.com/openclaw/gogcli): `brew install gogcli`
+# (optional) Install [gws-cli](https://github.com/googleworkspace/cli): `brew install googleworkspace-cli`
+# (optional) Install [gogcli](https://github.com/openclaw/gogcli): `brew install gogcli`
 
-# 5. (optional) Wire bouncer's MCP server into your agent harness so
-#    the agent can list policies, read the traffic viewer, and propose
-#    new policies through `tools/list`. Reuses the JWT from step 3 —
-#    MCP read/propose tools don't need extra scopes. For Claude Code:
-#       claude mcp add --transport http bouncer \
-#           http://localhost:8080/_api/mcp \
-#           --header "Authorization: Bearer $BOUNCER_JWT"
-
-# 6. Hand the bouncer token to your agent and instruct it to call the
-#    Google Workspace API at host localhost:8080. Or, to use gws-cli /
-#    gogcli unmodified, trust bouncer's CA and route via HTTPS_PROXY:
-curl -fsS http://localhost:8080/_api/ca.crt -o ca.crt && export SSL_CERT_FILE=$PWD/ca.crt HTTPS_PROXY=http://localhost:8080
-#    Watch the traffic viewer at http://localhost:8080/_admin/ and
-#    turn first-call traffic into proposed policies.
+curl -fsS http://localhost:8080/_api/ca.crt -o ca.crt \
+  && export SSL_CERT_FILE=$PWD/ca.crt HTTPS_PROXY=http://localhost:8080
 ```
 
-### Slack
+### Slack (manual specifics)
 
 ```sh
-# Install:
-curl -fsSL https://raw.githubusercontent.com/jkylling/bouncer/main/install.sh | sh
-
 # 1. Obtain Slack credentials, see [how here](http://github.com/jkylling/bouncer-slack#Authentication).
 
-# 2. Boot the proxy with the Slack API bundle.
 bouncer serve --init \
     --with-apis github.com/jkylling/bouncer-slack \
     --admin-password <secret-password>
 
-# 3. Issue a long-lived access JWT carrying the Slack token. Slack
-#    tokens don't expire, so an access JWT is enough — no refresh
-#    flow needed.
+# Slack tokens don't expire, so an access JWT is enough — no refresh
+# flow needed.
 BOUNCER_JWT=$(bouncer issue-token \
     --subject my-agent \
     --access-token "$SLACK_XOXC_TOKEN" \
@@ -74,22 +111,10 @@ BOUNCER_JWT=$(bouncer issue-token \
     --header "Referer=https://app.slack.com/" \
     --ttl 240h)
 
-# 4. (optional) Install [agent-slack](https://github.com/stablyai/agent-slack): `curl -fsSL https://raw.githubusercontent.com/stablyai/agent-slack/main/install.sh | sh`
+# (optional) Install [agent-slack](https://github.com/stablyai/agent-slack): `curl -fsSL https://raw.githubusercontent.com/stablyai/agent-slack/main/install.sh | sh`
 
-# 5. (optional) Wire bouncer's MCP server into your agent harness so
-#    the agent can list policies, read the traffic viewer, and propose
-#    new policies through `tools/list`. Reuses the JWT from step 3 —
-#    MCP read/propose tools don't need extra scopes. For Claude Code:
-#       claude mcp add --transport http bouncer \
-#           http://localhost:8080/_api/mcp \
-#           --header "Authorization: Bearer $BOUNCER_JWT"
-
-# 6. Hand the bouncer token to your agent and instruct it to call the
-#    Slack API at host localhost:8080. Or, to use agent-slack
-#    unmodified, trust bouncer's CA and route via HTTPS_PROXY:
-curl -fsS http://localhost:8080/_api/ca.crt -o ca.crt && export SSL_CERT_FILE=$PWD/ca.crt HTTPS_PROXY=http://localhost:8080
-#    Watch the traffic viewer at http://localhost:8080/_admin/ and
-#    turn first-call traffic into proposed policies.
+curl -fsS http://localhost:8080/_api/ca.crt -o ca.crt \
+  && export SSL_CERT_FILE=$PWD/ca.crt HTTPS_PROXY=http://localhost:8080
 ```
 
 ## Configuration

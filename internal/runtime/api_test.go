@@ -273,7 +273,7 @@ func TestAllBundledAPIsCompile(t *testing.T) {
 	for _, a := range apis {
 		names[a.Name] = true
 	}
-	for _, want := range []string{"gmail", "drive", "calendar", "sheets", "docs"} {
+	for _, want := range []string{"google.gmail", "google.drive", "google.calendar", "google.sheets", "google.docs"} {
 		if !names[want] {
 			t.Errorf("api %q missing", want)
 		}

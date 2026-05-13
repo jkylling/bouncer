@@ -69,7 +69,7 @@ func expectOutcome(t *testing.T, label string, got, want models.PolicyResult) {
 
 func TestUserStory_Gmail01_LabelBasedReadRestriction(t *testing.T) {
 	policy := models.Policy{
-		API:    "gmail",
+		API:    "google.gmail",
 		Name:   "no_sensitive_labels",
 		Action: `action.name == "get_message"`,
 		Condition: `!message.labelIds.exists(l,
@@ -103,14 +103,14 @@ func TestUserStory_Gmail01_LabelBasedReadRestriction(t *testing.T) {
 	}}
 
 	expectOutcome(t, "public message",
-		runUserStory(t, "gmail", policy, api, &pb.Request{
+		runUserStory(t, "google.gmail", policy, api, &pb.Request{
 			Method:       "GET",
 			Path:         "/gmail/v1/users/me/messages/m-public",
 			PathSegments: []string{"gmail", "v1", "users", "me", "messages", "m-public"},
 		}), models.Permit)
 
 	expectOutcome(t, "legal-hold message",
-		runUserStory(t, "gmail", policy, api, &pb.Request{
+		runUserStory(t, "google.gmail", policy, api, &pb.Request{
 			Method:       "GET",
 			Path:         "/gmail/v1/users/me/messages/m-secret",
 			PathSegments: []string{"gmail", "v1", "users", "me", "messages", "m-secret"},
@@ -123,7 +123,7 @@ func TestUserStory_Gmail01_LabelBasedReadRestriction(t *testing.T) {
 
 func TestUserStory_Gmail07_FilterCreationGuardrails(t *testing.T) {
 	policy := models.Policy{
-		API:    "gmail",
+		API:    "google.gmail",
 		Name:   "filter_guardrails",
 		Action: `action.name == "settings_create_filter"`,
 		// criteria must be non-trivial AND no INBOX/UNREAD removal
@@ -162,7 +162,7 @@ func TestUserStory_Gmail07_FilterCreationGuardrails(t *testing.T) {
 	}}
 
 	expectOutcome(t, "precise from-filter",
-		runUserStory(t, "gmail", policy, api, &pb.Request{
+		runUserStory(t, "google.gmail", policy, api, &pb.Request{
 			Method:       "POST",
 			Path:         "/gmail/v1/users/me/settings/filters",
 			PathSegments: []string{"gmail", "v1", "users", "me", "settings", "filters"},
@@ -170,7 +170,7 @@ func TestUserStory_Gmail07_FilterCreationGuardrails(t *testing.T) {
 		}), models.Permit)
 
 	expectOutcome(t, "catch-all hide-inbox filter",
-		runUserStory(t, "gmail", policy, api, &pb.Request{
+		runUserStory(t, "google.gmail", policy, api, &pb.Request{
 			Method:       "POST",
 			Path:         "/gmail/v1/users/me/settings/filters",
 			PathSegments: []string{"gmail", "v1", "users", "me", "settings", "filters"},
@@ -185,12 +185,12 @@ func TestUserStory_Gmail07_FilterCreationGuardrails(t *testing.T) {
 func TestUserStory_Gmail08_DraftsAllowedSendsDenied(t *testing.T) {
 	policies := []models.Policy{
 		// drafting is fine
-		{API: "gmail", Name: "permit_create_draft", Action: `action.name == "create_draft"`, Condition: "true", Result: models.Permit},
+		{API: "google.gmail", Name: "permit_create_draft", Action: `action.name == "create_draft"`, Condition: "true", Result: models.Permit},
 		// send_draft / send_message / insert / import are not permitted
 		// — under deny-overrides semantics, omitting a Permit produces
 		// the implicit Deny we want.
 	}
-	rt := loadCrossApiRuntime(t, "gmail", policies)
+	rt := loadCrossApiRuntime(t, "google.gmail", policies)
 
 	upstream := staticAPI{bodies: map[string]map[string]any{
 		"/gmail/v1/users/me/profile": {
@@ -226,7 +226,7 @@ func TestUserStory_Gmail08_DraftsAllowedSendsDenied(t *testing.T) {
 
 func TestUserStory_Drive01_ExternalDomainBlock(t *testing.T) {
 	policy := models.Policy{
-		API:    "drive",
+		API:    "google.drive",
 		Name:   "internal_only_share",
 		Action: `action.name == "create_permission"`,
 		Condition: `request.body.type == "user" && request.body.emailAddress.endsWith("@acme.example")
@@ -252,7 +252,7 @@ func TestUserStory_Drive01_ExternalDomainBlock(t *testing.T) {
 	})
 
 	expectOutcome(t, "internal grant",
-		runUserStory(t, "drive", policy, api, &pb.Request{
+		runUserStory(t, "google.drive", policy, api, &pb.Request{
 			Method:       "POST",
 			Path:         "/drive/v3/files/f1/permissions",
 			PathSegments: []string{"drive", "v3", "files", "f1", "permissions"},
@@ -260,7 +260,7 @@ func TestUserStory_Drive01_ExternalDomainBlock(t *testing.T) {
 		}), models.Permit)
 
 	expectOutcome(t, "external grant",
-		runUserStory(t, "drive", policy, api, &pb.Request{
+		runUserStory(t, "google.drive", policy, api, &pb.Request{
 			Method:       "POST",
 			Path:         "/drive/v3/files/f1/permissions",
 			PathSegments: []string{"drive", "v3", "files", "f1", "permissions"},
@@ -277,7 +277,7 @@ func TestUserStory_Drive01_ExternalDomainBlock(t *testing.T) {
 // human-document MIME types.
 func TestUserStory_Drive06_MimeAllowlistOnRead(t *testing.T) {
 	policy := models.Policy{
-		API:    "drive",
+		API:    "google.drive",
 		Name:   "human_doc_mimes",
 		Action: `action.name == "get_file"`,
 		Condition: `file.mimeType in [
@@ -303,14 +303,14 @@ func TestUserStory_Drive06_MimeAllowlistOnRead(t *testing.T) {
 	}}
 
 	expectOutcome(t, "google doc",
-		runUserStory(t, "drive", policy, api, &pb.Request{
+		runUserStory(t, "google.drive", policy, api, &pb.Request{
 			Method:       "GET",
 			Path:         "/drive/v3/files/doc",
 			PathSegments: []string{"drive", "v3", "files", "doc"},
 		}), models.Permit)
 
 	expectOutcome(t, "octet-stream",
-		runUserStory(t, "drive", policy, api, &pb.Request{
+		runUserStory(t, "google.drive", policy, api, &pb.Request{
 			Method:       "GET",
 			Path:         "/drive/v3/files/blob",
 			PathSegments: []string{"drive", "v3", "files", "blob"},
@@ -327,7 +327,7 @@ func TestUserStory_Drive06_MimeAllowlistOnRead(t *testing.T) {
 // implicitly. That happens to be the desired default.
 func TestUserStory_Calendar01_HidePrivateEvents(t *testing.T) {
 	policy := models.Policy{
-		API:       "calendar",
+		API:       "google.calendar",
 		Name:      "hide_private",
 		Action:    `action.name == "get_event"`,
 		Condition: `event.visibility != "private" && event.visibility != "confidential"`,
@@ -355,14 +355,14 @@ func TestUserStory_Calendar01_HidePrivateEvents(t *testing.T) {
 	}}
 
 	expectOutcome(t, "public event",
-		runUserStory(t, "calendar", policy, api, &pb.Request{
+		runUserStory(t, "google.calendar", policy, api, &pb.Request{
 			Method:       "GET",
 			Path:         "/calendar/v3/calendars/primary/events/e-public",
 			PathSegments: []string{"calendar", "v3", "calendars", "primary", "events", "e-public"},
 		}), models.Permit)
 
 	expectOutcome(t, "private event",
-		runUserStory(t, "calendar", policy, api, &pb.Request{
+		runUserStory(t, "google.calendar", policy, api, &pb.Request{
 			Method:       "GET",
 			Path:         "/calendar/v3/calendars/primary/events/e-private",
 			PathSegments: []string{"calendar", "v3", "calendars", "primary", "events", "e-private"},
@@ -375,7 +375,7 @@ func TestUserStory_Calendar01_HidePrivateEvents(t *testing.T) {
 
 func TestUserStory_Calendar07_RecurrenceBounds(t *testing.T) {
 	policy := models.Policy{
-		API:    "calendar",
+		API:    "google.calendar",
 		Name:   "bounded_recurrence",
 		Action: `action.name == "insert_event"`,
 		Condition: `!has(request.body.recurrence) ||
@@ -406,7 +406,7 @@ func TestUserStory_Calendar07_RecurrenceBounds(t *testing.T) {
 	})
 
 	expectOutcome(t, "bounded weekly",
-		runUserStory(t, "calendar", policy, unusedAPI{}, &pb.Request{
+		runUserStory(t, "google.calendar", policy, unusedAPI{}, &pb.Request{
 			Method:       "POST",
 			Path:         "/calendar/v3/calendars/primary/events",
 			PathSegments: []string{"calendar", "v3", "calendars", "primary", "events"},
@@ -414,7 +414,7 @@ func TestUserStory_Calendar07_RecurrenceBounds(t *testing.T) {
 		}), models.Permit)
 
 	expectOutcome(t, "unbounded daily",
-		runUserStory(t, "calendar", policy, unusedAPI{}, &pb.Request{
+		runUserStory(t, "google.calendar", policy, unusedAPI{}, &pb.Request{
 			Method:       "POST",
 			Path:         "/calendar/v3/calendars/primary/events",
 			PathSegments: []string{"calendar", "v3", "calendars", "primary", "events"},
@@ -428,7 +428,7 @@ func TestUserStory_Calendar07_RecurrenceBounds(t *testing.T) {
 
 func TestUserStory_Docs01_TitleClassificationPrefix(t *testing.T) {
 	policy := models.Policy{
-		API:    "docs",
+		API:    "google.docs",
 		Name:   "title_prefix",
 		Action: `action.name == "create_document"`,
 		Condition: `has(request.body.title) &&
@@ -440,7 +440,7 @@ func TestUserStory_Docs01_TitleClassificationPrefix(t *testing.T) {
 	bad := newStruct(t, map[string]any{"title": "Phase II Interim Results Summary"})
 
 	expectOutcome(t, "tagged title",
-		runUserStory(t, "docs", policy, unusedAPI{}, &pb.Request{
+		runUserStory(t, "google.docs", policy, unusedAPI{}, &pb.Request{
 			Method:       "POST",
 			Path:         "/v1/documents",
 			PathSegments: []string{"v1", "documents"},
@@ -448,7 +448,7 @@ func TestUserStory_Docs01_TitleClassificationPrefix(t *testing.T) {
 		}), models.Permit)
 
 	expectOutcome(t, "untagged title",
-		runUserStory(t, "docs", policy, unusedAPI{}, &pb.Request{
+		runUserStory(t, "google.docs", policy, unusedAPI{}, &pb.Request{
 			Method:       "POST",
 			Path:         "/v1/documents",
 			PathSegments: []string{"v1", "documents"},
@@ -466,7 +466,7 @@ func TestUserStory_Docs01_TitleClassificationPrefix(t *testing.T) {
 // or null, so the policy guards with an explicit `!= null` check.
 func TestUserStory_Sheets02_SensitiveBlocklist(t *testing.T) {
 	policy := models.Policy{
-		API:    "sheets",
+		API:    "google.sheets",
 		Name:   "deny_sensitive",
 		Action: `action.name == "get_spreadsheet"`,
 		Condition: `!(spreadsheet.properties.title.matches("(?i)\\[(confidential|restricted|secret)\\]"))
@@ -505,21 +505,21 @@ func TestUserStory_Sheets02_SensitiveBlocklist(t *testing.T) {
 	}}
 
 	expectOutcome(t, "clean sheet",
-		runUserStory(t, "sheets", policy, api, &pb.Request{
+		runUserStory(t, "google.sheets", policy, api, &pb.Request{
 			Method:       "GET",
 			Path:         "/v4/spreadsheets/clean",
 			PathSegments: []string{"v4", "spreadsheets", "clean"},
 		}), models.Permit)
 
 	expectOutcome(t, "title-flagged sheet",
-		runUserStory(t, "sheets", policy, api, &pb.Request{
+		runUserStory(t, "google.sheets", policy, api, &pb.Request{
 			Method:       "GET",
 			Path:         "/v4/spreadsheets/secret",
 			PathSegments: []string{"v4", "spreadsheets", "secret"},
 		}), models.Deny)
 
 	expectOutcome(t, "metadata-flagged sheet",
-		runUserStory(t, "sheets", policy, api, &pb.Request{
+		runUserStory(t, "google.sheets", policy, api, &pb.Request{
 			Method:       "GET",
 			Path:         "/v4/spreadsheets/pii",
 			PathSegments: []string{"v4", "spreadsheets", "pii"},
@@ -532,7 +532,7 @@ func TestUserStory_Sheets02_SensitiveBlocklist(t *testing.T) {
 
 func TestUserStory_Sheets04_BatchUpdateAllowlist(t *testing.T) {
 	policy := models.Policy{
-		API:    "sheets",
+		API:    "google.sheets",
 		Name:   "data_only_subrequests",
 		Action: `action.name == "batch_update_spreadsheet"`,
 		// The user story uses `r.keys().exists_one(k, k in [...])`; cel-go
@@ -584,7 +584,7 @@ func TestUserStory_Sheets04_BatchUpdateAllowlist(t *testing.T) {
 	})
 
 	expectOutcome(t, "data-only batch",
-		runUserStory(t, "sheets", policy, api, &pb.Request{
+		runUserStory(t, "google.sheets", policy, api, &pb.Request{
 			Method:       "POST",
 			Path:         "/v4/spreadsheets/s1/batchUpdate",
 			PathSegments: []string{"v4", "spreadsheets", "s1", "batchUpdate"},
@@ -592,7 +592,7 @@ func TestUserStory_Sheets04_BatchUpdateAllowlist(t *testing.T) {
 		}), models.Permit)
 
 	expectOutcome(t, "deleteSheet batch",
-		runUserStory(t, "sheets", policy, api, &pb.Request{
+		runUserStory(t, "google.sheets", policy, api, &pb.Request{
 			Method:       "POST",
 			Path:         "/v4/spreadsheets/s1/batchUpdate",
 			PathSegments: []string{"v4", "spreadsheets", "s1", "batchUpdate"},

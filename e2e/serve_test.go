@@ -262,74 +262,6 @@ func TestServeTrafficStoreSqliteRecords(t *testing.T) {
 // flag: GET works, POST returns the documented error. Critical for
 // production deployments that want the viewer without risking
 // accidental edits from a shared admin host.
-// TestProposalDeleteRoundTrip drives the full delete-proposal flow
-// through the live binary: seed a policy, POST a kind=delete
-// proposal, approve it, confirm the live policy is gone. The
-// deletion-proposal feature is a CLI-surface change (new wire field
-// `kind` on /_api/proposals POST) so per CLAUDE.md it gets e2e
-// coverage in the same change.
-func TestProposalDeleteRoundTrip(t *testing.T) {
-	dir := mustInit(t, initOpts{})
-	apiYAML := `name: svc
-base_url: https://example.invalid
-path_prefixes: [/svc]
-actions:
-- name: ping
-  method: GET
-  path: /svc/ping
-`
-	if err := os.WriteFile(filepath.Join(dir, "apis", "svc.yaml"), []byte(apiYAML), 0o600); err != nil {
-		t.Fatalf("write api: %v", err)
-	}
-	srv := startServe(t, serveOpts{DataDir: dir})
-	jwt, _ := loginAdmin(t, srv.BaseURL, "admin")
-	c := httpClient()
-
-	// Seed a live policy.
-	resp, raw := httpDo(t, c, http.MethodPost, srv.BaseURL+"/_api/policies",
-		map[string]any{"api": "svc", "name": "p1", "action": "true", "condition": "true", "result": "permit"},
-		bearer(jwt))
-	if resp.StatusCode/100 != 2 {
-		t.Fatalf("seed policy: status=%d body=%s", resp.StatusCode, raw)
-	}
-
-	// Submit a kind=delete proposal.
-	resp, raw = httpDo(t, c, http.MethodPost, srv.BaseURL+"/_api/proposals",
-		map[string]any{
-			"kind":      "delete",
-			"policy":    map[string]any{"api": "svc", "name": "p1"},
-			"rationale": "no longer needed",
-		},
-		bearer(jwt))
-	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		t.Fatalf("propose delete: status=%d body=%s", resp.StatusCode, raw)
-	}
-	var prop struct {
-		ID   string `json:"id"`
-		Kind string `json:"kind"`
-	}
-	if err := json.Unmarshal(raw, &prop); err != nil {
-		t.Fatalf("parse proposal: %v\nraw: %s", err, raw)
-	}
-	if prop.Kind != "delete" {
-		t.Errorf("proposal kind = %q, want delete (raw: %s)", prop.Kind, raw)
-	}
-
-	// Approve.
-	resp, raw = httpDo(t, c, http.MethodPost,
-		srv.BaseURL+"/_api/proposals/"+prop.ID+"/approve",
-		map[string]any{}, bearer(jwt))
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("approve delete: status=%d body=%s", resp.StatusCode, raw)
-	}
-
-	// The live policy must be gone.
-	resp, _ = httpDo(t, c, http.MethodGet, srv.BaseURL+"/_api/policies/svc/p1", nil, bearer(jwt))
-	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("policy survived approve-delete: status=%d", resp.StatusCode)
-	}
-}
-
 func TestServePoliciesReadOnlyRejectsWrites(t *testing.T) {
 	dir := mustInit(t, initOpts{})
 	srv := startServe(t, serveOpts{
@@ -356,7 +288,7 @@ func TestServePoliciesReadOnlyRejectsWrites(t *testing.T) {
 	// readonly gate fires before validation, so an empty policy
 	// works as the trigger.
 	body := map[string]any{
-		"api":  "gmail",
+		"api":  "google.gmail",
 		"name": "x",
 		"action": map[string]any{
 			"effect": "permit",

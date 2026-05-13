@@ -299,11 +299,11 @@ func allSamples() []struct {
 		api     string
 		samples []sample
 	}{
-		{"gmail", gmailSamples()},
-		{"drive", driveSamples()},
-		{"calendar", calendarSamples()},
-		{"sheets", sheetsSamples()},
-		{"docs", docsSamples()},
+		{"google.gmail", gmailSamples()},
+		{"google.drive", driveSamples()},
+		{"google.calendar", calendarSamples()},
+		{"google.sheets", sheetsSamples()},
+		{"google.docs", docsSamples()},
 	}
 }
 
@@ -365,16 +365,16 @@ func TestEverySampleDeniesWhenNoPolicy(t *testing.T) {
 
 func TestDenyPolicyBeatsPermitPolicy(t *testing.T) {
 	policies := []models.Policy{
-		permitAll("gmail", "get_message"),
+		permitAll("google.gmail", "get_message"),
 		{
-			API:       "gmail",
+			API:       "google.gmail",
 			Name:      "deny_get_message",
 			Action:    `action.name == "get_message"`,
 			Condition: "true",
 			Result:    models.Deny,
 		},
 	}
-	rt := loadCrossApiRuntime(t, "gmail", policies)
+	rt := loadCrossApiRuntime(t, "google.gmail", policies)
 	got, err := rt.Evaluate(t.Context(), constantResolver(unusedAPI{}), sampleRequest(sample{method: "GET", path: "/gmail/v1/users/me/messages/m1"}), stubPrincipal())
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)

@@ -28,7 +28,7 @@ func TestGmail_GetMessageDiscriminatesByLabel(t *testing.T) {
 	privateBob := FindGmailMessageID(t, "cedar-proxy-test-private-from-bob")
 
 	policy := models.Policy{
-		API:       "gmail",
+		API:       "google.gmail",
 		Name:      "public_read",
 		Action:    "get_message",
 		Condition: fmt.Sprintf("'%s' in message.labelIds", publicLabel),
@@ -46,7 +46,7 @@ func TestGmail_GetMessageDiscriminatesByLabel(t *testing.T) {
 
 func TestGmail_ListMessagesRequiresQ(t *testing.T) {
 	policy := models.Policy{
-		API:       "gmail",
+		API:       "google.gmail",
 		Name:      "require_q",
 		Action:    "list_messages",
 		Condition: "request.query.exists(kv, kv.key == 'q')",
@@ -76,7 +76,7 @@ func TestDrive_GetFileDiscriminatesByMime(t *testing.T) {
 	publicPng := RequireDriveFile(t, "cedar-proxy-test-public.png", "image/png")
 
 	policy := models.Policy{
-		API:       "drive",
+		API:       "google.drive",
 		Name:      "text_only",
 		Action:    "get_file",
 		Condition: "file.mimeType.startsWith('text/')",
@@ -96,7 +96,7 @@ func TestDrive_GetFileDiscriminatesByName(t *testing.T) {
 	publicPng := RequireDriveFile(t, "cedar-proxy-test-public.png", "image/png")
 
 	policy := models.Policy{
-		API:       "drive",
+		API:       "google.drive",
 		Name:      "public_only",
 		Action:    "get_file",
 		Condition: "file.name.contains('public')",
@@ -112,7 +112,7 @@ func TestDrive_GetFileDiscriminatesByName(t *testing.T) {
 
 func TestDrive_ListFilesRequiresScopedQ(t *testing.T) {
 	policy := models.Policy{
-		API:       "drive",
+		API:       "google.drive",
 		Name:      "require_scoped_q",
 		Action:    "list_files",
 		Condition: "request.query.exists(kv, kv.key == 'q' && kv.value.contains('in parents'))",
@@ -141,7 +141,7 @@ func TestCalendar_GetEventDiscriminatesBySummary(t *testing.T) {
 	attendeeID := FindCalendarEventID(t, "cedar-proxy-test-with-attendee-event")
 
 	policy := models.Policy{
-		API:       "calendar",
+		API:       "google.calendar",
 		Name:      "public_events",
 		Action:    "get_event",
 		Condition: "event.summary.contains('public')",
@@ -163,7 +163,7 @@ func TestCalendar_GetEventOnlyWithAttendees(t *testing.T) {
 	// `event.attendees` is null when the API omits the field, the real
 	// list otherwise; the size-check short-circuits null safely.
 	policy := models.Policy{
-		API:       "calendar",
+		API:       "google.calendar",
 		Name:      "attendees_only",
 		Action:    "get_event",
 		Condition: "event.attendees != null && size(event.attendees) > 0",
@@ -179,7 +179,7 @@ func TestCalendar_GetEventOnlyWithAttendees(t *testing.T) {
 
 func TestCalendar_ListEventsRequiresTimeWindow(t *testing.T) {
 	policy := models.Policy{
-		API:    "calendar",
+		API:    "google.calendar",
 		Name:   "require_time_window",
 		Action: "list_events",
 		Condition: "request.query.exists(kv, kv.key == 'timeMin') && " +
@@ -209,7 +209,7 @@ func TestSheets_GetSpreadsheetDiscriminatesByTitle(t *testing.T) {
 	sharedID := EnsureSpreadsheet(t, "cedar-proxy-test-shared-spreadsheet")
 
 	policy := models.Policy{
-		API:       "sheets",
+		API:       "google.sheets",
 		Name:      "public_only",
 		Action:    "get_spreadsheet",
 		Condition: "spreadsheet.properties.title.contains('public')",
@@ -233,7 +233,7 @@ func TestDocs_GetDocumentDiscriminatesByTitle(t *testing.T) {
 	sharedID := EnsureDocument(t, "cedar-proxy-test-shared-document")
 
 	policy := models.Policy{
-		API:       "docs",
+		API:       "google.docs",
 		Name:      "public_only",
 		Action:    "get_document",
 		Condition: "document.title.startsWith('cedar-proxy-test-public-')",

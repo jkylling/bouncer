@@ -33,38 +33,12 @@ disk.
 ## Cross-OS coverage (Linux / macOS / Windows)
 
 The default suite runs on whatever OS `go test` is invoked from.
-Three ways to get the binary exercised on the other targets:
-
-### Local VM matrix (`make test-e2e`)
-
-Drives `make e2e` inside each configured VM. Assumes the VMs
-already exist and are running, with the worktree mounted inside
-each guest:
-
-```sh
-make test-e2e                                    # full matrix
-make test-e2e E2E_LIMA_VMS='linux-arm64'         # subset
-make test-e2e -j                                 # fan out concurrently
-```
-
-Defaults assume Lima VMs named `linux-amd64` / `linux-arm64` /
-`windows-amd64` and a Tart VM named `macos-arm64` (Apple Silicon
-hosts only). Override `E2E_LIMA_VMS`, `E2E_TART_VMS`,
-`LIMA_WORK_DIR`, or `TART_WORK_DIR` if your layout differs.
-
-Why VMs instead of `GOOS=foo go test`: the e2e harness's TestMain
-runs `go build` and then `exec`s the binary, so the spawned process
-has to actually run on the target arch — cross-compiling alone
-doesn't help.
-
-### CI matrix (recommended)
-
-Add a GitHub Actions matrix that runs `make e2e` on
-`ubuntu-latest`, `macos-latest`, `windows-latest`, with a job per
-`GOARCH` if you also want amd64/arm64 split. The Makefile's existing
-`make release` target already cross-compiles for the same matrix
-(see `TARGETS` in `../Makefile`); the e2e suite uses `go test` on
-the host so `runs-on:` covers it natively.
+For cross-OS coverage, add a GitHub Actions matrix that runs
+`make e2e` on `ubuntu-latest`, `macos-latest`, `windows-latest`,
+with a job per `GOARCH` if you also want amd64/arm64 split. The
+Makefile's existing `make release` target already cross-compiles
+for the same matrix (see `TARGETS` in `../Makefile`); the e2e
+suite uses `go test` on the host so `runs-on:` covers it natively.
 
 A starting point:
 
@@ -82,21 +56,8 @@ jobs:
       - run: make e2e
 ```
 
-### Ad-hoc VM
-
-`make test-e2e` covers the common case (named VMs, mounted
-worktree). For a one-off — a fresh Lima/Multipass/Vagrant VM where
-you don't want a make rule — just shell in and run `make e2e`
-yourself:
-
-```sh
-limactl start --name=scratch template://default
-limactl shell scratch -- bash -c \
-    'cd /Users/.../bouncer && make e2e'
-```
-
-The suite has no special VM hooks; whatever can run `go test
--tags=e2e ./e2e/...` is enough.
+The suite has no special VM hooks; anywhere that can run
+`go test -tags=e2e ./e2e/...` is enough.
 
 ## Adding a test
 

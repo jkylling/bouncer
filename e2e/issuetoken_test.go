@@ -36,7 +36,7 @@ func TestIssueTokenAccessOnlyDevStub(t *testing.T) {
 // — we're checking the secret-source plumbing, not the JWT contents.
 func TestIssueTokenSecretFromEnv(t *testing.T) {
 	hex64 := strings.Repeat("aa", 32)
-	res := runEnv(t, map[string]string{"ISSUE_TOKEN_SECRET_HEX": hex64},
+	res := runEnv(t, map[string]string{"BOUNCER_SECRET_HEX": hex64},
 		"issue-token", "--subject", "x", "--access-token", "y")
 	if res.Err != nil {
 		t.Fatalf("issue-token: %v\nstderr: %s", res.Err, res.Stderr)
@@ -167,13 +167,13 @@ func TestIssueTokenRejectsRelativeProxyURL(t *testing.T) {
 
 // TestIssueTokenSecretFromCwd pins the cwd ./secret.hex auto-load:
 // invoking issue-token from inside an initialized data dir succeeds
-// without --secret-hex / ISSUE_TOKEN_SECRET_HEX. Lets an operator
+// without --secret-hex / BOUNCER_SECRET_HEX. Lets an operator
 // drop into their data dir and run a bare `bouncer issue-token
 // --subject ... --access-token ...`.
 func TestIssueTokenSecretFromCwd(t *testing.T) {
 	dir := mustInit(t, initOpts{})
 	res := runEnvDir(t,
-		map[string]string{"ISSUE_TOKEN_SECRET_HEX": ""},
+		map[string]string{"BOUNCER_SECRET_HEX": ""},
 		dir,
 		"issue-token", "--subject", "me", "--access-token", "x", "--ttl", "5m",
 	)

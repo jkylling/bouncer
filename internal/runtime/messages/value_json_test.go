@@ -66,7 +66,7 @@ func TestValueMarshalJSONRecurses(t *testing.T) {
 	parent, err := r.NewFullValue("x.parent", map[string]ref.Val{"id": types.String("p1")})
 	require.NoError(t, err)
 	parent.SetCompleter(func() error {
-		parent.SetField("name", types.String("docs"))
+		parent.SetField("name", types.String("google.docs"))
 		return nil
 	})
 	parent.Get(types.String("name"))
@@ -89,7 +89,7 @@ func TestValueMarshalJSONRecurses(t *testing.T) {
 	    "parent": {
 	      "type":    "x.parent",
 	      "inputs":  {"id": "p1"},
-	      "outputs": {"name": "docs"}
+	      "outputs": {"name": "google.docs"}
 	    }
 	  }
 	}`, string(got))

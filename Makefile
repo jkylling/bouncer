@@ -27,17 +27,13 @@ PKG     := github.com/jkylling/bouncer/internal/buildinfo
 LDFLAGS := -s -w -X $(PKG).Version=$(VERSION) -X $(PKG).Commit=$(COMMIT)
 GOFLAGS := -trimpath -ldflags '$(LDFLAGS)'
 
-.PHONY: all build test e2e test-e2e test-e2e-list e2e-vms-up e2e-vms-down fmt fmt-check vet staticcheck ci release clean help
+.PHONY: all build test e2e ui fmt fmt-check vet staticcheck ci release clean help
 
 help:
 	@echo 'Targets:'
 	@echo '  build      — go build all CLIs into ./bin (host platform)'
 	@echo '  test       — go test ./... (excludes the e2e suite)'
 	@echo '  e2e        — go test -tags=e2e ./e2e/... on the host'
-	@echo '  test-e2e   — fan `make e2e` out across configured VMs (lima + tart)'
-	@echo '                stops the lima VMs after success; pass KEEP_VMS=1 to keep them'
-	@echo '  e2e-vms-up — provision/start every lima VM listed in E2E_LIMA_VMS'
-	@echo '  e2e-vms-down — stop every lima VM listed in E2E_LIMA_VMS'
 	@echo '  fmt        — gofmt -w .'
 	@echo '  fmt-check  — fail if anything in the tree needs gofmt'
 	@echo '  vet        — go vet ./...'
@@ -50,10 +46,6 @@ help:
 	@echo '  VERSION         (default: $(VERSION))'
 	@echo '  COMMIT          (default: $(COMMIT))'
 	@echo '  TARGETS         (default: $(TARGETS))'
-	@echo '  E2E_LIMA_VMS    (default: $(E2E_LIMA_VMS))'
-	@echo '  E2E_TART_VMS    (default: $(E2E_TART_VMS))'
-	@echo '  LIMA_WORK_DIR   (default: $(LIMA_WORK_DIR))'
-	@echo '  TART_WORK_DIR   (default: $(TART_WORK_DIR))'
 
 all: build
 
@@ -75,173 +67,29 @@ test:
 e2e:
 	go test -tags=e2e -timeout 5m ./e2e/...
 
-# test-e2e: multi-arch fan-out. Drives `make e2e` inside each named
-# VM. `e2e` itself only ever runs on the host that invokes it, so a
-# single-host go-test run can't actually exercise a foreign arch's
-# binary — that has to happen inside a VM. This target is the
-# fan-out, on top of `make e2e` which is the unit of work.
-#
-# Assumed setup:
-#   - Each lima VM listed in E2E_LIMA_VMS exists (or `e2e-vms-up`
-#     will provision it from template://default — see below) and
-#     each tart VM in E2E_TART_VMS already exists.
-#   - The worktree is mounted inside the VM at LIMA_WORK_DIR /
-#     TART_WORK_DIR (defaults match the conventional mount points
-#     for each tool — override per-invocation if your launcher uses
-#     a different layout).
-#   - `go` (1.25+) and `make` are on PATH inside each guest.
-#
-# Lima auto-bind-mounts $HOME at the same path inside Linux guests,
-# so LIMA_WORK_DIR defaulting to $(CURDIR) Just Works as long as
-# the worktree lives under $HOME on the host. (Lima can't host
-# Windows guests on macOS — Windows coverage has to go through
-# tart or a separate runner.)
-#
-# Tart shares dirs explicitly: launch with
-#   tart run --dir=src:<host-repo-root> <vm-name>
-# and the directory surfaces under /Volumes/My Shared Files/src on
-# the guest — TART_WORK_DIR points there.
-#
-# Override the matrix to match what's actually configured:
-#   make test-e2e E2E_LIMA_VMS='linux-arm64' E2E_TART_VMS=
-#
-# Pass `-j` to fan VMs out concurrently — each `limactl shell` /
-# `tart ssh` is a separate client so they don't contend.
-E2E_LIMA_VMS  ?= linux-amd64 linux-arm64 alpine-arm64
-E2E_TART_VMS  ?= macos-arm64
-LIMA_WORK_DIR ?= $(CURDIR)
-TART_WORK_DIR ?= /Volumes/My Shared Files/src
+# ui drives a real browser via playwright-go against a real `bouncer
+# serve`. Behind a separate build tag so a contributor without
+# Playwright's Chromium bundle isn't blocked. One-time install:
+#   go run ./uitest/cmd/install-playwright
+ui:
+	go test -tags=ui -timeout 5m ./uitest/...
 
-LIMA_TARGETS := $(addprefix test-e2e-lima-,$(E2E_LIMA_VMS))
-TART_TARGETS := $(addprefix test-e2e-tart-,$(E2E_TART_VMS))
-
-# Per-VM targets are defined via pattern rules below (test-e2e-lima-%
-# / test-e2e-tart-%). They aren't listed in .PHONY because doing so
-# would register each name with no recipe, masking the pattern
-# match — GNU make then reports "Nothing to be done" instead of
-# running the rule. The pattern rule itself has no file output, so
-# make rebuilds it on every invocation regardless.
-
-# test-e2e tears the lima VMs back down on success — they idle at
-# ~2GB RAM each and most flows don't want them sitting around. On
-# a *failed* run we leave them up so you can `limactl shell …` to
-# poke at the broken state. Pass KEEP_VMS=1 to opt out of the
-# teardown even on success (useful for tight iteration loops where
-# the boot cost matters more than the resource drain).
-KEEP_VMS ?=
-
-test-e2e: e2e-vms-up $(LIMA_TARGETS) $(TART_TARGETS)
-	@echo
-	@echo "test-e2e: every configured VM passed."
-	@if [ -n "$(KEEP_VMS)" ]; then \
-	  echo "test-e2e: KEEP_VMS=$(KEEP_VMS) — leaving lima VMs running."; \
-	else \
-	  $(MAKE) --no-print-directory e2e-vms-down; \
-	fi
-
-test-e2e-list:
-	@echo "lima:"
-	@for vm in $(E2E_LIMA_VMS); do echo "  $$vm"; done
-	@echo "tart:"
-	@for vm in $(E2E_TART_VMS); do echo "  $$vm"; done
-
-# e2e-vms-up: idempotent provision/start of every lima VM in
-# E2E_LIMA_VMS. We auto-create from one of the wrapper YAMLs in
-# e2e/lima/ based on a naming convention, so a fresh checkout
-# can run `make test-e2e` without first hand-rolling each
-# instance:
-#
-#   linux-{amd64,arm64}   → e2e/lima/default.yaml (Ubuntu LTS, glibc)
-#   alpine-{amd64,arm64}  → e2e/lima/alpine.yaml  (musl)
-#
-# Each YAML wraps the corresponding lima `template://` and adds
-# a `provision:` block that installs `make` + Go at the version
-# pinned in go.mod (the bare templates ship with neither). First
-# boot pays that cost once; subsequent `e2e-vms-up` runs just
-# `limactl start` an existing instance.
-#
-# alpine is in the default matrix as a regression check that the
-# binary stays CGO-free / glibc-free — pure-Go sqlite means it
-# *should* run on musl, and we want to notice the day that stops
-# being true. Names we don't recognise (e.g. windows-amd64 — lima
-# can't host a Windows guest on a macOS host) are flagged with a
-# pointer at what to do instead, rather than silently skipped.
-#
-# Cross-arch guests run under emulation and are *slow*; on Apple
-# Silicon, expect linux-amd64 e2e to take many minutes. Prune the
-# matrix if you don't need that coverage locally.
-#
-# Tart isn't covered here: tart pulls images from registries
-# (cirruslabs/macos-sequoia-base, etc.) and the right tag depends
-# on what you're testing — there's no neutral default to pick.
-LIMA_UP_TARGETS := $(addprefix e2e-vms-up-lima-,$(E2E_LIMA_VMS))
-
-e2e-vms-up: $(LIMA_UP_TARGETS)
-
-e2e-vms-up-lima-%:
-	@command -v limactl >/dev/null || { echo "e2e-vms-up: limactl not on PATH (https://lima-vm.io)"; exit 1; }
-	@if limactl list -q | grep -qx '$*'; then \
-	  status=$$(limactl list --format '{{.Status}}' '$*'); \
-	  if [ "$$status" != "Running" ]; then \
-	    echo "==> [lima/$*] start (was $$status)"; \
-	    limactl start --tty=false '$*'; \
-	  fi; \
-	else \
-	  case '$*' in \
-	    linux-amd64)   tmpl=$(CURDIR)/e2e/lima/default.yaml; arch=x86_64;; \
-	    linux-arm64)   tmpl=$(CURDIR)/e2e/lima/default.yaml; arch=aarch64;; \
-	    alpine-amd64)  tmpl=$(CURDIR)/e2e/lima/alpine.yaml;  arch=x86_64;; \
-	    alpine-arm64)  tmpl=$(CURDIR)/e2e/lima/alpine.yaml;  arch=aarch64;; \
-	    *) echo "e2e-vms-up: no auto-provision recipe for lima vm '$*' — create it manually (limactl create --name=$* ...) or drop it from E2E_LIMA_VMS"; exit 1;; \
-	  esac; \
-	  echo "==> [lima/$*] create from $$tmpl (arch=$$arch)"; \
-	  limactl start --tty=false --name='$*' --arch=$$arch $$tmpl; \
-	fi
-
-# e2e-vms-down: counterpart to e2e-vms-up — `limactl stop` every
-# lima VM in E2E_LIMA_VMS that's currently running. We stop, not
-# delete: the disk image stays on disk so the next `e2e-vms-up`
-# is a fast restart rather than a full re-provision (which would
-# re-run the Go bootstrap in alpine.yaml — minutes). Skips VMs
-# that don't exist or aren't running, so it's safe to invoke when
-# the matrix has shifted.
-LIMA_DOWN_TARGETS := $(addprefix e2e-vms-down-lima-,$(E2E_LIMA_VMS))
-
-e2e-vms-down: $(LIMA_DOWN_TARGETS)
-
-e2e-vms-down-lima-%:
-	@command -v limactl >/dev/null || { echo "e2e-vms-down: limactl not on PATH"; exit 0; }
-	@if limactl list -q | grep -qx '$*'; then \
-	  status=$$(limactl list --format '{{.Status}}' '$*'); \
-	  if [ "$$status" = "Running" ]; then \
-	    echo "==> [lima/$*] stop"; \
-	    limactl stop '$*'; \
-	  fi; \
-	fi
-
-# Per-VM targets share a tiny pre-flight: confirm the runner is
-# installed and the named VM exists before we shell in. The two
-# guards turn a confusing "command not found" / "instance not found"
-# trace into one clear line, which matters when the matrix is six
-# VMs deep and one is mis-spelt.
-test-e2e-lima-%:
-	@command -v limactl >/dev/null || { echo "test-e2e: limactl not on PATH (https://lima-vm.io)"; exit 1; }
-	@limactl list -q | grep -qx '$*' || { echo "test-e2e: lima vm '$*' not found (limactl list)"; exit 1; }
-	@echo "==> [lima/$*] make e2e"
-	@limactl shell $* -- bash -lc 'cd "$(LIMA_WORK_DIR)" && make e2e'
-
-test-e2e-tart-%:
-	@command -v tart >/dev/null || { echo "test-e2e: tart not on PATH (https://tart.run)"; exit 1; }
-	@tart get $* >/dev/null 2>&1 || { echo "test-e2e: tart vm '$*' not found (tart list)"; exit 1; }
-	@echo "==> [tart/$*] make e2e"
-	@tart ssh $* -- 'cd "$(TART_WORK_DIR)" && make e2e'
+# go_files lists the .go files under this module's tree, excluding
+# .claude/ (agent-managed worktrees we don't own), .git/, and the
+# build outputs. Used by fmt / fmt-check.
+go_files = $(shell find . \
+	-path ./.claude -prune -o \
+	-path ./.git -prune -o \
+	-path ./bin -prune -o \
+	-path ./dist -prune -o \
+	-name '*.go' -print)
 
 fmt:
-	gofmt -w .
+	@gofmt -w $(go_files)
 
 # Fail (without mutating the tree) if anything needs gofmt. Used by CI.
 fmt-check:
-	@out=$$(gofmt -l .); \
+	@out=$$(gofmt -l $(go_files)); \
 	if [ -n "$$out" ]; then \
 	  echo "gofmt needed for:" >&2; \
 	  echo "$$out" >&2; \
@@ -258,9 +106,7 @@ staticcheck:
 	go tool staticcheck ./...
 
 # CI aggregator. Mirrors what .github/workflows/ci.yml runs so a
-# green local `make ci` is a green workflow. test-e2e (multi-VM
-# fan-out) is intentionally left out — that's the operator's
-# release-side check, not the per-PR gate.
+# green local `make ci` is a green workflow.
 ci: fmt-check vet staticcheck test e2e
 
 # release fans out over CMDS × TARGETS. Each call to `go build`

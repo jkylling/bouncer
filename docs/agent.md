@@ -10,6 +10,23 @@ You — the agent or operator-script — present a Bearer JWT issued by
 this proxy. The proxy holds the upstream credential; you never see
 it.
 
+## Recommended onboarding
+
+If you can speak the Model Context Protocol, the easiest way to wire
+up bouncer is to invoke the `/bouncer:setup` MCP prompt. It installs
+a small `bouncer-wrap` wrapper script + the proxy's CA cert and
+writes a project-level instruction fragment so future sessions know
+to prefix upstream calls with `bouncer-wrap`. After that, per-service
+prompts (`/google-token`, `/slack-token`, …) registered from the
+installed API bundles stage local credentials for the matching CLIs.
+
+The `/bouncer:setup` prompt expects you to be reachable at the same
+URL the MCP server lives at — `http://localhost:8080` for the
+default self-hosted deployment. See the `## bouncer` section the
+prompt writes into the project's instruction file for the day-to-day
+usage contract (when to call `bouncer-wrap`, how to react to
+`credentials_not_staged` / `service_not_connected` 401 bodies).
+
 ## Authentication
 
 Every data-plane request must carry an access JWT in the
