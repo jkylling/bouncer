@@ -1,21 +1,18 @@
 # bouncer
 
-Bouncer is a policy-enforcing HTTP proxy for safely exposing HTTP APIs to AI agents.
+Bouncer is an access control proxy for AI agents using APIs. It is a drop-in proxy that lets you grant agents narrow, policy controlled access to APIs without modifying the API or the agent. For example, you can let an agent only read or send emails with a specific label to a specific sender, or call a payments API only for amounts under $100, without modifying Gmail or Stripe. Bouncer constrains AI agents so they can be used more freely:
+- The policy language is [Common Expression Language (CEL)](https://cel.dev/) reviewable by humans and easy to one-shot for AI agents. The policy language doubles as an API modeling language, and allows for looking up additional metadata when evaluating access control. See [here for an example API model](https://github.com/jkylling/bouncer-gws/blob/main/apis/gmail.yaml) and [here for an example policy](https://github.com/jkylling/bouncer-gws/blob/main/policies/agent-owned-mail.yaml). Both policy and API models are declarative and fail closed on modelling errors or evaluation errors. You can vibe configure and trust that you don't give excessive access.
+- Instead of giving your access token or API key to your AI-agent you give it a bouncer proxy token/key, which works transparently with most clients. This makes it impossible to bypass the proxy, and your policies limit the blast radius of what the agent can do.
 
-Existing APIs grant access at the token level — too coarse for an
-agent that should read your inbox but not delete it, or post to one
-channel but not the whole workspace. Bouncer sits in front of the
-upstream and gates every request with narrow CEL policies. Agents
-call the proxy with a bouncer-issued JWT carrying an encrypted
-upstream credential; the credential never leaves the proxy and is
-swapped in only on a Permit decision.
+## Motivation
+
+I've been wanting to give Claude Code access to my gmail inbox for a long time. I don't want the agent to be able to read and write all my email, that's only for me (and Google), but a subset is okay. So I don't grant access. I've pasted too many API keys into Claude Code while praying for my prompting to be strict enough. When I talk to friends, they complain about the same problems. In the tech news I read about Meta's director of AI Alignment who had [her inbox deleted by OpenClaw](https://x.com/summeryue0/status/2025774069124399363). Or how Vercel was hacked, starting with an [AI integration with access to an employee's Google Workspace account](https://vercel.com/kb/bulletin/vercel-april-2026-security-incident). People either YOLO it, or they don't give agents access. The elephant in the room is that existing access control is too coarse. This is never going to be fixed API by API, company by company. People are suffering so much pain because of this. Bouncer is a fix for this.
+
 
 ## Quickstart
 
 The recommended flow is MCP-driven: install bouncer, point your agent
-at the proxy's MCP server, then run two slash-commands. See
-`plans/bouncer_setup_mcp_tool.md` and
-`plans/bouncer_service_token_prompts.md` for the design rationale.
+at the proxy's MCP server, then run two slash-commands.
 
 ### From your agent (recommended)
 
