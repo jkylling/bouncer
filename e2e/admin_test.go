@@ -114,7 +114,9 @@ func TestAdminUIRedirectsAnonymous(t *testing.T) {
 }
 
 // TestAdminUIServesShellAuthed pins the authed branch: with a valid
-// admin cookie, /_admin returns 200 + the embedded HTML shell.
+// admin cookie, /_admin 303s to /_admin/agents (the default
+// dashboard entry point) and that target serves the embedded HTML
+// shell.
 func TestAdminUIServesShellAuthed(t *testing.T) {
 	f := newAdminFixture(t)
 	c := httpClient()
@@ -125,12 +127,27 @@ func TestAdminUIServesShellAuthed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /_admin: %v", err)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("GET /_admin: status=%d, want 200", resp.StatusCode)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("GET /_admin: status=%d, want 303", resp.StatusCode)
 	}
-	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
-		t.Errorf("GET /_admin: Content-Type=%q, want text/html", ct)
+	loc := resp.Header.Get("Location")
+	if loc != "/_admin/agents" {
+		t.Fatalf("GET /_admin: Location=%q, want /_admin/agents", loc)
+	}
+
+	req2, _ := http.NewRequest(http.MethodGet, f.srv.BaseURL+loc, nil)
+	req2.AddCookie(f.cookie)
+	resp2, err := c.Do(req2)
+	if err != nil {
+		t.Fatalf("GET %s: %v", loc, err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Errorf("GET %s: status=%d, want 200", loc, resp2.StatusCode)
+	}
+	if ct := resp2.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+		t.Errorf("GET %s: Content-Type=%q, want text/html", loc, ct)
 	}
 }
 
