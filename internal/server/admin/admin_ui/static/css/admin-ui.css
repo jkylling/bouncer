@@ -2451,6 +2451,38 @@ details.advanced summary {
 /* Scoped mode hides the service row; collapse the grid to one column
    so the variant select spans the full width. */
 [data-tokens-form] .tf-service-row[hidden] ~ .tf-variant-row { grid-column: 1 / -1; }
+/* JSON-load dropzone: dashed-border affordance under the form fields. */
+[data-tokens-form] .tf-file { display: none; }
+[data-tokens-form] .tf-dropzone {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 14px;
+  margin: 0 0 16px;
+  border: 1.5px dashed var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
+  transition: border-color 0.1s, background 0.1s;
+}
+[data-tokens-form] .tf-dropzone.dragging {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+[data-tokens-form] .tf-load-link {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--primary);
+  cursor: pointer;
+  text-decoration: underline;
+  min-height: 0;
+}
+
 /* Setup snippet: same chrome as the issued-JWT block. */
 [data-tokens-form] .tf-setup {
   background: var(--surface-2);

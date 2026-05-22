@@ -44,6 +44,14 @@ for refresh variants).
           <p class="form-help">Free-form identifier. Shows up on traffic events for the requests this JWT makes.</p>
         </div>
         <div class="tf-fields"></div>
+        <div class="tf-dropzone" tabindex="0">
+          <span class="tf-dropzone-text">
+            Drop a JSON file here, or
+            <button type="button" class="tf-load-link">choose one</button>,
+            to autofill the fields above.
+          </span>
+          <input type="file" class="tf-file" accept="application/json,.json" hidden>
+        </div>
         <div class="form-actions">
           <button type="submit" class="btn btn-primary tf-submit">Issue JWT</button>
           <span class="tf-status muted"></span>
@@ -288,6 +296,73 @@ function setupTokensForm(host, opts) {
   }
   bindCopy(".tf-copy", outputEl);
   bindCopy(".tf-setup-copy", setupEl);
+
+  // File-load: drag a JSON onto the dropzone, or click "choose one".
+  // We match keys against the current variant's field names and fill
+  // each match. Unknown keys are ignored (so a gcloud-shaped
+  // credentials.json works for the refresh variant without preprocessing).
+  const dropzone = $(".tf-dropzone");
+  const fileInput = $(".tf-file");
+  const loadLink = $(".tf-load-link");
+
+  loadLink.addEventListener("click", () => fileInput.click());
+  fileInput.addEventListener("change", () => {
+    if (fileInput.files.length > 0) loadFile(fileInput.files[0]);
+    fileInput.value = "";
+  });
+  ["dragenter", "dragover"].forEach(evt => {
+    dropzone.addEventListener(evt, (e) => {
+      e.preventDefault();
+      dropzone.classList.add("dragging");
+    });
+  });
+  ["dragleave", "drop"].forEach(evt => {
+    dropzone.addEventListener(evt, (e) => {
+      e.preventDefault();
+      dropzone.classList.remove("dragging");
+    });
+  });
+  dropzone.addEventListener("drop", (e) => {
+    if (e.dataTransfer.files.length > 0) loadFile(e.dataTransfer.files[0]);
+  });
+
+  async function loadFile(file) {
+    status.textContent = "";
+    status.className = "tf-status muted";
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      const filled = applyFields(parsed);
+      if (filled === 0) {
+        status.textContent = `No matching fields in ${file.name}.`;
+        status.className = "tf-status err";
+        return;
+      }
+      status.textContent = `Loaded ${filled} field${filled === 1 ? "" : "s"} from ${file.name}.`;
+      status.className = "tf-status ok";
+    } catch (err) {
+      status.textContent = `Could not read ${file.name}: ${err.message}`;
+      status.className = "tf-status err";
+    }
+  }
+
+  // applyFields sets each <input>/<textarea> whose name matches a
+  // top-level key on the parsed JSON. Returns the number of fields
+  // it filled.
+  function applyFields(parsed) {
+    if (!parsed || typeof parsed !== "object") return 0;
+    let n = 0;
+    for (const input of form.querySelectorAll("input,textarea")) {
+      if (!input.name) continue;
+      if (Object.prototype.hasOwnProperty.call(parsed, input.name)) {
+        const v = parsed[input.name];
+        if (v == null) continue;
+        input.value = typeof v === "string" ? v : JSON.stringify(v);
+        n++;
+      }
+    }
+    return n;
+  }
 
   loadServices();
 }
