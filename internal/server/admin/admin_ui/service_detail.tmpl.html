@@ -71,26 +71,31 @@
 {{- end -}}
 
 <div class="svc-tabs" role="tablist">
-  <button class="svc-tab active" data-tab="overview">APIs</button>
+  <button class="svc-tab active" data-tab="tokens">Tokens</button>
+  <button class="svc-tab" data-tab="overview">APIs</button>
   <button class="svc-tab" data-tab="policies">Policies</button>
   <button class="svc-tab" data-tab="traffic">Traffic</button>
   <button class="svc-tab" data-tab="docs">Docs</button>
 </div>
 
-<div class="svc-pane active" data-pane="overview" id="overview-pane">
+<div class="svc-pane active" data-pane="tokens" id="tokens-pane">
+  {{ template "tokens_form_body" . }}
+</div>
+
+<div class="svc-pane" data-pane="overview" id="overview-pane">
   {{- with .Extra -}}
   {{- if .APIs -}}
-  <p class="muted">APIs shipped by this bundle.</p>
-  <ul class="svc-api-list">
-    {{ range .APIs }}<li>{{ . }}</li>{{ end }}
-  </ul>
+  <div class="card">
+    <div class="card-head"><h3>APIs shipped by this bundle</h3></div>
+    <div class="card-body">
+      <ul class="svc-api-list">
+        {{ range .APIs }}<li>{{ . }}</li>{{ end }}
+      </ul>
+    </div>
+  </div>
   {{- else -}}
   <p class="muted">This bundle ships no APIs.</p>
   {{- end -}}
-  <p style="margin-top: 24px;">
-    Issue a bouncer JWT for this service on the
-    <a href="/_admin/tokens">Tokens</a> page.
-  </p>
   {{- end -}}
 </div>
 
@@ -109,6 +114,7 @@
 {{- define "page-script" -}}
 {{ template "policies_list_script" . }}
 {{ template "traffic_list_script" . }}
+{{ template "tokens_form_script" . }}
 <script>
 function esc(s) {
   return String(s == null ? "" : s).replace(/[&<>"']/g, c => ({
@@ -235,6 +241,13 @@ function renderMarkdown(src) {
   }).join("\n");
   src = src.replace(/ CODEBLOCK(\d+) /g, (_, idx) => codeBlocks[+idx]);
   return src;
+}
+
+// Tokens tab: hand the partial a slug-scoped opts so it skips the
+// service select and locks the form to this service.
+const tokensHost = document.querySelector("#tokens-pane [data-tokens-form]");
+if (tokensHost) {
+  setupTokensForm(tokensHost, { slug: service.slug });
 }
 
 renderPolicies();

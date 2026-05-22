@@ -1,0 +1,247 @@
+{{- /*
+tokens_form.tmpl.html — shared partial for the bouncer-JWT-issue
+form. Two render sites:
+
+  - /_admin/tokens (global): host element is given no scope; the form
+    starts with a service select, then variant + fields.
+  - /_admin/services/{slug} Tokens tab: host element has
+    `data-service-slug="<slug>"` set; the service select is omitted
+    and the form is scoped to that single service.
+
+Markup is identical across both sites — only the bootstrap JS differs.
+Setup:
+
+    setupTokensForm(host, { slug: "google" })   // scoped
+    setupTokensForm(host)                       // global
+
+Reads /_api/services, POSTs to /_api/tokens/issue (or .../issue/refresh
+for refresh variants).
+*/ -}}
+
+{{- define "tokens_form_body" -}}
+<div data-tokens-form>
+  <div class="card">
+    <div class="card-head">
+      <h3>Issue token</h3>
+    </div>
+    <div class="card-body">
+      <div class="form-row tf-subject-row">
+        <label>Subject <span class="muted">(JWT <code>sub</code> claim)</span></label>
+        <input type="text" class="tf-subject" value="agent" autocomplete="off">
+        <p class="form-help">Free-form identifier. Shows up on traffic events for the requests this JWT makes.</p>
+      </div>
+
+      <div class="form-row tf-service-row">
+        <label>Service</label>
+        <select class="tf-service"><option>Loading…</option></select>
+      </div>
+
+      <div class="form-row tf-variant-row" hidden>
+        <label>Variant</label>
+        <select class="tf-variant"></select>
+        <p class="form-help tf-variant-desc"></p>
+      </div>
+
+      <form class="tf-form" hidden>
+        <div class="tf-fields"></div>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary tf-submit">Issue JWT</button>
+          <span class="tf-status muted"></span>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="card tf-output-card" hidden>
+    <div class="card-head">
+      <h3>Issued JWT</h3>
+      <button type="button" class="btn btn-secondary btn-sm tf-copy">Copy</button>
+    </div>
+    <div class="card-body">
+      <pre class="tf-output"></pre>
+      <p class="form-help tf-expiry"></p>
+    </div>
+  </div>
+</div>
+{{- end -}}
+
+{{- define "tokens_form_script" -}}
+<script>
+function setupTokensForm(host, opts) {
+  opts = opts || {};
+  let services = [];
+  let currentService = null;
+  let currentVariant = null;
+
+  const $ = (cls) => host.querySelector(cls);
+  const subjectEl = $(".tf-subject");
+  const serviceRow = $(".tf-service-row");
+  const serviceSel = $(".tf-service");
+  const variantRow = $(".tf-variant-row");
+  const variantSel = $(".tf-variant");
+  const variantDesc = $(".tf-variant-desc");
+  const form = $(".tf-form");
+  const fieldsHost = $(".tf-fields");
+  const status = $(".tf-status");
+  const outputCard = $(".tf-output-card");
+  const outputEl = $(".tf-output");
+  const expiryEl = $(".tf-expiry");
+
+  function escHtml(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, c => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    })[c]);
+  }
+
+  async function loadServices() {
+    try {
+      const resp = await fetch("/_api/services");
+      if (!resp.ok) throw new Error("HTTP " + resp.status);
+      const data = await resp.json();
+      services = (data.services || []).filter(s => (s.token_variants || []).length > 0);
+    } catch (err) {
+      serviceSel.innerHTML = `<option>Failed to load: ${escHtml(err.message)}</option>`;
+      return;
+    }
+    if (opts.slug) {
+      currentService = services.find(s => s.slug === opts.slug);
+      serviceRow.hidden = true;
+      if (!currentService) {
+        status.textContent = `Service ${opts.slug} has no token variants.`;
+        status.className = "tf-status err";
+        return;
+      }
+      onServiceChange();
+      return;
+    }
+    if (services.length === 0) {
+      serviceSel.innerHTML = `<option>No services with token variants installed</option>`;
+      return;
+    }
+    serviceSel.innerHTML = services.map(s =>
+      `<option value="${escHtml(s.slug)}">${escHtml(s.title)}</option>`
+    ).join("");
+    serviceSel.addEventListener("change", () => {
+      currentService = services.find(s => s.slug === serviceSel.value);
+      onServiceChange();
+    });
+    currentService = services[0];
+    onServiceChange();
+  }
+
+  function onServiceChange() {
+    if (!currentService) {
+      variantRow.hidden = true;
+      form.hidden = true;
+      return;
+    }
+    const variants = currentService.token_variants || [];
+    if (variants.length === 0) {
+      variantRow.hidden = true;
+      form.hidden = true;
+      return;
+    }
+    variantRow.hidden = false;
+    variantSel.innerHTML = variants.map(v =>
+      `<option value="${escHtml(v.id)}">${escHtml(v.title)}</option>`
+    ).join("");
+    variantSel.onchange = onVariantChange;
+    onVariantChange();
+  }
+
+  function onVariantChange() {
+    currentVariant = (currentService.token_variants || []).find(v => v.id === variantSel.value);
+    variantDesc.textContent = currentVariant.description || "";
+    renderFields(currentVariant);
+    form.hidden = false;
+    outputCard.hidden = true;
+    status.textContent = "";
+    status.className = "tf-status muted";
+  }
+
+  function renderFields(v) {
+    fieldsHost.innerHTML = (v.fields || []).map(f => {
+      const kind = f.kind || "text";
+      const req = f.required ? "required" : "";
+      const placeholder = f.placeholder ? ` placeholder="${escHtml(f.placeholder)}"` : "";
+      let control;
+      if (kind === "multiline") {
+        control = `<textarea name="${escHtml(f.name)}"${placeholder} ${req}></textarea>`;
+      } else {
+        const type = kind === "secret" ? "password" : "text";
+        control = `<input type="${type}" name="${escHtml(f.name)}"${placeholder} ${req} autocomplete="off">`;
+      }
+      return `
+        <div class="form-row">
+          <label>${escHtml(f.label || f.name)}${f.required ? ` <span class="muted">(required)</span>` : ""}</label>
+          ${control}
+          ${f.help ? `<p class="form-help">${escHtml(f.help)}</p>` : ""}
+        </div>
+      `;
+    }).join("");
+  }
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    status.textContent = "Issuing…";
+    status.className = "tf-status muted";
+    const subject = subjectEl.value.trim();
+    if (!subject) {
+      status.textContent = "Subject is required.";
+      status.className = "tf-status err";
+      return;
+    }
+    const fields = {};
+    for (const input of form.querySelectorAll("input,textarea")) {
+      if (input.name) fields[input.name] = input.value;
+    }
+    const path = currentVariant.refresh ? "/_api/tokens/issue/refresh" : "/_api/tokens/issue";
+    try {
+      const resp = await fetch(path, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          subject,
+          service: currentService.slug,
+          variant: currentVariant.id,
+          fields,
+        }),
+      });
+      const text = await resp.text();
+      let parsed = null;
+      try { parsed = JSON.parse(text); } catch (_) {}
+      if (!resp.ok) {
+        const detail = parsed && parsed.message ? parsed.message : text.trim();
+        status.textContent = `HTTP ${resp.status}: ${detail}`;
+        status.className = "tf-status err";
+        return;
+      }
+      status.textContent = "Issued.";
+      status.className = "tf-status ok";
+      outputEl.textContent = parsed.token;
+      if (parsed.expires_at) {
+        expiryEl.textContent = "Expires " + new Date(parsed.expires_at).toLocaleString();
+      } else {
+        expiryEl.textContent = "No expiry — this is a refresh JWT.";
+      }
+      outputCard.hidden = false;
+    } catch (err) {
+      status.textContent = "Network error: " + err.message;
+      status.className = "tf-status err";
+    }
+  });
+
+  $(".tf-copy").addEventListener("click", () => {
+    const out = outputEl.textContent;
+    navigator.clipboard.writeText(out).then(() => {
+      const btn = $(".tf-copy");
+      const original = btn.textContent;
+      btn.textContent = "Copied!";
+      setTimeout(() => { btn.textContent = original; }, 1500);
+    });
+  });
+
+  loadServices();
+}
+</script>
+{{- end -}}

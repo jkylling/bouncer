@@ -32,9 +32,9 @@ var liveShots = []struct {
 	name string
 	path string
 }{
-	{name: "agents", path: "/_admin/agents"},
 	{name: "services", path: "/_admin/services"},
 	{name: "service-detail", path: "/_admin/services/google"},
+	{name: "tokens", path: "/_admin/tokens"},
 	{name: "policies", path: "/_admin/policies"},
 	{name: "traffic", path: "/_admin/traffic"},
 	{name: "settings", path: "/_admin/settings"},

@@ -2590,3 +2590,53 @@ details.advanced summary {
   color: var(--text-muted);
   padding: 0.3rem 0;
 }
+
+/* Generic form-row pattern used by the tokens form (and any future
+   in-card form). Inputs are visually distinct against the white card
+   surface, help text sits under each row in muted color. */
+.form-row {
+  margin-bottom: 16px;
+}
+.form-row:last-child {
+  margin-bottom: 0;
+}
+.form-row > label {
+  display: block;
+  font-size: 13.5px;
+  font-weight: 500;
+  margin-bottom: 6px;
+  color: var(--text);
+}
+.form-row > label code {
+  font-size: 11.5px;
+  padding: 1px 5px;
+}
+.form-help {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  margin: 6px 0 0;
+  line-height: 1.5;
+}
+.form-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-top: 18px;
+}
+
+/* Tokens form — small per-component tweaks on top of .form-row. */
+[data-tokens-form] .tf-status.err { color: var(--danger); }
+[data-tokens-form] .tf-status.ok { color: var(--success); }
+[data-tokens-form] .tf-output {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  word-break: break-all;
+  white-space: pre-wrap;
+  margin: 0;
+  max-height: 18rem;
+  overflow-y: auto;
+}
