@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jkylling/bouncer/internal/auth"
-	"github.com/jkylling/bouncer/internal/cli/initcmd"
+	"github.com/jkylling/bouncer/internal/cli/datadir"
 	"github.com/jkylling/bouncer/internal/control/tokens"
 )
 
@@ -340,8 +340,8 @@ func mustKeys(t *testing.T, cfg *config) *auth.ServerKeys {
 func chdirInitialized(t *testing.T, body string) string {
 	t.Helper()
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, initcmd.SecretFile), []byte(body), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, initcmd.AdminPasswordFile), []byte("hash"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, datadir.SecretFile), []byte(body), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, datadir.AdminPasswordFile), []byte("hash"), 0o600))
 	prev, err := os.Getwd()
 	require.NoError(t, err)
 	require.NoError(t, os.Chdir(dir))
@@ -396,7 +396,7 @@ func TestLoadConfigSecretHexEnvBeatsCwd(t *testing.T) {
 func TestLoadConfigSecretHexCwdNotInitialized(t *testing.T) {
 	t.Setenv("BOUNCER_SECRET_HEX", "")
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, initcmd.SecretFile),
+	require.NoError(t, os.WriteFile(filepath.Join(dir, datadir.SecretFile),
 		[]byte(strings.Repeat("aa", 32)), 0o600))
 	prev, _ := os.Getwd()
 	require.NoError(t, os.Chdir(dir))

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jkylling/bouncer/internal/cli/datadir"
 	"github.com/jkylling/bouncer/internal/cli/initcmd"
 )
 
@@ -347,7 +348,7 @@ func TestLoadConfigInitDefaultsDataDirToCwd(t *testing.T) {
 	if cfg.DataDir != "." {
 		t.Errorf("DataDir = %q, want \".\" (cwd default under --init)", cfg.DataDir)
 	}
-	if !initcmd.IsInitialized(dir) {
+	if !datadir.IsInitialized(dir) {
 		t.Error("--init did not bootstrap cwd")
 	}
 }
@@ -370,10 +371,10 @@ func TestLoadConfigInitBootstrapsAndIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first init: %v", err)
 	}
-	if !initcmd.IsInitialized(dir) {
+	if !datadir.IsInitialized(dir) {
 		t.Fatal("first init did not bootstrap dir")
 	}
-	first, err := os.ReadFile(filepath.Join(dir, initcmd.SecretFile))
+	first, err := os.ReadFile(filepath.Join(dir, datadir.SecretFile))
 	if err != nil {
 		t.Fatalf("read secret after first init: %v", err)
 	}
@@ -384,7 +385,7 @@ func TestLoadConfigInitBootstrapsAndIsIdempotent(t *testing.T) {
 	if _, err := loadConfig(args); err != nil {
 		t.Fatalf("second init: %v", err)
 	}
-	second, err := os.ReadFile(filepath.Join(dir, initcmd.SecretFile))
+	second, err := os.ReadFile(filepath.Join(dir, datadir.SecretFile))
 	if err != nil {
 		t.Fatalf("read secret after second init: %v", err)
 	}

@@ -35,8 +35,8 @@ import (
 
 	"github.com/jkylling/bouncer/internal/auth"
 	"github.com/jkylling/bouncer/internal/cli/cliconfig"
+	"github.com/jkylling/bouncer/internal/cli/datadir"
 	"github.com/jkylling/bouncer/internal/control/tokens"
-	"github.com/jkylling/bouncer/internal/datadir"
 )
 
 // defaultGoogleTokenURL is the upstream OAuth2 token endpoint for

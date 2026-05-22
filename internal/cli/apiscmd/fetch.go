@@ -8,8 +8,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	"github.com/jkylling/bouncer/internal/cli/datadir"
 	"github.com/jkylling/bouncer/internal/control/bundles"
-	"github.com/jkylling/bouncer/internal/datadir"
 )
 
 const fetchLong = `Pack a GitHub-hosted bundle into a tarball without installing.

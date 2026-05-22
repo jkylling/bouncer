@@ -27,27 +27,10 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/term"
 
+	"github.com/jkylling/bouncer/internal/cli/datadir"
 	"github.com/jkylling/bouncer/internal/control/bundles"
-	"github.com/jkylling/bouncer/internal/datadir"
 	"github.com/jkylling/bouncer/internal/server/mitm"
 )
-
-// Layout constants and IsInitialized live in internal/datadir; this
-// package writes through those names. The aliases keep the existing
-// external references (initcmd.SecretFile etc.) working.
-const (
-	SecretFile        = datadir.SecretFile
-	AdminPasswordFile = datadir.AdminPasswordFile
-	StoreDir          = datadir.StoreDir
-	APIsDir           = datadir.APIsDir
-	PoliciesDir       = datadir.PoliciesDir
-	MITMCertFile      = datadir.MITMCertFile
-	MITMKeyFile       = datadir.MITMKeyFile
-	ReadmeFile        = datadir.ReadmeFile
-)
-
-// IsInitialized re-exports datadir.IsInitialized for back-compat.
-func IsInitialized(dir string) bool { return datadir.IsInitialized(dir) }
 
 const initLong = `Bootstrap a self-contained data directory.
 
@@ -105,7 +88,7 @@ func Run(dir string, opts Options) error {
 	if dir == "" {
 		dir = "."
 	}
-	skipBootstrap := opts.SkipIfInitialized && IsInitialized(dir)
+	skipBootstrap := opts.SkipIfInitialized && datadir.IsInitialized(dir)
 	w := io.Discard
 	if !opts.Quiet {
 		w = os.Stderr
@@ -120,7 +103,7 @@ func Run(dir string, opts Options) error {
 	if len(opts.WithApis) > 0 {
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
-		if err := bundles.InstallRefs(ctx, filepath.Join(dir, APIsDir), opts.WithApis, w); err != nil {
+		if err := bundles.InstallRefs(ctx, filepath.Join(dir, datadir.APIsDir), opts.WithApis, w); err != nil {
 			return err
 		}
 	}
@@ -150,29 +133,29 @@ func bootstrap(dir string, opts Options, w io.Writer) error {
 	if err := os.MkdirAll(abs, 0o755); err != nil {
 		return fmt.Errorf("mkdir %s: %w", abs, err)
 	}
-	if err := os.MkdirAll(filepath.Join(abs, APIsDir), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(abs, datadir.APIsDir), 0o755); err != nil {
 		return fmt.Errorf("mkdir apis: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Join(abs, PoliciesDir), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(abs, datadir.PoliciesDir), 0o755); err != nil {
 		return fmt.Errorf("mkdir policies: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Join(abs, StoreDir), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(abs, datadir.StoreDir), 0o755); err != nil {
 		return fmt.Errorf("mkdir store: %w", err)
 	}
 
-	if err := writeSecret(filepath.Join(abs, SecretFile)); err != nil {
+	if err := writeSecret(filepath.Join(abs, datadir.SecretFile)); err != nil {
 		return fmt.Errorf("secret: %w", err)
 	}
-	fmt.Fprintf(w, "  wrote %s\n", SecretFile)
+	fmt.Fprintf(w, "  wrote %s\n", datadir.SecretFile)
 
 	pw, err := resolvePassword(opts.AdminPassword)
 	if err != nil {
 		return fmt.Errorf("admin password: %w", err)
 	}
-	if err := writeBcrypt(filepath.Join(abs, AdminPasswordFile), pw); err != nil {
+	if err := writeBcrypt(filepath.Join(abs, datadir.AdminPasswordFile), pw); err != nil {
 		return fmt.Errorf("admin password hash: %w", err)
 	}
-	fmt.Fprintf(w, "  wrote %s\n", AdminPasswordFile)
+	fmt.Fprintf(w, "  wrote %s\n", datadir.AdminPasswordFile)
 
 	if opts.MITM {
 		cn := opts.MITMCommonName
@@ -182,10 +165,10 @@ func bootstrap(dir string, opts Options, w io.Writer) error {
 		if err := writeMITMCA(abs, cn); err != nil {
 			return fmt.Errorf("mitm CA: %w", err)
 		}
-		fmt.Fprintf(w, "  wrote %s + %s\n", MITMCertFile, MITMKeyFile)
+		fmt.Fprintf(w, "  wrote %s + %s\n", datadir.MITMCertFile, datadir.MITMKeyFile)
 	}
 
-	if err := os.WriteFile(filepath.Join(abs, ReadmeFile), []byte(readmeBody(abs, opts.MITM)), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(abs, datadir.ReadmeFile), []byte(readmeBody(abs, opts.MITM)), 0o644); err != nil {
 		return fmt.Errorf("readme: %w", err)
 	}
 	return nil
@@ -258,8 +241,8 @@ func runInit(args []string, o *initOpts) error {
 func existingLayoutFiles(dir string) []string {
 	var hits []string
 	for _, name := range []string{
-		SecretFile, AdminPasswordFile, MITMCertFile, MITMKeyFile,
-		filepath.Join(StoreDir, "store.db"),
+		datadir.SecretFile, datadir.AdminPasswordFile, datadir.MITMCertFile, datadir.MITMKeyFile,
+		filepath.Join(datadir.StoreDir, "store.db"),
 	} {
 		if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
 			hits = append(hits, name)
@@ -341,16 +324,16 @@ func writeMITMCA(dir, cn string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(dir, MITMCertFile), cert, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, datadir.MITMCertFile), cert, 0o644); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, MITMKeyFile), key, 0o600)
+	return os.WriteFile(filepath.Join(dir, datadir.MITMKeyFile), key, 0o600)
 }
 
 func readmeBody(dir string, mitm bool) string {
 	mitmLine := ""
 	if mitm {
-		mitmLine = fmt.Sprintf("- %s + %s : self-signed MITM CA. Install %s in your client's trust store and run serve with --mitm.\n", MITMCertFile, MITMKeyFile, MITMCertFile)
+		mitmLine = fmt.Sprintf("- %s + %s : self-signed MITM CA. Install %s in your client's trust store and run serve with --mitm.\n", datadir.MITMCertFile, datadir.MITMKeyFile, datadir.MITMCertFile)
 	}
 	return fmt.Sprintf(`# bouncer data dir
 
@@ -377,8 +360,8 @@ Start the proxy:
 The serve subcommand reads each file above in place; you can override any
 individual flag (e.g. --addr :8443) without unsetting --data-dir.
 `,
-		SecretFile, AdminPasswordFile, StoreDir,
-		APIsDir, PoliciesDir, mitmLine, dir,
+		datadir.SecretFile, datadir.AdminPasswordFile, datadir.StoreDir,
+		datadir.APIsDir, datadir.PoliciesDir, mitmLine, dir,
 	)
 }
 

@@ -5,7 +5,7 @@ import (
 
 	"github.com/spf13/pflag"
 
-	"github.com/jkylling/bouncer/internal/datadir"
+	"github.com/jkylling/bouncer/internal/cli/datadir"
 )
 
 // errMissingAPIsDir is the message every install path uses when the

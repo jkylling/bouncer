@@ -14,9 +14,9 @@ import (
 
 	"github.com/jkylling/bouncer/internal/auth"
 	"github.com/jkylling/bouncer/internal/cli/cliconfig"
+	"github.com/jkylling/bouncer/internal/cli/datadir"
 	"github.com/jkylling/bouncer/internal/cli/initcmd"
 	"github.com/jkylling/bouncer/internal/control/bundles"
-	"github.com/jkylling/bouncer/internal/datadir"
 	"github.com/jkylling/bouncer/internal/observability"
 	"github.com/jkylling/bouncer/internal/server/admin"
 )

@@ -23,7 +23,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/jkylling/bouncer/internal/datadir"
+	"github.com/jkylling/bouncer/internal/cli/datadir"
 )
 
 // nowUTCSecond returns time.Now().UTC().Truncate(time.Second). Tests

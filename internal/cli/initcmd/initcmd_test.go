@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jkylling/bouncer/internal/cli/datadir"
 )
 
 // TestRunWritesLayout pins the on-disk shape that serve --data-dir
@@ -15,7 +17,7 @@ func TestRunWritesLayout(t *testing.T) {
 	if err := Run(dir, Options{AdminPassword: "pw"}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	for _, name := range []string{SecretFile, AdminPasswordFile} {
+	for _, name := range []string{datadir.SecretFile, datadir.AdminPasswordFile} {
 		info, err := os.Stat(filepath.Join(dir, name))
 		if err != nil {
 			t.Fatalf("%s missing: %v", name, err)
@@ -35,14 +37,14 @@ func TestRunSkipIfInitialized(t *testing.T) {
 	if err := Run(dir, Options{AdminPassword: "pw"}); err != nil {
 		t.Fatalf("first Run: %v", err)
 	}
-	first, err := os.ReadFile(filepath.Join(dir, SecretFile))
+	first, err := os.ReadFile(filepath.Join(dir, datadir.SecretFile))
 	if err != nil {
 		t.Fatalf("read secret: %v", err)
 	}
 	if err := Run(dir, Options{AdminPassword: "pw", SkipIfInitialized: true}); err != nil {
 		t.Fatalf("second Run (skip): %v", err)
 	}
-	second, err := os.ReadFile(filepath.Join(dir, SecretFile))
+	second, err := os.ReadFile(filepath.Join(dir, datadir.SecretFile))
 	if err != nil {
 		t.Fatalf("read secret after second Run: %v", err)
 	}
@@ -77,14 +79,14 @@ func TestRunForceRotatesSecret(t *testing.T) {
 	if err := Run(dir, Options{AdminPassword: "pw"}); err != nil {
 		t.Fatalf("first Run: %v", err)
 	}
-	first, err := os.ReadFile(filepath.Join(dir, SecretFile))
+	first, err := os.ReadFile(filepath.Join(dir, datadir.SecretFile))
 	if err != nil {
 		t.Fatalf("read secret: %v", err)
 	}
 	if err := Run(dir, Options{AdminPassword: "pw", Force: true}); err != nil {
 		t.Fatalf("force Run: %v", err)
 	}
-	second, err := os.ReadFile(filepath.Join(dir, SecretFile))
+	second, err := os.ReadFile(filepath.Join(dir, datadir.SecretFile))
 	if err != nil {
 		t.Fatalf("read secret after force: %v", err)
 	}
@@ -101,7 +103,7 @@ func TestRunMITMWritesCA(t *testing.T) {
 	if err := Run(dir, Options{AdminPassword: "pw", MITM: true}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	for _, name := range []string{MITMCertFile, MITMKeyFile} {
+	for _, name := range []string{datadir.MITMCertFile, datadir.MITMKeyFile} {
 		raw, err := os.ReadFile(filepath.Join(dir, name))
 		if err != nil {
 			t.Fatalf("%s missing: %v", name, err)
@@ -155,7 +157,7 @@ func TestRunWithApisSkipsAlreadyInstalled(t *testing.T) {
 	}
 	// Pre-seed an already-installed bundle so the second Run's
 	// InstallRefs sees it and skips.
-	bundleDir := filepath.Join(dir, APIsDir, "widgets")
+	bundleDir := filepath.Join(dir, datadir.APIsDir, "widgets")
 	if err := os.MkdirAll(bundleDir, 0o755); err != nil {
 		t.Fatalf("mkdir bundle: %v", err)
 	}
@@ -176,7 +178,7 @@ func TestRunWithApisSkipsAlreadyInstalled(t *testing.T) {
 	}
 	// The skip-bootstrap + skip-install path leaves the seeded
 	// bundle dir intact and doesn't create new sibling dirs.
-	entries, err := os.ReadDir(filepath.Join(dir, APIsDir))
+	entries, err := os.ReadDir(filepath.Join(dir, datadir.APIsDir))
 	if err != nil {
 		t.Fatalf("read apis: %v", err)
 	}
