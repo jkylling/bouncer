@@ -161,6 +161,16 @@ async function select(id) {
     return;
   }
   selected = r.body;
+  actionStatus.textContent = "";
+  await renderDetailFromSelected();
+}
+
+// renderDetailFromSelected repopulates the detail panel from the
+// current `selected` proposal. Used by select() (when the operator
+// clicks a row) and by the save handler (to echo the server-truth
+// values back into the form so the operator can see the round-trip
+// landed). Splitting it out keeps the two call sites in sync.
+async function renderDetailFromSelected() {
   detail.classList.remove("hidden");
   $("detail-id").textContent = selected.id;
   $("detail-meta").innerHTML = `
@@ -186,14 +196,10 @@ async function select(id) {
   buttons.approve.disabled = !editable;
   buttons.reject.disabled = !editable;
   buttons.delete.disabled = false;
-  actionStatus.textContent = "";
   highlightSelected();
   if ((selected.kind || "apply") === "apply") {
     await dryRun();
   } else {
-    // Delete proposals don't validate against the runtime — there's
-    // no policy body to compile. Save is enabled outright (only
-    // editable fields are api/name/rationale).
     if (editable) buttons.save.disabled = false;
   }
 }
@@ -286,11 +292,25 @@ buttons.save.addEventListener("click", async () => {
     actionStatus.className = "muted err";
     return;
   }
-  actionStatus.textContent = "Saved.";
-  actionStatus.className = "muted ok";
+  // Repopulate the form from the server response: the user types the
+  // edit, the server echoes the persisted value back, the form shows
+  // the round-trip explicitly. Without this the form still shows
+  // exactly what the user typed (matching the saved state but giving
+  // no visual confirmation), and people read that as "nothing
+  // happened."
   selected = r.body;
-  buttons.save.disabled = true;
+  await renderDetailFromSelected();
+  actionStatus.textContent = `Saved (updated_at ${fmtTime(selected.updated_at)}).`;
+  actionStatus.className = "muted ok";
   await refresh();
+  // After refresh re-renders the list, briefly flash the row so the
+  // operator sees which proposal moved. The animation runs once via
+  // CSS keyframes; removing the class lets it re-trigger next save.
+  const row = listBody.querySelector(`tr[data-id="${CSS.escape(selected.id)}"]`);
+  if (row) {
+    row.classList.add("saved-flash");
+    setTimeout(() => row.classList.remove("saved-flash"), 1300);
+  }
 });
 
 buttons.approve.addEventListener("click", async () => {

@@ -2512,3 +2512,15 @@ details.advanced summary {
   max-height: 18rem;
   overflow-y: auto;
 }
+
+/* Proposals: brief flash on the saved row so a PATCH that doesn't
+   change the visible columns (api/name/result/status) still has a
+   visible "something happened" tell. The animation runs once via the
+   .saved-flash class added/removed in proposals.tmpl.html. */
+@keyframes proposals-saved-flash {
+  0%   { background: var(--success-soft); }
+  100% { background: transparent; }
+}
+#list tr.saved-flash {
+  animation: proposals-saved-flash 1.2s ease-out;
+}
