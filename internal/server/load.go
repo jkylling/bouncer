@@ -10,10 +10,7 @@ import (
 
 	"github.com/jkylling/bouncer/internal/apiclient"
 	"github.com/jkylling/bouncer/internal/auth"
-	"github.com/jkylling/bouncer/internal/control/agents"
-	"github.com/jkylling/bouncer/internal/control/agentseen"
 	"github.com/jkylling/bouncer/internal/control/bundles"
-	"github.com/jkylling/bouncer/internal/control/connections"
 	"github.com/jkylling/bouncer/internal/control/policies"
 	"github.com/jkylling/bouncer/internal/control/services"
 	"github.com/jkylling/bouncer/internal/control/traffic"
@@ -73,28 +70,6 @@ type Config struct {
 	// bytes. Empty leaves the endpoint mounted but 404'ing — fine
 	// for non-MITM deployments.
 	MITMCAPath string
-
-	// ConnectionStore persists wizard-pasted upstream credentials.
-	// Used by both /_api/connections/* (the wizard's CRUD surface)
-	// and the MCP `get_{service}_token` tools. nil leaves both routes
-	// unmounted and the MCP tools returning service_not_connected.
-	ConnectionStore *connections.Store
-
-	// ProvidersInfo is the frozen-at-boot map of per-provider
-	// connect-mode availability. Drives the wizard's two-tab panel.
-	// Empty / nil is fine; the wizard then only offers "Paste
-	// credentials." See connections.ProviderAvailability.
-	ProvidersInfo map[string]connections.ProviderInfo
-
-	// AgentStore tracks pending + approved agent registrations
-	// (/_api/agents/*). Optional — when nil the routes aren't mounted.
-	AgentStore *agents.Store
-
-	// Env is the frozen-at-boot env snapshot the services registry
-	// reads to decide which bundles' OAuth tabs to light up. Pass the
-	// same map the connections.ProviderAvailability call consumes;
-	// nil yields a registry where no service reports OAuthAvailable.
-	Env map[string]string
 
 	// InternalPolicies picks the embedded policy set that gates the
 	// control-plane HTTP surface (`/_admin` + `/_api`). Empty
@@ -219,16 +194,11 @@ func Load(cfg *Config, keys *auth.ServerKeys) (*Server, error) {
 		AdminPasswordHash: cfg.AdminPasswordHash,
 		MITMCAPath:        cfg.MITMCAPath,
 		BundleData: admin.BundleData{
-			Readmes:      bundles.Readmes(loaded),
-			APIBundle:    bundles.APIBundles(loaded),
-			TokenBundles: bundles.TokenBundles(loaded),
-			Services:     loadedServices,
+			Readmes:   bundles.Readmes(loaded),
+			APIBundle: bundles.APIBundles(loaded),
+			Services:  loadedServices,
 		},
-		ConnectionStore:  cfg.ConnectionStore,
-		ProvidersInfo:    cfg.ProvidersInfo,
-		AgentStore:       cfg.AgentStore,
-		SeenTracker:      agentseen.New(),
-		ServicesRegistry: services.New(loadedServices, cfg.Env, cfg.ConnectionStore),
+		ServicesRegistry: services.New(loadedServices),
 		InternalRuntime:  internalRT,
 	}), nil
 }

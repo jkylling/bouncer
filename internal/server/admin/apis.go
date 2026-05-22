@@ -74,10 +74,8 @@ type OutputDescriptor struct {
 }
 
 // BundleData carries the per-bundle metadata MountAPIs needs to
-// surface READMEs and per-API readme links, plus the token-staging
-// metadata the MCP layer needs to register per-service prompts and
-// tools. All fields may be empty for a deployment with no vendored
-// bundles.
+// surface READMEs and per-API readme links. All fields may be empty
+// for a deployment with no vendored bundles.
 type BundleData struct {
 	// Readmes maps a bundle's manifest name to its README bytes.
 	Readmes map[string][]byte
@@ -86,15 +84,8 @@ type BundleData struct {
 	// Locally-loaded APIs are absent.
 	APIBundle map[string]string
 
-	// TokenBundles is the per-bundle token-staging blocks the MCP
-	// prompts/tools layer reads. Empty for deployments where no
-	// bundle declares MCP staging metadata.
-	TokenBundles []*bundles.BundleToken
-
-	// Services is the per-bundle service block + OAuth + token
-	// variants + suggested policies the /_api/services surface and
-	// the new Service Detail UI read. Empty for deployments whose
-	// bundles don't declare a `service:` block.
+	// Services is the per-bundle service block + token variants the
+	// /_api/services and tokens surfaces read.
 	Services []bundles.LoadedService
 }
 

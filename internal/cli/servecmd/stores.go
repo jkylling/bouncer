@@ -3,10 +3,8 @@ package servecmd
 import (
 	"fmt"
 	"log/slog"
-	"path/filepath"
 	"strings"
 
-	"github.com/jkylling/bouncer/internal/control/connections"
 	"github.com/jkylling/bouncer/internal/control/policies"
 	"github.com/jkylling/bouncer/internal/control/store"
 	"github.com/jkylling/bouncer/internal/control/traffic"
@@ -159,19 +157,4 @@ func buildPolicyStore(cfg *config, cache *backendCache) (policies.Store, error) 
 	default:
 		return nil, fmt.Errorf("unhandled policies store %q", cfg.PoliciesStore)
 	}
-}
-
-// buildConnectionStore opens the file-backed connections.Store
-// rooted at `<data-dir>/connections/`. Returns nil when --data-dir is
-// unset so a deployment without a data dir leaves the connections
-// routes unmounted rather than crashing.
-//
-// The wizard at /_admin/onboarding/connect and the `bouncer
-// connections put` CLI both write through the same on-disk layout —
-// either path stages a credential that's visible to the other.
-func buildConnectionStore(cfg *config) *connections.Store {
-	if cfg.DataDir == "" {
-		return nil
-	}
-	return connections.NewStore(filepath.Join(cfg.DataDir, "connections"))
 }

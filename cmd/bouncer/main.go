@@ -14,7 +14,6 @@ import (
 
 	"github.com/jkylling/bouncer/internal/buildinfo"
 	"github.com/jkylling/bouncer/internal/cli/apiscmd"
-	"github.com/jkylling/bouncer/internal/cli/connectionscmd"
 	"github.com/jkylling/bouncer/internal/cli/initcmd"
 	"github.com/jkylling/bouncer/internal/cli/issuetokencmd"
 	"github.com/jkylling/bouncer/internal/cli/servecmd"
@@ -43,7 +42,6 @@ func main() {
 		servecmd.Command(),
 		apiscmd.Command(),
 		issuetokencmd.Command(),
-		connectionscmd.Command(),
 		versionCommand(root),
 	)
 	if err := root.Execute(); err != nil {

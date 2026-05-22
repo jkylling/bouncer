@@ -22,12 +22,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"strings"
-	"time"
 
 	"github.com/go-chi/chi/v5"
-
-	"github.com/jkylling/bouncer/internal/auth"
 )
 
 // Path is the canonical mount path. Same prefix as the rest of the
@@ -168,8 +164,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.recordSeen(r)
-
 	result, rpcErr := h(r, req.Params)
 	if rpcErr != nil {
 		writeRPC(w, makeError(req.ID, rpcErr.Code, rpcErr.Message, rpcErr.Data))
@@ -184,21 +178,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeRPC(w, Response{JSONRPC: "2.0", ID: req.ID, Result: result})
-}
-
-// recordSeen feeds the SeenTracker with the caller subject when the
-// request was Bearer-authenticated. Cookie-bearing requests (the
-// dashboard's own JS) are skipped — they're the operator, not an
-// agent. nil tracker is a no-op so test wiring stays minimal.
-func (s *Server) recordSeen(r *http.Request) {
-	if s.deps.SeenTracker == nil {
-		return
-	}
-	if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
-		return
-	}
-	caller := auth.CallerFromContext(r.Context())
-	s.deps.SeenTracker.Touch(caller.Subject, time.Now())
 }
 
 // makeError is a tiny constructor so the dispatcher's error paths

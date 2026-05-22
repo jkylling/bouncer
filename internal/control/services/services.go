@@ -1,12 +1,9 @@
 // Package services projects per-bundle service metadata (slug, title,
-// OAuth dance config, bring-your-own-token variants, suggested
-// policies) into the JSON shape the /_api/services surface returns.
+// description, bring-your-own-token variants) into the JSON shape the
+// /_api/services surface returns.
 //
 // The package is a small read-only aggregator: it does no I/O on its
-// own, taking the LoadedService snapshot from the bundles loader plus
-// a connection-state lookup from the connections store. That keeps
-// the HTTP handler logic-free and lets tests drive the aggregator
-// with hand-rolled fixtures.
+// own, taking the LoadedService snapshot from the bundles loader.
 package services
 
 import (
@@ -14,7 +11,6 @@ import (
 	"fmt"
 
 	"github.com/jkylling/bouncer/internal/control/bundles"
-	"github.com/jkylling/bouncer/internal/control/connections"
 )
 
 // Sentinel errors. The HTTP layer maps these onto statuses.
@@ -23,32 +19,32 @@ var (
 )
 
 // Descriptor is the JSON shape one service exposes on /_api/services.
-// Slug is the canonical key; ConnectedVariant is empty when the
-// service hasn't been configured yet. OAuthAvailable reports whether
-// the runtime env has the client-id/secret pair the bundle declared,
-// so the UI knows whether to grey out the Sign-in tab.
+// Slug is the canonical key; TokenVariants is the form schema the
+// tokens screen renders.
 type Descriptor struct {
-	Slug             string              `json:"slug"`
-	Title            string              `json:"title"`
-	Description      string              `json:"description,omitempty"`
-	BundleName       string              `json:"bundle_name,omitempty"`
-	APIs             []string            `json:"apis,omitempty"`
-	OAuthAvailable   bool                `json:"oauth_available"`
-	OAuthScopes      []string            `json:"oauth_scopes,omitempty"`
-	TokenVariants    []VariantDescriptor `json:"token_variants,omitempty"`
-	SuggestedPolicy  []PolicyDescriptor  `json:"suggested_policies,omitempty"`
-	Connected        bool                `json:"connected"`
-	ConnectedVariant string              `json:"connected_variant,omitempty"`
-	ConnectedAt      string              `json:"connected_at,omitempty"`
+	Slug          string              `json:"slug"`
+	Title         string              `json:"title"`
+	Description   string              `json:"description,omitempty"`
+	BundleName    string              `json:"bundle_name,omitempty"`
+	APIs          []string            `json:"apis,omitempty"`
+	TokenVariants []VariantDescriptor `json:"token_variants,omitempty"`
 }
 
 // VariantDescriptor is one bring-your-own-token shape. Fields is
-// the form schema the UI renders.
+// the form schema the UI renders. Refresh is non-nil for variants
+// that emit a refresh JWT (the operator pastes refresh_token /
+// client_id / client_secret); nil for plain access-token variants.
 type VariantDescriptor struct {
-	ID          string            `json:"id"`
-	Title       string            `json:"title"`
-	Description string            `json:"description,omitempty"`
-	Fields      []FieldDescriptor `json:"fields,omitempty"`
+	ID          string             `json:"id"`
+	Title       string             `json:"title"`
+	Description string             `json:"description,omitempty"`
+	Refresh     *RefreshDescriptor `json:"refresh,omitempty"`
+	Fields      []FieldDescriptor  `json:"fields,omitempty"`
+}
+
+// RefreshDescriptor mirrors bundles.RefreshConfig.
+type RefreshDescriptor struct {
+	TokenURL string `json:"token_url"`
 }
 
 // FieldDescriptor is one input in a variant's form.
@@ -59,50 +55,31 @@ type FieldDescriptor struct {
 	Placeholder string `json:"placeholder,omitempty"`
 	Help        string `json:"help,omitempty"`
 	Required    bool   `json:"required,omitempty"`
+	Header      string `json:"header,omitempty"`
+	Template    string `json:"template,omitempty"`
 }
 
-// PolicyDescriptor is one suggested-policy entry. Applied is true
-// when *every* document inside the policy file is currently live
-// (the apply endpoint is all-or-nothing per policy).
-type PolicyDescriptor struct {
-	ID             string `json:"id"`
-	Title          string `json:"title"`
-	Description    string `json:"description,omitempty"`
-	DefaultEnabled bool   `json:"default_enabled,omitempty"`
-	Applied        bool   `json:"applied"`
-}
-
-// Registry is the boot-time-frozen aggregator. The bundle data and
-// the env-derived OAuth availability never change at runtime; the
-// connection store is the only piece that mutates, which we re-read
-// per request to pick up freshly-staged credentials.
+// Registry is the boot-time-frozen aggregator over the loaded service
+// blocks.
 type Registry struct {
-	services      []bundles.LoadedService
-	bySlug        map[string]bundles.LoadedService
-	oauthAvail    map[string]bool
-	connectionSvc *connections.Store
+	services []bundles.LoadedService
+	bySlug   map[string]bundles.LoadedService
 }
 
-// New returns a Registry over loaded with the env-derived oauth
-// availability frozen. svc may be nil (deployments without a
-// connection store): every service then reports Connected=false.
-func New(loaded []bundles.LoadedService, env map[string]string, svc *connections.Store) *Registry {
+// New returns a Registry over loaded.
+func New(loaded []bundles.LoadedService) *Registry {
 	bySlug := make(map[string]bundles.LoadedService, len(loaded))
-	avail := make(map[string]bool, len(loaded))
 	for _, l := range loaded {
 		bySlug[l.Service.Slug] = l
-		if l.OAuth != nil {
-			avail[l.Service.Slug] = env[l.OAuth.ClientIDEnv] != "" && env[l.OAuth.ClientSecretEnv] != ""
-		}
 	}
-	return &Registry{services: loaded, bySlug: bySlug, oauthAvail: avail, connectionSvc: svc}
+	return &Registry{services: loaded, bySlug: bySlug}
 }
 
 // List returns one Descriptor per registered service in slug order.
 func (r *Registry) List() []Descriptor {
 	out := make([]Descriptor, 0, len(r.services))
 	for _, l := range r.services {
-		out = append(out, r.describe(l))
+		out = append(out, describe(l))
 	}
 	return out
 }
@@ -113,51 +90,35 @@ func (r *Registry) Get(slug string) (Descriptor, error) {
 	if !ok {
 		return Descriptor{}, fmt.Errorf("%w: %q", ErrUnknown, slug)
 	}
-	return r.describe(l), nil
+	return describe(l), nil
 }
 
-// LoadedSuggestedPolicies returns the verbatim policy-file bodies
-// for the named service. Used by the apply endpoint, which needs the
-// raw YAML to decode + validate. Returns ErrUnknown when slug isn't
-// registered.
-func (r *Registry) LoadedSuggestedPolicies(slug string) ([]bundles.LoadedSuggestedPolicy, error) {
+// Variant returns the named token variant for the named service.
+// Used by the tokens screen's issue handler to resolve the variant
+// the operator submitted.
+func (r *Registry) Variant(slug, variant string) (bundles.TokenVariant, error) {
 	l, ok := r.bySlug[slug]
 	if !ok {
-		return nil, fmt.Errorf("%w: %q", ErrUnknown, slug)
+		return bundles.TokenVariant{}, fmt.Errorf("%w: %q", ErrUnknown, slug)
 	}
-	return l.SuggestedPolicies, nil
+	for _, v := range l.TokenVariants {
+		if v.ID == variant {
+			return v, nil
+		}
+	}
+	return bundles.TokenVariant{}, fmt.Errorf("%w: variant %q not found on %q", ErrUnknown, variant, slug)
 }
 
-func (r *Registry) describe(l bundles.LoadedService) Descriptor {
+func describe(l bundles.LoadedService) Descriptor {
 	d := Descriptor{
-		Slug:           l.Service.Slug,
-		Title:          l.Service.Title,
-		Description:    l.Service.Description,
-		BundleName:     l.BundleName,
-		APIs:           append([]string(nil), l.APIs...),
-		OAuthAvailable: r.oauthAvail[l.Service.Slug],
-	}
-	if l.OAuth != nil {
-		d.OAuthScopes = l.OAuth.Scopes
+		Slug:        l.Service.Slug,
+		Title:       l.Service.Title,
+		Description: l.Service.Description,
+		BundleName:  l.BundleName,
+		APIs:        append([]string(nil), l.APIs...),
 	}
 	for _, v := range l.TokenVariants {
 		d.TokenVariants = append(d.TokenVariants, describeVariant(v))
-	}
-	for _, p := range l.SuggestedPolicies {
-		d.SuggestedPolicy = append(d.SuggestedPolicy, describePolicy(p))
-	}
-	if r.connectionSvc != nil {
-		// Best-effort: a read error here shouldn't break the list.
-		// Unknown is the only case we explicitly expect (slug not in
-		// the connection-store allow-list); everything else is a
-		// real persistence error and we surface "not connected"
-		// rather than swallowing it on the wire.
-		conn, err := r.connectionSvc.Get(l.Service.Slug)
-		if err == nil {
-			d.Connected = true
-			d.ConnectedVariant = conn.Variant
-			d.ConnectedAt = conn.CreatedAt.Format("2006-01-02T15:04:05Z07:00")
-		}
 	}
 	return d
 }
@@ -176,23 +137,18 @@ func describeVariant(v bundles.TokenVariant) VariantDescriptor {
 			Placeholder: f.Placeholder,
 			Help:        f.Help,
 			Required:    f.Required,
+			Header:      f.Header,
+			Template:    f.Template,
 		})
 	}
-	return VariantDescriptor{
+	out := VariantDescriptor{
 		ID:          v.ID,
 		Title:       v.Title,
 		Description: v.Description,
 		Fields:      fields,
 	}
-}
-
-func describePolicy(p bundles.LoadedSuggestedPolicy) PolicyDescriptor {
-	return PolicyDescriptor{
-		ID:             p.Meta.ID,
-		Title:          p.Meta.Title,
-		Description:    p.Meta.Description,
-		DefaultEnabled: p.Meta.DefaultEnabled,
-		// Applied state is set by the HTTP layer after consulting the
-		// live policies.Service; the aggregator has no access to it.
+	if v.Refresh != nil {
+		out.Refresh = &RefreshDescriptor{TokenURL: v.Refresh.TokenURL}
 	}
+	return out
 }

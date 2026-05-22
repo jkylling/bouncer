@@ -11,10 +11,9 @@ I've been wanting to give Claude Code access to my gmail inbox for a long time. 
 
 ## Quickstart
 
-The recommended flow is MCP-driven: install bouncer, point your agent
-at the proxy's MCP server, then run two slash-commands.
-
-### From your agent (recommended)
+Bouncer is stateless: each JWT carries the upstream credentials it
+wraps. Install + boot the proxy, issue a JWT for the service you want
+to use, then point the upstream client at the proxy.
 
 ```sh
 # 1. Install + boot the proxy (host this on your laptop or a server).
@@ -25,48 +24,18 @@ bouncer serve --init \
     --with-apis github.com/jkylling/bouncer-slack \
     --admin-password <secret-password>
 
-# 2. Issue an admin-capable bouncer JWT for the MCP add step.
-BOUNCER_JWT=$(bouncer issue-token --subject my-agent --admin)
+# 2. Issue a JWT carrying your upstream credential. Two equivalent
+#    paths:
+#    - CLI: bouncer issue-token --subject my-agent --access-token ya29...
+#    - UI : GET /_admin/tokens — pick a service + variant, fill the
+#           form, copy the JWT.
 
-# 3. Point your agent at bouncer's remote MCP server (Claude Code shown;
-#    Cursor / Cline / Zed / Windsurf accept the same URL + bearer in
-#    their own MCP config).
-claude mcp add --transport http bouncer \
-    http://localhost:8080/_api/mcp \
-    --header "Authorization: Bearer $BOUNCER_JWT"
-
-# 4. In the agent, run:
-#       /bouncer:setup           — installs `bouncer-wrap` + CA cert
-#                                   and writes the project-level
-#                                   instruction fragment.
-#       /google-token            — once Google is connected to your
-#       /slack-token             — bouncer instance, stages local
-#                                   credentials for the matching CLI.
-#
-#    The agent then prefixes upstream calls with `bouncer-wrap`:
-#       bouncer-wrap gws drive list
-#       bouncer-wrap curl https://slack.com/api/conversations.list
-```
-
-Connections (the upstream credentials bouncer wraps into per-service
-bearers) live encrypted at rest under `<data-dir>/connections/`.
-Populating them in v1 is operator-side — drop a JSON file or use the
-admin endpoints; a dashboard-OAuth flow is the planned successor.
-
-### Manual flow (no MCP)
-
-If your harness doesn't support remote MCP, you can wire bouncer
-directly. Same install, then:
-
-```sh
-# Issue a JWT carrying your real upstream credential.
-BOUNCER_JWT=$(bouncer issue-token --subject my-agent --access-token ya29...)
-
-# Trust the proxy's CA and route via HTTPS_PROXY.
+# 3. Trust the proxy's CA and route the client via HTTPS_PROXY.
 curl -fsS http://localhost:8080/_api/ca.crt -o ca.crt \
   && export SSL_CERT_FILE=$PWD/ca.crt HTTPS_PROXY=http://localhost:8080
 
-# Then use the upstream CLI as-is.
+# 4. Use the upstream CLI as-is — the proxy enforces policies in
+#    front of every call.
 gws drive list
 ```
 

@@ -327,10 +327,10 @@ func TestIssueRefreshRequiresAdmin(t *testing.T) {
 	}
 }
 
-// TestIndexRedirectsToAgents pins that GET /_admin and /_admin/ both
-// redirect to /_admin/agents (the default dashboard). The auth-bearing
-// client will follow the redirect.
-func TestIndexRedirectsToAgents(t *testing.T) {
+// TestIndexRedirectsToServices pins that GET /_admin and /_admin/
+// both redirect to /_admin/services (the default dashboard). The
+// auth-bearing client will follow the redirect.
+func TestIndexRedirectsToServices(t *testing.T) {
 	ts, keys := testServer(t)
 	bearer := adminBearer(t, keys)
 	for _, path := range []string{UIPath, UIPath + "/"} {
@@ -352,8 +352,8 @@ func TestIndexRedirectsToAgents(t *testing.T) {
 				t.Fatalf("status = %d, want 303 redirect", resp.StatusCode)
 			}
 			loc := resp.Header.Get("Location")
-			if !strings.Contains(loc, "/_admin/agents") {
-				t.Errorf("Location = %q, want redirect to /_admin/agents", loc)
+			if !strings.Contains(loc, "/_admin/services") {
+				t.Errorf("Location = %q, want redirect to /_admin/services", loc)
 			}
 		})
 	}

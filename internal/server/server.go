@@ -24,9 +24,6 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	"github.com/jkylling/bouncer/internal/auth"
-	"github.com/jkylling/bouncer/internal/control/agents"
-	"github.com/jkylling/bouncer/internal/control/agentseen"
-	"github.com/jkylling/bouncer/internal/control/connections"
 	"github.com/jkylling/bouncer/internal/control/policies"
 	"github.com/jkylling/bouncer/internal/control/services"
 	"github.com/jkylling/bouncer/internal/control/traffic"
@@ -69,51 +66,15 @@ type Server struct {
 	adminPasswordHash string
 	mitmCAPath        string
 	bundleData        admin.BundleData
-	connectionStore   *connections.Store
-	providersInfo     map[string]connections.ProviderInfo
-	agentStore        *agents.Store
-	seenTracker       *agentseen.Tracker
 	servicesRegistry  *services.Registry
 	internalRuntime   *runtime.Runtime
-
-	// apiToService is derived from bundleData at construction and
-	// drives the upstream-401 rewrite to credentials_not_staged.
-	apiToService map[string]string
 }
 
 // Dependencies bundles every input NewServer needs. Runtime, Keys,
-// and APIFactory are required (the proxy can't function without them);
-// every other field is optional and selectively wires the matching
-// admin/MCP surface — a nil pointer leaves the routes unmounted, an
-// empty string leaves the corresponding endpoint dormant.
-//
-// HTTPClient defaults to http.DefaultClient when nil. RefreshTTL
-// controls the `exp` claim on refresh JWTs the /token handler issues;
-// zero means "no exp" (matching the default issue-token shape).
-//
-// Optional fields:
-//   - Recorder: per-request observer; nil = no-op write side.
-//   - TrafficStore: backs /_api/traffic; nil leaves the routes
-//     unmounted. Recorder and TrafficStore are operationally
-//     independent (write vs read side) — production wires both to the
-//     same store, tests can opt into either alone.
-//   - PolicyService / ProposalService: back the CRUD endpoints; nil
-//     leaves the routes unmounted.
-//   - AdminPasswordHash: bcrypt hash POST /_api/admin/login compares
-//     against. Empty leaves the endpoint wired but 503'ing.
-//   - MITMCAPath: file GET /_api/ca.crt serves. Empty 404s.
-//   - BundleData: per-bundle README + api→bundle/service projection.
-//     Also drives the upstream-401 → credentials_not_staged rewrite.
-//   - ConnectionStore + ProvidersInfo: upstream-credentials store and
-//     the frozen-at-boot connect-mode availability snapshot. nil store
-//     leaves /_api/connections/* unmounted.
-//   - AgentStore: backs /_api/agents/*; nil leaves the routes
-//     unmounted.
-//   - ServicesRegistry: backs /_api/services. Always mounted; nil
-//     registry returns an empty list.
-//   - InternalRuntime: drives the internal-policy middleware that
-//     gates every /_admin and /_api request. nil leaves the surface
-//     open (test default).
+// and APIFactory are required; every other field is optional and
+// selectively wires the matching admin surface — a nil pointer
+// leaves the routes unmounted, an empty string leaves the
+// corresponding endpoint dormant.
 type Dependencies struct {
 	Runtime    *runtime.Runtime
 	Keys       *auth.ServerKeys
@@ -127,10 +88,6 @@ type Dependencies struct {
 	AdminPasswordHash string
 	MITMCAPath        string
 	BundleData        admin.BundleData
-	ConnectionStore   *connections.Store
-	ProvidersInfo     map[string]connections.ProviderInfo
-	AgentStore        *agents.Store
-	SeenTracker       *agentseen.Tracker
 	ServicesRegistry  *services.Registry
 	InternalRuntime   *runtime.Runtime
 }
@@ -155,37 +112,9 @@ func NewServer(deps Dependencies) *Server {
 		adminPasswordHash: deps.AdminPasswordHash,
 		mitmCAPath:        deps.MITMCAPath,
 		bundleData:        deps.BundleData,
-		connectionStore:   deps.ConnectionStore,
-		providersInfo:     deps.ProvidersInfo,
-		agentStore:        deps.AgentStore,
-		seenTracker:       deps.SeenTracker,
 		servicesRegistry:  deps.ServicesRegistry,
 		internalRuntime:   deps.InternalRuntime,
-		apiToService:      deriveAPIToService(deps.BundleData),
 	}
-}
-
-// deriveAPIToService walks the bundle data once and returns api →
-// service for every API whose owning bundle declares a token block.
-// Pure helper so it can be tested in isolation if needed.
-func deriveAPIToService(bd admin.BundleData) map[string]string {
-	if len(bd.APIBundle) == 0 || len(bd.TokenBundles) == 0 {
-		return nil
-	}
-	bundleToService := make(map[string]string, len(bd.TokenBundles))
-	for _, b := range bd.TokenBundles {
-		if b == nil || b.Spec == nil || b.BundleName == "" {
-			continue
-		}
-		bundleToService[b.BundleName] = b.Spec.Slug
-	}
-	out := make(map[string]string, len(bd.APIBundle))
-	for api, bundle := range bd.APIBundle {
-		if svc, ok := bundleToService[bundle]; ok {
-			out[api] = svc
-		}
-	}
-	return out
 }
 
 // Router mounts the control plane (admin / MCP / OAuth) ahead of the

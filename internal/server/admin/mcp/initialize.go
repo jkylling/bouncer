@@ -2,15 +2,8 @@ package mcp
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
-	"sort"
-	"strings"
 
-	"github.com/jkylling/bouncer/internal/auth"
-	"github.com/jkylling/bouncer/internal/control/agentseen"
-	"github.com/jkylling/bouncer/internal/control/bundles"
-	"github.com/jkylling/bouncer/internal/control/connections"
 	"github.com/jkylling/bouncer/internal/control/policies"
 	"github.com/jkylling/bouncer/internal/control/traffic"
 	"github.com/jkylling/bouncer/internal/runtime"
@@ -53,8 +46,7 @@ type Deps struct {
 
 	// BundleReadmes maps each vendored-bundle manifest name to the
 	// bytes of its README.md. The resources surface lists one
-	// `bouncer://bundles/<name>/readme` per entry. Empty / nil for
-	// deployments with no vendored bundles.
+	// `bouncer://bundles/<name>/readme` per entry.
 	BundleReadmes map[string][]byte
 
 	// APIBundle maps each registered API name to the bundle that
@@ -63,34 +55,8 @@ type Deps struct {
 	APIBundle map[string]string
 
 	// Docs are the embedded markdown blobs the resources surface
-	// serves. The admin package owns the raw bytes and passes them
-	// in here so this package stays I/O-free.
+	// serves.
 	Docs Docs
-
-	// TokenBundles is the per-bundle token-staging metadata the MCP
-	// layer registers `/{service}-token` prompts and
-	// `get_{service}_token` tools from. Empty / nil for deployments
-	// with no bundles that declare a `token:` block.
-	TokenBundles []*bundles.BundleToken
-
-	// ConnectionStore reads the per-service upstream credentials the
-	// `get_{service}_token` tools wrap into bouncer JWTs. nil makes
-	// the tools return service_not_connected unconditionally — useful
-	// for tests + deployments where connections aren't wired.
-	ConnectionStore *connections.Store
-
-	// Keys is the server's signing/encryption key bundle. Required
-	// when ConnectionStore is set; `get_{service}_token` calls
-	// tokens.IssueRefresh with it to wrap the stored upstream
-	// refresh-token triple into a refresh JWT the proxy can exchange
-	// on the data plane.
-	Keys *auth.ServerKeys
-
-	// SeenTracker records every Bearer-authenticated JSON-RPC call so
-	// the dashboard's "Connected agents" card can show MCP-only
-	// clients that haven't yet made an upstream proxied request.
-	// Optional; nil disables the per-request bookkeeping.
-	SeenTracker *agentseen.Tracker
 }
 
 // Docs carries the markdown bodies for the doc resources. Same
@@ -112,13 +78,7 @@ type initializeParams struct {
 	ClientInfo      json.RawMessage `json:"clientInfo,omitempty"`
 }
 
-// initializeResult is the server's handshake reply. `capabilities`
-// declares what method families this server supports; the client
-// uses it to decide which subsequent calls (tools/list,
-// resources/list, …) make sense. `instructions` is guidance the
-// client may surface to the LLM as system-prompt-like context —
-// what bouncer is, how to set it up, common errors and their
-// responses.
+// initializeResult is the server's handshake reply.
 type initializeResult struct {
 	ProtocolVersion string             `json:"protocolVersion"`
 	Capabilities    serverCapabilities `json:"capabilities"`
@@ -133,8 +93,7 @@ type serverCapabilities struct {
 }
 
 // capability is the empty marker object the spec uses to mean "this
-// family is supported". Future fields (listChanged, subscribe) add
-// here without breaking clients that expect the bare object.
+// family is supported".
 type capability struct{}
 
 type serverInfo struct {
@@ -144,9 +103,6 @@ type serverInfo struct {
 }
 
 func (s *Server) handleInitialize(_ *http.Request, params json.RawMessage) (any, *Error) {
-	// Decode for side-effect (rejecting malformed bodies); the
-	// returned values are not used today but keep the slot open
-	// for future logging.
 	if len(params) > 0 {
 		var p initializeParams
 		if err := json.Unmarshal(params, &p); err != nil {
@@ -165,100 +121,31 @@ func (s *Server) handleInitialize(_ *http.Request, params json.RawMessage) (any,
 			Title:   ServerTitle,
 			Version: ServerVersion,
 		},
-		Instructions: buildInstructions(s.deps),
+		Instructions: instructions,
 	}, nil
 }
 
-// buildInstructions renders the guidance string the server returns at
-// handshake. The dynamic bit is the list of services the operator
-// has wired up; everything else is static "how to use bouncer" text
-// the client passes to the LLM as system-prompt-like context.
-func buildInstructions(deps Deps) string {
-	var b strings.Builder
-	b.WriteString(`Bouncer is a policy-enforcing proxy in front of upstream APIs. It
+// instructions is the static "how to use bouncer" guidance the server
+// returns at handshake. Stateless — issued JWTs are minted on the
+// /_admin/tokens page; agents present them as Bearer headers.
+const instructions = `Bouncer is a policy-enforcing proxy in front of upstream APIs. It
 issues encrypted bearer tokens that look like ordinary API keys, so
 CLIs like gws, gcloud, gh, and curl work transparently through it.
 
 # How to use
-1. First time on a machine: run the ` + "`setup`" + ` prompt. It installs
-   ` + "`bouncer-wrap`" + ` and the CA cert.
-2. First time using a service: run the matching ` + "`<service>-token`" + `
-   prompt (e.g. ` + "`google-token`, `slack-token`" + `). It stages local
-   credentials.
-3. Make API calls by prefixing with ` + "`bouncer-wrap`" + `:
-       bouncer-wrap gws drive list
-       bouncer-wrap curl https://slack.com/api/conversations.list
+- The operator issues a bouncer JWT on the /_admin/tokens page (or
+  via the issue-token CLI / /_api/tokens/issue endpoint) and pastes
+  it into the agent's configuration.
+- The agent uses the JWT as a Bearer credential against the proxy.
 
-Do not bypass ` + "`bouncer-wrap`" + ` by unsetting HTTPS_PROXY, passing
---no-proxy, or calling the upstream directly.
-`)
-	if svcs := serviceSummary(deps.TokenBundles); svcs != "" {
-		b.WriteString("\n# Available services\n")
-		b.WriteString(svcs)
-	}
-	b.WriteString(`
 # Common errors
-- ` + "`service_not_connected`" + ` — the operator hasn't connected the
-  upstream to bouncer yet. Surface ` + "`connect_url`" + ` from the response
-  and wait.
-- ` + "`credentials_not_staged`" + ` — run the matching ` + "`<service>-token`" + `
-  prompt and retry.
-- 403 Forbidden — bouncer denied by policy. The response body explains
-  which action was blocked (` + "`matched_actions`" + ` + ` + "`api`" + `). Draft a
-  permitting policy and call ` + "`propose_policy`" + `: an admin bearer applies
-  it; a non-admin bearer gets the validated draft back to surface to
-  the operator.
+- 403 Forbidden — bouncer denied by policy. The response body
+  explains which action was blocked (matched_actions + api). Draft
+  a permitting policy and call propose_policy: an admin bearer
+  applies it; a non-admin gets the validated draft back to surface.
 
 # Where to learn more
-Tools: ` + "`list_apis`, `list_policies`, `get_policy`, `dry_run_policy`," + `
-` + "`propose_policy`, `list_traffic`, `get_traffic_event`, `connections`," + `
-` + "`credentials_staged`, `get_<service>_token`" + `.
-Docs: ` + "`bouncer://docs/agent.md`, `bouncer://docs/policies.md`" + `.
-`)
-	return b.String()
-}
-
-// serviceSummary returns a "- slug — description" bullet list for
-// every token-bundle service, sorted by slug. Empty string when no
-// bundles declare a service block.
-func serviceSummary(tbs []*bundles.BundleToken) string {
-	type row struct{ slug, title, desc string }
-	rows := make([]row, 0, len(tbs))
-	for _, tb := range tbs {
-		if tb.Spec == nil {
-			continue
-		}
-		rows = append(rows, row{
-			slug:  tb.Spec.Slug,
-			title: tb.Spec.Title,
-			desc:  strings.TrimSpace(tb.Spec.Description),
-		})
-	}
-	if len(rows) == 0 {
-		return ""
-	}
-	sort.Slice(rows, func(i, j int) bool { return rows[i].slug < rows[j].slug })
-	var b strings.Builder
-	for _, r := range rows {
-		label := r.title
-		if label == "" {
-			label = r.slug
-		}
-		fmt.Fprintf(&b, "- `%s` — %s", r.slug, label)
-		if r.desc != "" {
-			fmt.Fprintf(&b, ": %s", firstLine(r.desc))
-		}
-		b.WriteByte('\n')
-	}
-	return b.String()
-}
-
-// firstLine returns s up to the first newline, trimmed. Service
-// descriptions are usually multi-line; the summary line in the
-// instructions only wants the opening sentence.
-func firstLine(s string) string {
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		return strings.TrimSpace(s[:i])
-	}
-	return strings.TrimSpace(s)
-}
+Tools: list_apis, list_policies, get_policy, dry_run_policy,
+propose_policy, list_traffic, get_traffic_event.
+Docs: bouncer://docs/agent.md, bouncer://docs/policies.md.
+`

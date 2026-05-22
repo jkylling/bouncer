@@ -20,8 +20,6 @@ const (
 	StoreDBFile       = "store.db"
 	APIsDir           = "apis"
 	PoliciesDir       = "policies"
-	ConnectionsDir    = "connections"
-	AgentsDir         = "agents"
 	MITMCertFile      = "mitm-ca.crt"
 	MITMKeyFile       = "mitm-ca.key"
 	ReadmeFile        = "README.md"
@@ -80,17 +78,15 @@ type Layout struct {
 	Dir string
 }
 
-func (l Layout) APIs() string        { return filepath.Join(l.Dir, APIsDir) }
-func (l Layout) Policies() string    { return filepath.Join(l.Dir, PoliciesDir) }
-func (l Layout) Store() string       { return filepath.Join(l.Dir, StoreDir) }
-func (l Layout) StoreDB() string     { return filepath.Join(l.Dir, StoreDir, StoreDBFile) }
-func (l Layout) Connections() string { return filepath.Join(l.Dir, ConnectionsDir) }
-func (l Layout) Agents() string      { return filepath.Join(l.Dir, AgentsDir) }
-func (l Layout) Secret() string      { return filepath.Join(l.Dir, SecretFile) }
-func (l Layout) AdminHash() string   { return filepath.Join(l.Dir, AdminPasswordFile) }
-func (l Layout) MITMCert() string    { return filepath.Join(l.Dir, MITMCertFile) }
-func (l Layout) MITMKey() string     { return filepath.Join(l.Dir, MITMKeyFile) }
-func (l Layout) Readme() string      { return filepath.Join(l.Dir, ReadmeFile) }
+func (l Layout) APIs() string      { return filepath.Join(l.Dir, APIsDir) }
+func (l Layout) Policies() string  { return filepath.Join(l.Dir, PoliciesDir) }
+func (l Layout) Store() string     { return filepath.Join(l.Dir, StoreDir) }
+func (l Layout) StoreDB() string   { return filepath.Join(l.Dir, StoreDir, StoreDBFile) }
+func (l Layout) Secret() string    { return filepath.Join(l.Dir, SecretFile) }
+func (l Layout) AdminHash() string { return filepath.Join(l.Dir, AdminPasswordFile) }
+func (l Layout) MITMCert() string  { return filepath.Join(l.Dir, MITMCertFile) }
+func (l Layout) MITMKey() string   { return filepath.Join(l.Dir, MITMKeyFile) }
+func (l Layout) Readme() string    { return filepath.Join(l.Dir, ReadmeFile) }
 
 // ReadSecret reads <dir>/secret.hex (trimmed of trailing newline).
 func (l Layout) ReadSecret() (string, error) {

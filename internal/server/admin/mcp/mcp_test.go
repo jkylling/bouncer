@@ -151,7 +151,7 @@ func TestInitializeReturnsCapabilities(t *testing.T) {
 		t.Errorf("result lacks instructions: %s", raw)
 	}
 	// Sanity-check the key bits agents need to know.
-	for _, needle := range []string{"bouncer-wrap", "setup", "credentials_not_staged"} {
+	for _, needle := range []string{"/_admin/tokens", "Common errors", "Bearer"} {
 		if !strings.Contains(string(raw), needle) {
 			t.Errorf("instructions missing %q: %s", needle, raw)
 		}

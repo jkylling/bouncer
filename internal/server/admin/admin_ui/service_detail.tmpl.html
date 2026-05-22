@@ -1,6 +1,6 @@
-{{- /* service detail — tabs for Overview / Configure / Suggested
-   policies. The slug is read from the path (window.location); the
-   page fetches /_api/services/{slug} on load and renders accordingly.
+{{- /* service detail — overview of the bundle's APIs, plus tabs for
+   Traffic and Docs. Tokens for this service are issued on the
+   /_admin/tokens page (stateless), not here.
 */ -}}
 {{- define "page-style" -}}
   .svc-head { display: flex; align-items: center; gap: 16px; margin-bottom: 8px; }
@@ -28,83 +28,9 @@
   .svc-pane { display: none; }
   .svc-pane.active { display: block; }
 
-  .var-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 16px; flex-wrap: wrap; }
-  .var-tab {
-    padding: 8px 14px; background: transparent; border: 0;
-    border-bottom: 2px solid transparent; color: var(--text-muted);
-    font-family: inherit; font-size: 13.5px; cursor: pointer;
-  }
-  .var-tab.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 500; }
-  .var-tab.oauth-tab { color: var(--success); }
-  .var-tab.disabled { color: var(--text-dim); cursor: not-allowed; }
-
-  .var-pane { display: none; }
-  .var-pane.active { display: block; }
-
-  .var-desc { color: var(--text-muted); font-size: 14px; margin: 0 0 16px; max-width: 60ch; }
-
-  .form-field { margin-bottom: 14px; }
-  .form-field label { display: block; font-size: 13.5px; font-weight: 500; margin-bottom: 4px; }
-  .form-field input, .form-field textarea {
-    width: 100%; padding: 8px 12px; border: 1px solid var(--border-strong); border-radius: var(--radius);
-    font-family: inherit; font-size: 14px; background: var(--surface); color: var(--text);
-  }
-  .form-field textarea { min-height: 80px; font-family: var(--mono); }
-  .form-field input:focus, .form-field textarea:focus { outline: 2px solid var(--primary); outline-offset: -1px; border-color: var(--primary); }
-  .form-field .help { font-size: 12.5px; color: var(--text-muted); margin-top: 4px; }
-
-  .var-actions { display: flex; gap: 10px; align-items: center; margin-top: 12px; }
-  .var-status { font-size: 13px; min-height: 1.2em; }
-  .var-status.err { color: var(--danger); }
-  .var-status.ok { color: var(--success); }
-
-  .connected-banner {
-    display: flex; align-items: center; justify-content: space-between;
-    gap: 12px; padding: 12px 16px;
-    background: var(--success-soft); color: var(--text);
-    border: 1px solid var(--success); border-radius: var(--radius);
-    margin-bottom: 16px; font-size: 13.5px;
-  }
-  .connected-banner-meta { min-width: 0; }
-  .connected-banner .btn { flex-shrink: 0; }
-
-  /* Policies tab — two stacked cards, "Active" + "Add from templates". */
-  .pol-card-wrap { display: flex; flex-direction: column; gap: 20px; }
-  .pol-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
-  .pol-card-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; border-bottom: 1px solid var(--border); }
-  .pol-card-head h3 { margin: 0; font-size: 15px; font-weight: 600; }
-  .pol-card-head .pol-count { font-size: 12.5px; color: var(--text-muted); margin-left: 6px; font-weight: 500; }
-
-  /* Active-policies list. Each row: name + action snippet on the left,
-     permit/deny tag on the right. */
-  .pol-active-list { list-style: none; margin: 0; padding: 0; }
-  .pol-active-list li { display: grid; grid-template-columns: 1fr auto; gap: 16px; align-items: center; padding: 12px 20px; border-bottom: 1px solid var(--border); }
-  .pol-active-list li:last-child { border-bottom: 0; }
-  .pol-row-meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-  .pol-row-name { font-weight: 500; font-size: 14px; display: flex; align-items: center; gap: 8px; }
-  .pol-row-name .pol-api-tag { font-size: 10px; padding: 1px 7px; background: var(--surface-2); color: var(--text-muted); border-radius: 4px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
-  .pol-row-action { font-family: var(--mono); font-size: 12px; color: var(--text-muted); word-break: break-all; }
-  .pol-empty { padding: 16px 20px; color: var(--text-muted); font-size: 13.5px; }
-
-  .tag-permit { font-size: 10px; padding: 2px 8px; border-radius: 4px; font-weight: 700; letter-spacing: 0.05em; background: var(--success-soft); color: var(--success); }
-  .tag-deny { font-size: 10px; padding: 2px 8px; border-radius: 4px; font-weight: 700; letter-spacing: 0.05em; background: var(--danger-soft); color: var(--danger); }
-
-  /* Template-card grid. */
-  .pol-template-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 16px 20px; }
-  @media (max-width: 880px) { .pol-template-grid { grid-template-columns: 1fr; } }
-  .pol-template-card { display: flex; flex-direction: column; padding: 14px 16px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); transition: all 0.15s; }
-  .pol-template-card:hover { border-color: var(--primary); box-shadow: var(--shadow-sm); }
-  .pol-template-card.applied { border-color: var(--success); }
-  .pol-template-tag-row { display: flex; gap: 4px; margin-bottom: 8px; }
-  .pol-template-card h4 { margin: 0 0 4px; font-size: 14px; font-weight: 600; }
-  .pol-template-card p { margin: 0 0 12px; font-size: 12.5px; color: var(--text-muted); line-height: 1.5; }
-  .pol-template-foot { display: flex; justify-content: space-between; align-items: center; margin-top: auto; font-size: 12px; }
-  .pol-template-foot .muted { color: var(--text-muted); }
-  .pol-template-status { font-size: 11px; padding: 2px 8px; border-radius: 4px; }
-  .pol-template-status.applied { background: var(--success-soft); color: var(--success); }
-  .pol-status-msg { font-size: 13px; padding: 0 20px 14px; min-height: 1.2em; color: var(--text-muted); }
-  .pol-status-msg.ok { color: var(--success); }
-  .pol-status-msg.err { color: var(--danger); }
+  .svc-api-list { list-style: none; margin: 0; padding: 0; }
+  .svc-api-list li { padding: 8px 0; border-bottom: 1px solid var(--border); font-family: var(--mono); font-size: 13.5px; }
+  .svc-api-list li:last-child { border-bottom: 0; }
 
   /* Docs tab — rendered Markdown. Kept narrow for readability; the
      pane's overflow is handled by the outer .container.wide. */
@@ -124,21 +50,10 @@
   .docs-body li { margin: 0.15rem 0; }
   .docs-body blockquote { margin: 0.6rem 0; padding: 0.3rem 1rem; border-left: 3px solid var(--border-strong); color: var(--text-muted); }
   .docs-empty { padding: 16px; border: 1px dashed var(--border); border-radius: var(--radius); background: var(--surface); color: var(--text-muted); font-size: 13.5px; }
-
-  /* Onboarding stepper at the top of the page when ?onboarding=1 */
-  .onboarding-banner {
-    background: var(--primary-soft); color: var(--primary);
-    padding: 10px 16px; border-radius: var(--radius); margin-bottom: 18px;
-    font-size: 13.5px;
-  }
 {{- end -}}
 
 {{- define "body" -}}
 <div id="service-detail">
-<div id="onboarding-banner" class="onboarding-banner hidden">
-  <strong>Onboarding</strong> · Configure this service, pick starter
-  policies, then connect an agent.
-</div>
 
 {{- with .Extra -}}
 <div class="dash-header">
@@ -146,13 +61,8 @@
     <div class="svc-icon-lg">{{ .InitialLetter }}</div>
     <div>
       <h1>{{ .Title }}</h1>
-      <p class="svc-sub muted" id="svc-sub">
-        {{- with .BundleName }}bundle: {{ . }} · {{ end -}}
-        {{- if .Connected -}}
-          connected{{ with .ConnectedVariant }} via {{ . }}{{ end }}
-        {{- else -}}
-          not configured
-        {{- end -}}
+      <p class="svc-sub muted">
+        {{- with .BundleName }}bundle: {{ . }}{{ end -}}
       </p>
       {{- with .Description }}<p class="muted" style="max-width: 60ch; margin: 8px 0 0; font-size: 14px;">{{ . }}</p>{{ end -}}
     </div>
@@ -161,18 +71,31 @@
 {{- end -}}
 
 <div class="svc-tabs" role="tablist">
-  <button class="svc-tab active" data-tab="tokens">Tokens</button>
+  <button class="svc-tab active" data-tab="overview">APIs</button>
   <button class="svc-tab" data-tab="policies">Policies</button>
   <button class="svc-tab" data-tab="traffic">Traffic</button>
   <button class="svc-tab" data-tab="docs">Docs</button>
 </div>
 
-<div class="svc-pane active" data-pane="tokens" id="tokens-pane">
+<div class="svc-pane active" data-pane="overview" id="overview-pane">
+  {{- with .Extra -}}
+  {{- if .APIs -}}
+  <p class="muted">APIs shipped by this bundle.</p>
+  <ul class="svc-api-list">
+    {{ range .APIs }}<li>{{ . }}</li>{{ end }}
+  </ul>
+  {{- else -}}
+  <p class="muted">This bundle ships no APIs.</p>
+  {{- end -}}
+  <p style="margin-top: 24px;">
+    Issue a bouncer JWT for this service on the
+    <a href="/_admin/tokens">Tokens</a> page.
+  </p>
+  {{- end -}}
 </div>
 
 <div class="svc-pane" data-pane="policies" id="policies-pane">
   {{ template "policies_list_body" . }}
-  <div id="policies-templates-host"></div>
 </div>
 
 <div class="svc-pane" data-pane="traffic" id="traffic-pane">
@@ -192,61 +115,12 @@ function esc(s) {
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
   })[c]);
 }
-// The service descriptor is baked into the page by the server-side
-// renderer (see admin/services.go's serviceDetailUIHandler). The
-// header is already rendered in HTML; this object drives the dynamic
-// tab content below.
-const service = {{ json .Extra.Descriptor }};
-const slug = service.slug;
-const sp = new URLSearchParams(window.location.search);
-const onboarding = sp.get("onboarding") === "1";
-const ob = onboarding ? "?onboarding=1" : "";
+{{- with .Extra }}
+const service = {{ json .Descriptor }};
+{{- else }}
+const service = {};
+{{- end }}
 
-function load() {
-  if (onboarding) document.getElementById("onboarding-banner").classList.remove("hidden");
-  renderTokens();
-  renderPolicies();
-  renderTraffic();
-  renderDocs();
-  if (onboarding && service.connected && (service.suggested_policies || []).every(p => !p.applied)) {
-    selectTab("policies");
-  }
-}
-
-// refreshService re-fetches the service descriptor and re-renders
-// the parts of the page that depend on it (header sub-line, Tokens
-// pane, Policies templates, the Active-policies card via the
-// partial's refresh()). Used by Apply / Connect / Disconnect
-// instead of a full page reload — same end state, no flash.
-async function refreshService() {
-  const resp = await fetch(`/_api/services/${encodeURIComponent(slug)}`);
-  if (!resp.ok) throw new Error("HTTP " + resp.status);
-  const fresh = await resp.json();
-  for (const k of Object.keys(service)) delete service[k];
-  Object.assign(service, fresh);
-  updateHeaderSub();
-  renderTokens();
-  renderPolicies();
-}
-
-// updateHeaderSub mirrors the Go template's `.svc-sub` block so the
-// header line stays accurate after a JS-driven state change.
-function updateHeaderSub() {
-  const el = document.getElementById("svc-sub");
-  if (!el) return;
-  const parts = [];
-  if (service.bundle_name) parts.push("bundle: " + service.bundle_name);
-  if (service.connected) {
-    parts.push("connected" + (service.connected_variant ? " via " + service.connected_variant : ""));
-  } else {
-    parts.push("not configured");
-  }
-  el.textContent = parts.join(" · ");
-}
-
-// selectTab activates a tab + persists the choice in
-// window.location.hash so a subsequent reload (Disconnect / apply
-// template) re-opens the same tab the operator was on.
 function selectTab(name) {
   document.querySelectorAll(".svc-tab").forEach(t => t.classList.toggle("active", t.dataset.tab === name));
   document.querySelectorAll(".svc-pane").forEach(p => p.classList.toggle("active", p.dataset.pane === name));
@@ -261,8 +135,7 @@ document.addEventListener("click", (e) => {
   if (tab) selectTab(tab.dataset.tab);
 });
 
-// Restore the tab from the URL hash on page load. Any unknown hash
-// (or none at all) leaves the default Tokens tab active.
+// Restore the tab from the URL hash on page load.
 (function () {
   const want = (window.location.hash || "").replace(/^#/, "");
   if (!want) return;
@@ -270,259 +143,30 @@ document.addEventListener("click", (e) => {
   if (tab) selectTab(want);
 })();
 
-function renderTokens() {
-  const pane = document.getElementById("tokens-pane");
-  const variants = service.token_variants || [];
-  const oauthAvail = service.oauth_available;
-  if (variants.length === 0 && !oauthAvail) {
-    pane.innerHTML = `<p class="muted">This service has no configurable token variants.</p>`;
-    return;
-  }
-  // Connected banner with a Disconnect button. Operator removes the
-  // current credential before pasting a different variant.
-  let connectedBanner = "";
-  if (service.connected) {
-    const v = (variants.find(x => x.id === service.connected_variant) || {}).title || service.connected_variant || "unknown variant";
-    const since = service.connected_at ? new Date(service.connected_at).toLocaleString() : "";
-    connectedBanner = `
-      <div class="connected-banner">
-        <div class="connected-banner-meta">
-          <strong>Connected via ${esc(v)}</strong>
-          ${since ? `<span class="muted"> · since ${esc(since)}</span>` : ""}
-        </div>
-        <button type="button" class="btn btn-secondary btn-sm" id="disconnect-btn">Disconnect</button>
-      </div>
-    `;
-  }
-  // Default the open sub-tab to the connected variant (if any), else
-  // the first variant.
-  const defaultID = service.connected_variant || (variants[0] && variants[0].id);
-  const tabs = variants.map(v => `
-    <button class="var-tab${v.id === defaultID ? " active" : ""}" data-var="${esc(v.id)}">${esc(v.title)}</button>
-  `).join("");
-  const panes = variants.map(v => `
-    <div class="var-pane${v.id === defaultID ? " active" : ""}" data-var-pane="${esc(v.id)}">
-      ${v.description ? `<p class="var-desc">${esc(v.description)}</p>` : ""}
-      <form data-variant-form="${esc(v.id)}">
-        ${(v.fields || []).map(f => renderField(f)).join("")}
-        <div class="var-actions">
-          <button type="submit" class="btn btn-primary">${service.connected ? "Replace credentials" : "Connect"}</button>
-          <span class="var-status muted" data-var-status="${esc(v.id)}"></span>
-        </div>
-      </form>
-    </div>
-  `).join("");
-  pane.innerHTML = `${connectedBanner}
-    <div class="var-tabs" role="tablist">${tabs}</div>
-    ${panes}
-  `;
-  pane.querySelectorAll(".var-tab").forEach(t => t.addEventListener("click", () => {
-    const which = t.dataset.var;
-    pane.querySelectorAll(".var-tab").forEach(x => x.classList.toggle("active", x.dataset.var === which));
-    pane.querySelectorAll(".var-pane").forEach(p => p.classList.toggle("active", p.dataset.varPane === which));
-  }));
-  pane.querySelectorAll("form[data-variant-form]").forEach(form => {
-    form.addEventListener("submit", (e) => submitVariant(e, form));
-  });
-  const disconnectBtn = document.getElementById("disconnect-btn");
-  if (disconnectBtn) disconnectBtn.addEventListener("click", disconnectService);
-}
-
-async function disconnectService() {
-  if (!confirm(`Remove the current ${service.title} credential? You'll need to paste a new one before the service works again.`)) {
-    return;
-  }
-  try {
-    const resp = await fetch(`/_api/connections/${encodeURIComponent(slug)}`, { method: "DELETE" });
-    if (!resp.ok && resp.status !== 404) {
-      const body = await resp.text();
-      alert(`Disconnect failed: HTTP ${resp.status} ${body}`);
-      return;
-    }
-    // Refresh in place; no full-page reload (which would flash the
-    // page and reset scroll). refreshService re-renders the header
-    // sub-line and the Tokens pane to reflect "not configured".
-    refreshService().catch(err => alert("Refresh failed: " + err.message));
-  } catch (err) {
-    alert("Disconnect failed: " + err.message);
-  }
-}
-
-function renderField(f) {
-  const kind = f.kind || "text";
-  const required = f.required ? "required" : "";
-  const placeholder = f.placeholder ? ` placeholder="${esc(f.placeholder)}"` : "";
-  let control;
-  if (kind === "multiline") {
-    control = `<textarea name="${esc(f.name)}"${placeholder} ${required}></textarea>`;
-  } else {
-    const type = kind === "secret" ? "password" : "text";
-    control = `<input type="${type}" name="${esc(f.name)}"${placeholder} ${required} autocomplete="off">`;
-  }
-  return `
-    <div class="form-field">
-      <label>${esc(f.label || f.name)}${f.required ? " <span class=\"muted\">(required)</span>" : ""}</label>
-      ${control}
-      ${f.help ? `<div class="help">${esc(f.help)}</div>` : ""}
-    </div>
-  `;
-}
-
-async function submitVariant(e, form) {
-  e.preventDefault();
-  const variant = form.dataset.variantForm;
-  const status = document.querySelector(`[data-var-status="${variant}"]`);
-  const fields = {};
-  for (const input of form.querySelectorAll("input,textarea")) {
-    if (input.name) fields[input.name] = input.value;
-  }
-  status.textContent = "Submitting…";
-  status.className = "var-status";
-  try {
-    const resp = await fetch(`/_api/services/${encodeURIComponent(slug)}/connect`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ variant, fields }),
-    });
-    const text = await resp.text();
-    let parsed = null;
-    try { parsed = JSON.parse(text); } catch (_) {}
-    if (!resp.ok) {
-      const detail = parsed && parsed.message ? parsed.message : text.trim();
-      status.textContent = `HTTP ${resp.status}: ${detail}`;
-      status.className = "var-status err";
-      return;
-    }
-    status.textContent = "Connected.";
-    status.className = "var-status ok";
-    if (onboarding) {
-      setTimeout(() => { window.location.href = window.location.pathname + ob + "#policies"; }, 400);
-    } else {
-      // Refresh in place; updates the header sub-line and the
-      // connected banner without flashing the page.
-      refreshService().catch(err => { status.textContent = "Refresh failed: " + err.message; status.className = "var-status err"; });
-    }
-  } catch (err) {
-    status.textContent = "Network error: " + err.message;
-    status.className = "var-status err";
-  }
-}
-
-// Track applied templates in localStorage to remember state across reloads.
-function getAppliedTemplates() {
-  const key = `bouncer-applied-templates-${slug}`;
-  const stored = localStorage.getItem(key);
-  return new Set(stored ? JSON.parse(stored) : []);
-}
-
-function markTemplateApplied(id) {
-  const key = `bouncer-applied-templates-${slug}`;
-  const applied = getAppliedTemplates();
-  applied.add(id);
-  localStorage.setItem(key, JSON.stringify(Array.from(applied)));
-}
-
-// renderPolicies mounts the shared policies-list partial scoped to
-// this service's API set, then renders the bundle-shipped template
-// suggestions in a separate card below.
 let policiesListInit = false;
 function renderPolicies() {
-  // The partial's body is already in the DOM (rendered server-side
-  // by the policies_list_body template). Wire it up once with the
-  // service-scoped api filter; on subsequent calls (e.g. after
-  // applying a template) just re-pull the list.
   const host = document.querySelector("#policies-pane [data-policies-list]");
-  if (host) {
-    if (!policiesListInit) {
-      setupPoliciesList(host, { apis: service.apis || [] });
-      policiesListInit = true;
-    } else if (host.refresh) {
-      host.refresh();
-    }
-  }
-  renderPolicyTemplates();
-}
-
-function renderPolicyTemplates() {
-  const host = document.getElementById("policies-templates-host");
   if (!host) return;
-  const templates = service.suggested_policies || [];
-  if (templates.length === 0) {
-    host.innerHTML = "";
-    return;
-  }
-  const appliedIds = getAppliedTemplates();
-  host.innerHTML = `
-    <div class="pol-card" style="margin-top: 20px;">
-      <div class="pol-card-head">
-        <h3>Add from templates <span class="pol-count">${templates.length} available</span></h3>
-      </div>
-      <div class="pol-template-grid">
-        ${templates.map(t => renderTemplateCard(t, appliedIds)).join("")}
-      </div>
-      <div class="pol-status-msg" id="pol-status"></div>
-    </div>
-  `;
-  host.querySelectorAll("[data-apply-template]").forEach(btn => {
-    btn.addEventListener("click", () => applyTemplate(btn.dataset.applyTemplate));
-  });
-}
-
-function renderTemplateCard(t, appliedIds) {
-  const isApplied = t.applied || appliedIds.has(t.id);
-  return `
-    <div class="pol-template-card${isApplied ? " applied" : ""}">
-      <div class="pol-template-tag-row">
-        ${t.default_enabled ? `<span class="t-tag t-tag-popular">Recommended</span>` : ``}
-      </div>
-      <h4>${esc(t.title)}</h4>
-      <p>${esc(t.description || "")}</p>
-      <div class="pol-template-foot">
-        ${isApplied
-          ? `<span class="pol-template-status applied">✓ Applied</span>`
-          : `<button type="button" class="btn btn-secondary btn-sm" data-apply-template="${esc(t.id)}">Apply</button>`}
-      </div>
-    </div>
-  `;
-}
-
-async function applyTemplate(id) {
-  const status = document.getElementById("pol-status");
-  status.textContent = "Applying…";
-  status.className = "pol-status-msg";
-  try {
-    const resp = await fetch(`/_api/services/${encodeURIComponent(slug)}/policies/${encodeURIComponent(id)}/apply`, {
-      method: "POST",
-    });
-    const text = await resp.text();
-    let parsed = null;
-    try { parsed = JSON.parse(text); } catch (_) {}
-    if (!resp.ok) {
-      const detail = parsed && parsed.message ? parsed.message : text.trim();
-      status.textContent = `HTTP ${resp.status}: ${detail}`;
-      status.className = "pol-status-msg err";
-      return;
-    }
-    markTemplateApplied(id);
-    status.textContent = `Applied ${parsed && parsed.count ? parsed.count : "?"} policy doc(s).`;
-    status.className = "pol-status-msg ok";
-    // In-place refresh: the template card flips to "✓ Applied" and
-    // the Active-policies card re-pulls via the partial's
-    // host.refresh. No page reload, no flash, scroll preserved.
-    refreshService().catch(err => { status.textContent = "Refresh failed: " + err.message; status.className = "pol-status-msg err"; });
-  } catch (err) {
-    status.textContent = "Network error: " + err.message;
-    status.className = "pol-status-msg err";
+  if (!policiesListInit) {
+    setupPoliciesList(host, { apis: service.apis || [] });
+    policiesListInit = true;
+  } else if (host.refresh) {
+    host.refresh();
   }
 }
 
-// renderTraffic mounts the shared traffic-list partial scoped to
-// this service's API set. Same component as /_admin/traffic; the
-// scope locks the API filter to the bundle's APIs and re-applies
-// it on every fetch.
-// renderDocs fetches the bundle README (markdown) from
-// /_api/apis/{bundle}/readme and renders it inline. Called once per
-// page load — the README is static for the bundle's lifetime.
+let trafficListInit = false;
+function renderTraffic() {
+  const host = document.querySelector("#traffic-pane [data-traffic-list]");
+  if (!host) return;
+  if (!trafficListInit) {
+    setupTrafficList(host, { apis: service.apis || [] });
+    trafficListInit = true;
+  } else if (host.refresh) {
+    host.refresh();
+  }
+}
+
 let docsLoaded = false;
 async function renderDocs() {
   if (docsLoaded) return;
@@ -543,99 +187,59 @@ async function renderDocs() {
     pane.innerHTML = `<div class="docs-body">${renderMarkdown(md)}</div>`;
   } catch (err) {
     pane.innerHTML = `<div class="docs-empty err">Failed to load README: ${esc(err.message)}</div>`;
-    docsLoaded = false; // allow retry on next load()
+    docsLoaded = false;
   }
 }
 
-// renderMarkdown is a tiny inline Markdown → HTML converter — enough
-// for the bundle READMEs we ship (headings, paragraphs, lists, fenced
-// code blocks, inline code, links, GFM tables). Not a full CommonMark
-// implementation; if we ever need one, swap to marked.js or a Go-side
-// renderer.
 function renderMarkdown(src) {
-  // Normalise line endings and escape HTML first; we'll insert tags
-  // only via the transformations below.
   src = String(src).replace(/\r\n?/g, "\n");
-
-  // Extract fenced code blocks so their contents survive the inline
-  // and block transforms below intact. Placeholders are reinserted at
-  // the end.
   const codeBlocks = [];
   src = src.replace(/```([a-zA-Z0-9_+-]*)\n([\s\S]*?)```/g, (_, lang, code) => {
     const idx = codeBlocks.length;
     codeBlocks.push(`<pre><code${lang ? ` class="lang-${esc(lang)}"` : ""}>${esc(code).replace(/\n$/, "")}</code></pre>`);
-    return ` CODEBLOCK${idx} `;
+    return ` CODEBLOCK${idx} `;
   });
-
   src = esc(src);
-
-  // GFM tables: a header row, a separator row, then >= 0 body rows.
   src = src.replace(/(^\|.+\|\n)(^\|[ \-:|]+\|\n)((?:^\|.*\|\n)*)/gm, (_, head, _sep, body) => {
     const cells = row => row.replace(/^\|/, "").replace(/\|\n?$/, "").split("|").map(c => c.trim());
     const thead = "<tr>" + cells(head).map(c => `<th>${c}</th>`).join("") + "</tr>";
     const tbody = body.trim().split("\n").map(r => "<tr>" + cells(r).map(c => `<td>${c}</td>`).join("") + "</tr>").join("");
     return `<table><thead>${thead}</thead><tbody>${tbody}</tbody></table>\n`;
   });
-
-  // Headings.
   src = src.replace(/^###### (.*)$/gm, "<h6>$1</h6>");
   src = src.replace(/^##### (.*)$/gm, "<h5>$1</h5>");
   src = src.replace(/^#### (.*)$/gm, "<h4>$1</h4>");
   src = src.replace(/^### (.*)$/gm, "<h3>$1</h3>");
   src = src.replace(/^## (.*)$/gm, "<h2>$1</h2>");
   src = src.replace(/^# (.*)$/gm, "<h1>$1</h1>");
-
-  // Unordered lists: consecutive `- ` or `* ` lines become a single
-  // <ul>. Done before paragraph wrapping so the items aren't wrapped
-  // in <p>.
   src = src.replace(/(?:^[-*] .+\n?)+/gm, block => {
     const items = block.trim().split("\n").map(l => l.replace(/^[-*] /, ""));
     return "<ul>" + items.map(i => `<li>${i}</li>`).join("") + "</ul>\n";
   });
-  // Ordered lists.
   src = src.replace(/(?:^\d+\. .+\n?)+/gm, block => {
     const items = block.trim().split("\n").map(l => l.replace(/^\d+\. /, ""));
     return "<ol>" + items.map(i => `<li>${i}</li>`).join("") + "</ol>\n";
   });
-
-  // Blockquotes.
   src = src.replace(/(?:^&gt; .+\n?)+/gm, block => {
     const inner = block.replace(/^&gt; ?/gm, "").trim();
     return `<blockquote>${inner}</blockquote>\n`;
   });
-
-  // Inline: links [text](url), bold **x**, italic *x*, inline `code`.
   src = src.replace(/`([^`\n]+)`/g, "<code>$1</code>");
   src = src.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2">$1</a>');
   src = src.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
   src = src.replace(/(?<![*\w])\*([^*\n]+)\*(?!\w)/g, "<em>$1</em>");
-
-  // Paragraphs: wrap any chunk of plain lines (not already a block-
-  // level element) in <p>.
   src = src.split(/\n{2,}/).map(chunk => {
     if (/^\s*<(h\d|ul|ol|table|pre|blockquote|p|hr)/.test(chunk.trim())) return chunk;
     if (!chunk.trim()) return "";
     return `<p>${chunk.trim().replace(/\n/g, "<br>")}</p>`;
   }).join("\n");
-
-  // Reinsert code blocks.
-  src = src.replace(/ CODEBLOCK(\d+) /g, (_, idx) => codeBlocks[+idx]);
+  src = src.replace(/ CODEBLOCK(\d+) /g, (_, idx) => codeBlocks[+idx]);
   return src;
 }
 
-let trafficListInit = false;
-function renderTraffic() {
-  const host = document.querySelector("#traffic-pane [data-traffic-list]");
-  if (!host) return;
-  if (!trafficListInit) {
-    setupTrafficList(host, { apis: service.apis || [] });
-    trafficListInit = true;
-  } else if (host.refresh) {
-    host.refresh();
-  }
-}
-
-load();
+renderPolicies();
+renderTraffic();
+renderDocs();
 </script>
 </div>
 {{- end -}}

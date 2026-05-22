@@ -554,21 +554,6 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, r *http.Req
 	hook.forwarded = true
 	hook.forwardedStatus = resp.StatusCode
 
-	// Rewrite a 401 from the upstream into the structured
-	// credentials_not_staged shape when the matched API came from a
-	// bundle with a `token:` block. Agents read `error` to know they
-	// should re-run /{service}-token rather than parsing the
-	// upstream's prose body. Buffer-then-rewrite is the only safe
-	// shape: we can't change the status line after streaming has
-	// started.
-	if resp.StatusCode == http.StatusUnauthorized {
-		if svc, ok := s.apiToService[apiName]; ok {
-			raw, _ := io.ReadAll(io.LimitReader(resp.Body, MaxRequestBodyBytes))
-			admin.WriteCredentialsNotStaged(w, svc, raw)
-			return nil
-		}
-	}
-
 	for name, values := range resp.Header {
 		if shouldStripForwarded(name) {
 			continue

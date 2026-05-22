@@ -67,10 +67,9 @@ const (
 	// a refresh blob cannot decrypt under the access key and vice
 	// versa, so a confused-deputy attempt to present one as the
 	// other fails AEAD with no further logic involved.
-	hkdfInfoEncryptAccess      = "encrypt/access"
-	hkdfInfoEncryptRefresh     = "encrypt/refresh"
-	hkdfInfoEncryptConnections = "encrypt/connections"
-	hkdfInfoSign               = "sign"
+	hkdfInfoEncryptAccess  = "encrypt/access"
+	hkdfInfoEncryptRefresh = "encrypt/refresh"
+	hkdfInfoSign           = "sign"
 )
 
 // AccessLeeway is the access-JWT shrink factor exported for the
@@ -86,11 +85,10 @@ const AccessLeeway = jwtLeeway
 // level so a truncation bug (e.g. forgetting to expand the HKDF
 // reader fully) fails to compile rather than at AEAD-init time.
 type ServerKeys struct {
-	Signing            ed25519.PrivateKey
-	Verifying          ed25519.PublicKey
-	EncryptAccess      [chacha20poly1305.KeySize]byte
-	EncryptRefresh     [chacha20poly1305.KeySize]byte
-	EncryptConnections [chacha20poly1305.KeySize]byte
+	Signing        ed25519.PrivateKey
+	Verifying      ed25519.PublicKey
+	EncryptAccess  [chacha20poly1305.KeySize]byte
+	EncryptRefresh [chacha20poly1305.KeySize]byte
 }
 
 // FromSecret derives a fresh `ServerKeys` from a 32-byte input
@@ -106,9 +104,6 @@ func FromSecret(secret [32]byte) (*ServerKeys, error) {
 		return nil, err
 	}
 	if err := hkdfDerive(secret[:], hkdfInfoEncryptRefresh, keys.EncryptRefresh[:]); err != nil {
-		return nil, err
-	}
-	if err := hkdfDerive(secret[:], hkdfInfoEncryptConnections, keys.EncryptConnections[:]); err != nil {
 		return nil, err
 	}
 	keys.Signing = ed25519.NewKeyFromSeed(signSeed[:])

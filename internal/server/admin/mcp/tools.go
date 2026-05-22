@@ -48,31 +48,13 @@ type callToolResult struct {
 
 // allTools is the in-process registry. Each family contributes its
 // own slice from a sibling file (apis_tools.go, policies_tools.go,
-// traffic_tools.go, connection_tools.go). New tools land in the
-// family they belong to, not here.
+// traffic_tools.go). New tools land in the family they belong to,
+// not here.
 func allTools() []tool {
 	out := make([]tool, 0, 16)
 	out = append(out, apisTools()...)
 	out = append(out, policiesTools()...)
 	out = append(out, trafficTools()...)
-	return out
-}
-
-// allToolsWithDeps composes the static registry with the bundle-
-// driven tools (one `get_{service}_token` per bundle declaring a
-// Token block) plus the service-agnostic connections / staging
-// tools. Called by the list / call handlers so registration is
-// per-request — the BundleToken set is fixed at boot but a future
-// hot-reload would land here.
-func allToolsWithDeps(deps Deps) []tool {
-	out := allTools()
-	out = append(out, connectionTools()...)
-	for _, b := range deps.TokenBundles {
-		if b == nil || b.Spec == nil {
-			continue
-		}
-		out = append(out, makeGetTokenTool(b))
-	}
 	return out
 }
 
@@ -97,7 +79,7 @@ type listToolsResult struct {
 
 func (s *Server) handleToolsList(r *http.Request, _ json.RawMessage) (any, *Error) {
 	isAdmin := auth.CallerFromContext(r.Context()).IsAdmin()
-	tools := allToolsWithDeps(s.deps)
+	tools := allTools()
 	out := make([]toolDescriptor, 0, len(tools))
 	for _, t := range tools {
 		// Hide admin-only tools from non-admin callers so the agent's
@@ -132,7 +114,7 @@ func (s *Server) handleToolsCall(r *http.Request, params json.RawMessage) (any, 
 	if p.Name == "" {
 		return nil, invalidParams(`"name" is required`)
 	}
-	for _, t := range allToolsWithDeps(s.deps) {
+	for _, t := range allTools() {
 		if t.Name != p.Name {
 			continue
 		}

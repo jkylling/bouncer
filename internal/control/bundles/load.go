@@ -34,48 +34,13 @@ type LoadedAPI struct {
 	Readme []byte
 
 	// Service, when set, is the bundle's service block (slug, title,
-	// description, optional MCP staging metadata). Same pointer-value
-	// across LoadedAPI from the same bundle.
+	// description). Same pointer-value across LoadedAPI from the same
+	// bundle.
 	Service *Service
 
-	// MCPPromptBody is the bytes of the file Service.Prompt points
-	// at, pre-read at load time so the MCP layer never touches the
-	// filesystem. nil when Service is nil or has no MCP staging.
-	MCPPromptBody []byte
-
-	// OAuth is the bundle's oauth block (if any).
-	OAuth *OAuthConfig
-
 	// TokenVariants is the bundle's `token:` list (bring-your-own-
-	// token variants). Empty for bundles that only support OAuth or
-	// only carry API specs.
+	// token variants). Empty for bundles that only carry API specs.
 	TokenVariants []TokenVariant
-
-	// SuggestedPolicies is the bundle's `policies:` list — one entry
-	// per hand-edited starter policy the operator can apply on the
-	// service-detail Policies tab.
-	SuggestedPolicies []LoadedSuggestedPolicy
-}
-
-// LoadedSuggestedPolicy is a manifest-declared policy plus the
-// pre-read YAML bytes from the file it references. The bytes are
-// kept verbatim so the UI can render the source as-is; the
-// /apply endpoint decodes them through the same models.Policy
-// loader the on-disk policies store uses.
-type LoadedSuggestedPolicy struct {
-	Meta SuggestedPolicy
-	YAML []byte
-}
-
-// BundleToken collects what the MCP layer needs to register a
-// `/{slug}-token` prompt and a `get_{slug}_token` tool: the
-// manifest's Service block (the contract) plus the resolved prompt
-// body (the actual prompt content). One per bundle whose Service
-// declared MCP staging.
-type BundleToken struct {
-	Spec       *Service
-	PromptBody []byte
-	BundleName string
 }
 
 type LoadOptions struct {
@@ -139,40 +104,14 @@ func LoadAll(opt LoadOptions) ([]LoadedAPI, error) {
 	return out, nil
 }
 
-// TokenBundles returns one BundleToken per loaded bundle whose
-// manifest declares a `service:` block with MCP staging metadata
-// (prompt + credential + …). Bundles without an MCP block are
-// skipped: there's no /{slug}-token prompt or get_{slug}_token tool
-// to register for them. Sorted by slug for deterministic output.
-func TokenBundles(loaded []LoadedAPI) []*BundleToken {
-	seen := map[string]bool{}
-	var out []*BundleToken
-	for _, l := range loaded {
-		if l.Service == nil || !l.Service.hasMCPStaging() || seen[l.BundleName] {
-			continue
-		}
-		seen[l.BundleName] = true
-		out = append(out, &BundleToken{
-			Spec:       l.Service,
-			PromptBody: l.MCPPromptBody,
-			BundleName: l.BundleName,
-		})
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Spec.Slug < out[j].Spec.Slug })
-	return out
-}
-
-// LoadedService pairs a bundle's Service block with its OAuth /
-// token / policy blocks and the names of the API specs the same
-// bundle ships. This is what the /_api/services surface reads. One
-// per bundle that declares a service.
+// LoadedService pairs a bundle's Service block with its token-variant
+// list and the names of the API specs the same bundle ships. One per
+// bundle that declares a service.
 type LoadedService struct {
-	Service           *Service
-	OAuth             *OAuthConfig
-	TokenVariants     []TokenVariant
-	SuggestedPolicies []LoadedSuggestedPolicy
-	APIs              []string
-	BundleName        string
+	Service       *Service
+	TokenVariants []TokenVariant
+	APIs          []string
+	BundleName    string
 }
 
 // Services returns one LoadedService per bundle that declared a
@@ -189,11 +128,9 @@ func Services(loaded []LoadedAPI) []LoadedService {
 		entry, ok := byBundle[l.BundleName]
 		if !ok {
 			entry = &LoadedService{
-				Service:           l.Service,
-				OAuth:             l.OAuth,
-				TokenVariants:     l.TokenVariants,
-				SuggestedPolicies: l.SuggestedPolicies,
-				BundleName:        l.BundleName,
+				Service:       l.Service,
+				TokenVariants: l.TokenVariants,
+				BundleName:    l.BundleName,
 			}
 			byBundle[l.BundleName] = entry
 		}
@@ -202,8 +139,6 @@ func Services(loaded []LoadedAPI) []LoadedService {
 	out := make([]LoadedService, 0, len(byBundle))
 	for _, v := range byBundle {
 		sort.Strings(v.APIs)
-		// Deduplicate (multi-doc YAMLs declaring the same API name
-		// would double-count otherwise).
 		v.APIs = dedupeStrings(v.APIs)
 		out = append(out, *v)
 	}
@@ -274,22 +209,6 @@ func loadOneBundle(dir string) ([]LoadedAPI, error) {
 	}
 	bundleRoot := filepath.Clean(dir)
 	readme, _ := os.ReadFile(filepath.Join(bundleRoot, ReadmeFile))
-	var mcpPromptBody []byte
-	if manifest.Service != nil && manifest.Service.hasMCPStaging() {
-		// validateRelPath (called by Manifest.Validate) already
-		// rejected escaping paths; ReadFile failure here is "manifest
-		// names a missing prompt file" — fail loud so half a bundle
-		// can't ride into production.
-		body, err := os.ReadFile(filepath.Join(bundleRoot, filepath.FromSlash(manifest.Service.Prompt)))
-		if err != nil {
-			return nil, fmt.Errorf("bundle %s: service.prompt %q: %w", manifest.Name, manifest.Service.Prompt, err)
-		}
-		mcpPromptBody = body
-	}
-	suggested, err := readSuggestedPolicies(bundleRoot, manifest)
-	if err != nil {
-		return nil, err
-	}
 	var out []LoadedAPI
 	for _, rel := range manifest.APIs {
 		paths, err := ResolveManifestEntry(bundleRoot, rel)
@@ -306,16 +225,13 @@ func loadOneBundle(dir string) ([]LoadedAPI, error) {
 					docs[i].Name = newName
 				}
 				out = append(out, LoadedAPI{
-					Spec:              docs[i],
-					Source:            full,
-					BundleDir:         dir,
-					BundleName:        manifest.Name,
-					Readme:            readme,
-					Service:           manifest.Service,
-					MCPPromptBody:     mcpPromptBody,
-					OAuth:             manifest.OAuth,
-					TokenVariants:     manifest.Token,
-					SuggestedPolicies: suggested,
+					Spec:          docs[i],
+					Source:        full,
+					BundleDir:     dir,
+					BundleName:    manifest.Name,
+					Readme:        readme,
+					Service:       manifest.Service,
+					TokenVariants: manifest.Token,
 				})
 			}
 		}
@@ -323,32 +239,9 @@ func loadOneBundle(dir string) ([]LoadedAPI, error) {
 	return out, nil
 }
 
-// readSuggestedPolicies reads each manifest.Policies entry's file
-// body. Returns one LoadedSuggestedPolicy per declared entry, in
-// manifest order. A missing file is a fatal load error — same
-// half-a-bundle discipline as the API specs.
-func readSuggestedPolicies(bundleRoot string, m *Manifest) ([]LoadedSuggestedPolicy, error) {
-	if len(m.Policies) == 0 {
-		return nil, nil
-	}
-	out := make([]LoadedSuggestedPolicy, 0, len(m.Policies))
-	for _, p := range m.Policies {
-		body, err := os.ReadFile(filepath.Join(bundleRoot, filepath.FromSlash(p.File)))
-		if err != nil {
-			return nil, fmt.Errorf("bundle %s: policies.file %q: %w", m.Name, p.File, err)
-		}
-		out = append(out, LoadedSuggestedPolicy{Meta: p, YAML: body})
-	}
-	return out, nil
-}
-
 // ResolveManifestEntry turns a manifest entry into concrete YAML
 // files. Exported so CLI verbs (`apis verify`, `apis pack`) walk the
 // manifest with the same semantics the loader uses at boot.
-//
-// validateRelPath splits on POSIX `/`; on a host where
-// filepath.Separator differs (Windows), confirm containment on the
-// post-Clean path so platform path quirks can't open a gap.
 func ResolveManifestEntry(bundleRoot, rel string) ([]string, error) {
 	full := filepath.Join(bundleRoot, filepath.FromSlash(rel))
 	if !strings.HasPrefix(full, bundleRoot+string(os.PathSeparator)) && full != bundleRoot {

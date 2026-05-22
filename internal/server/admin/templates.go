@@ -42,18 +42,14 @@ const partialGlob = "admin_ui/partials/*.tmpl.html"
 
 // pageData is the value every layout-routed page receives. Title
 // goes into <title>; Current is the nav identifier (one of
-// "tokens" / "traffic" / "policies" / "apis" /
-// "settings" / "connect" / "agent") so the matching
-// nav link gets aria-current. ContainerClass adds an extra class to
-// the .container wrapper — pages with table-heavy content pass
-// "wide" to widen the layout. Layout picks the wrapping template:
-// empty / "layout" = dashboard sidebar shell, "wizard" = onboarding
-// stepper shell.
+// "services" / "tokens" / "policies" / "traffic" / "settings") so
+// the matching nav link gets aria-current. ContainerClass adds an
+// extra class to the .container wrapper — pages with table-heavy
+// content pass "wide" to widen the layout.
 type pageData struct {
 	Title          string
 	Current        string
 	ContainerClass string
-	Layout         string
 	// Extra is per-request data resolved by a custom handler (e.g.
 	// the service-detail page bakes the resolved services.Descriptor
 	// here so the template can render every field server-side). Nil
@@ -71,7 +67,7 @@ var pages = map[string]string{
 	"settings":       "admin_ui/settings.tmpl.html",
 	"services":       "admin_ui/services.tmpl.html",
 	"service_detail": "admin_ui/service_detail.tmpl.html",
-	"agents":         "admin_ui/agents.tmpl.html",
+	"tokens":         "admin_ui/tokens.tmpl.html",
 }
 
 // pageMeta is the static {Title, Current, ContainerClass} for each
@@ -84,7 +80,7 @@ var pageMeta = map[string]pageData{
 	"settings":       {Title: "settings", Current: "settings", ContainerClass: "wide"},
 	"services":       {Title: "services", Current: "services", ContainerClass: "wide"},
 	"service_detail": {Title: "service", Current: "services", ContainerClass: "wide"},
-	"agents":         {Title: "agents", Current: "agents", ContainerClass: "wide"},
+	"tokens":         {Title: "tokens", Current: "tokens", ContainerClass: "wide"},
 }
 
 // pageTemplates is parsed once at package init and re-used per
@@ -93,16 +89,12 @@ var pageMeta = map[string]pageData{
 var pageTemplates = func() map[string]*template.Template {
 	out := make(map[string]*template.Template, len(pages))
 	for name, body := range pages {
-		layoutFile := "admin_ui/layout.tmpl.html"
-		if meta, ok := pageMeta[name]; ok && meta.Layout == "wizard" {
-			layoutFile = "admin_ui/wizard.tmpl.html"
-		}
 		// Parse the layout + page body together with every shared
 		// partial so {{template "policies_list_body" .}} et al.
 		// resolve at render time. Partials are pulled by glob so
 		// adding a new fragment in admin_ui/partials/ is zero-config.
 		t := template.New(name).Funcs(tmplFuncs)
-		t, err := t.ParseFS(adminTemplatesFS, layoutFile, body, partialGlob)
+		t, err := t.ParseFS(adminTemplatesFS, "admin_ui/layout.tmpl.html", body, partialGlob)
 		if err != nil {
 			panic(fmt.Sprintf("admin: parse %s: %v", body, err))
 		}
@@ -138,11 +130,7 @@ func renderPageWith(w http.ResponseWriter, name string, extra any) {
 	meta.Extra = extra
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	rootTmpl := "layout"
-	if meta.Layout == "wizard" {
-		rootTmpl = "wizard"
-	}
-	if err := t.ExecuteTemplate(w, rootTmpl, meta); err != nil {
+	if err := t.ExecuteTemplate(w, "layout", meta); err != nil {
 		slog.Error("admin: render", "page", name, "err", err)
 		// Best-effort: by the time ExecuteTemplate fails, the
 		// response may have started — there's nothing useful to

@@ -1,0 +1,211 @@
+{{- /* tokens page — pick a service + variant, fill in the fields,
+   emit a copy-pasteable bouncer JWT. Stateless: nothing is stored
+   server-side.
+*/ -}}
+{{- define "page-style" -}}
+  .tok-host { max-width: 60rem; }
+  .tok-section { margin-bottom: 18px; }
+  .tok-section label { display: block; font-size: 13.5px; font-weight: 500; margin-bottom: 6px; }
+  .tok-section select, .tok-section input, .tok-section textarea {
+    width: 100%; padding: 8px 12px; border: 1px solid var(--border-strong); border-radius: var(--radius);
+    font-family: inherit; font-size: 14px; background: var(--surface); color: var(--text);
+  }
+  .tok-section textarea { min-height: 80px; font-family: var(--mono); }
+  .tok-section .help { font-size: 12.5px; color: var(--text-muted); margin-top: 4px; }
+  .tok-section .required { color: var(--text-muted); font-weight: 400; }
+  .tok-variant-desc { color: var(--text-muted); font-size: 13.5px; margin: 6px 0 14px; max-width: 60ch; }
+  .tok-actions { display: flex; gap: 12px; align-items: center; margin-top: 18px; }
+  .tok-status { font-size: 13px; min-height: 1.2em; }
+  .tok-status.err { color: var(--danger); }
+  .tok-status.ok { color: var(--success); }
+  .tok-output {
+    margin-top: 22px; padding: 12px 14px; background: var(--surface-2);
+    border: 1px solid var(--border); border-radius: var(--radius);
+    font-family: var(--mono); font-size: 12.5px; word-break: break-all;
+    white-space: pre-wrap;
+  }
+  .tok-output-row { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; margin-top: 18px; }
+  .tok-output-row h3 { margin: 0; font-size: 14px; font-weight: 600; }
+{{- end -}}
+
+{{- define "body" -}}
+<div id="tokens" class="tok-host">
+<h1>Tokens</h1>
+<p class="lede">
+  Issue a bouncer JWT for one of the registered services. The
+  upstream credentials you paste are embedded into the JWT — bouncer
+  does not store them.
+</p>
+
+<div class="tok-section">
+  <label for="tok-subject">Subject (JWT <code>sub</code> claim)</label>
+  <input type="text" id="tok-subject" value="agent" autocomplete="off">
+  <div class="help">Free-form identifier. Shows up on traffic events for the requests this JWT makes.</div>
+</div>
+
+<div class="tok-section">
+  <label for="tok-service">Service</label>
+  <select id="tok-service"><option>Loading…</option></select>
+</div>
+
+<div class="tok-section" id="tok-variant-section" hidden>
+  <label for="tok-variant">Variant</label>
+  <select id="tok-variant"></select>
+  <p class="tok-variant-desc" id="tok-variant-desc"></p>
+</div>
+
+<form id="tok-form" hidden>
+  <div id="tok-fields"></div>
+  <div class="tok-actions">
+    <button type="submit" class="btn btn-primary">Issue JWT</button>
+    <span class="tok-status muted" id="tok-status"></span>
+  </div>
+</form>
+
+<div id="tok-output-wrap" hidden>
+  <div class="tok-output-row">
+    <h3>Issued JWT</h3>
+    <button type="button" class="btn btn-secondary btn-sm" id="tok-copy">Copy</button>
+  </div>
+  <div class="tok-output" id="tok-output"></div>
+  <p class="help" id="tok-expiry"></p>
+</div>
+{{- end -}}
+
+{{- define "page-script" -}}
+<script>
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, c => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  })[c]);
+}
+
+let services = [];
+let currentVariant = null;
+
+async function loadServices() {
+  const sel = document.getElementById("tok-service");
+  try {
+    const resp = await fetch("/_api/services");
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    const data = await resp.json();
+    services = (data.services || []).filter(s => (s.token_variants || []).length > 0);
+  } catch (err) {
+    sel.innerHTML = `<option>Failed to load: ${esc(err.message)}</option>`;
+    return;
+  }
+  if (services.length === 0) {
+    sel.innerHTML = `<option>No services with token variants installed</option>`;
+    return;
+  }
+  sel.innerHTML = services.map(s => `<option value="${esc(s.slug)}">${esc(s.title)}</option>`).join("");
+  sel.addEventListener("change", onServiceChange);
+  onServiceChange();
+}
+
+function onServiceChange() {
+  const slug = document.getElementById("tok-service").value;
+  const svc = services.find(s => s.slug === slug);
+  const wrap = document.getElementById("tok-variant-section");
+  const sel = document.getElementById("tok-variant");
+  if (!svc || (svc.token_variants || []).length === 0) {
+    wrap.hidden = true;
+    document.getElementById("tok-form").hidden = true;
+    return;
+  }
+  wrap.hidden = false;
+  sel.innerHTML = svc.token_variants.map(v => `<option value="${esc(v.id)}">${esc(v.title)}</option>`).join("");
+  sel.onchange = () => onVariantChange(svc);
+  onVariantChange(svc);
+}
+
+function onVariantChange(svc) {
+  const vid = document.getElementById("tok-variant").value;
+  currentVariant = svc.token_variants.find(v => v.id === vid);
+  document.getElementById("tok-variant-desc").textContent = currentVariant.description || "";
+  renderFields(currentVariant);
+  document.getElementById("tok-form").hidden = false;
+  document.getElementById("tok-output-wrap").hidden = true;
+}
+
+function renderFields(v) {
+  const host = document.getElementById("tok-fields");
+  host.innerHTML = (v.fields || []).map(f => {
+    const kind = f.kind || "text";
+    const req = f.required ? "required" : "";
+    const placeholder = f.placeholder ? ` placeholder="${esc(f.placeholder)}"` : "";
+    let control;
+    if (kind === "multiline") {
+      control = `<textarea name="${esc(f.name)}"${placeholder} ${req}></textarea>`;
+    } else {
+      const type = kind === "secret" ? "password" : "text";
+      control = `<input type="${type}" name="${esc(f.name)}"${placeholder} ${req} autocomplete="off">`;
+    }
+    return `
+      <div class="tok-section">
+        <label>${esc(f.label || f.name)}${f.required ? ` <span class="required">(required)</span>` : ""}</label>
+        ${control}
+        ${f.help ? `<div class="help">${esc(f.help)}</div>` : ""}
+      </div>
+    `;
+  }).join("");
+}
+
+document.getElementById("tok-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const status = document.getElementById("tok-status");
+  status.textContent = "Issuing…";
+  status.className = "tok-status";
+  const subject = document.getElementById("tok-subject").value.trim();
+  const slug = document.getElementById("tok-service").value;
+  const variantID = document.getElementById("tok-variant").value;
+  const fields = {};
+  for (const input of e.target.querySelectorAll("input,textarea")) {
+    if (input.name) fields[input.name] = input.value;
+  }
+  const path = currentVariant.refresh ? "/_api/tokens/issue/refresh" : "/_api/tokens/issue";
+  try {
+    const resp = await fetch(path, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ subject, service: slug, variant: variantID, fields }),
+    });
+    const text = await resp.text();
+    let parsed = null;
+    try { parsed = JSON.parse(text); } catch (_) {}
+    if (!resp.ok) {
+      const detail = parsed && parsed.message ? parsed.message : text.trim();
+      status.textContent = `HTTP ${resp.status}: ${detail}`;
+      status.className = "tok-status err";
+      return;
+    }
+    status.textContent = "Issued.";
+    status.className = "tok-status ok";
+    document.getElementById("tok-output").textContent = parsed.token;
+    const expEl = document.getElementById("tok-expiry");
+    if (parsed.expires_at) {
+      expEl.textContent = "Expires " + new Date(parsed.expires_at).toLocaleString();
+    } else {
+      expEl.textContent = "No expiry — this is a refresh JWT.";
+    }
+    document.getElementById("tok-output-wrap").hidden = false;
+  } catch (err) {
+    status.textContent = "Network error: " + err.message;
+    status.className = "tok-status err";
+  }
+});
+
+document.getElementById("tok-copy").addEventListener("click", () => {
+  const out = document.getElementById("tok-output").textContent;
+  navigator.clipboard.writeText(out).then(() => {
+    const btn = document.getElementById("tok-copy");
+    const original = btn.textContent;
+    btn.textContent = "Copied!";
+    setTimeout(() => { btn.textContent = original; }, 1500);
+  });
+});
+
+loadServices();
+</script>
+</div>
+{{- end -}}

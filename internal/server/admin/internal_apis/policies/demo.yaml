@@ -1,7 +1,6 @@
 # demo.yaml — open mode for live demos / workshops:
 # every endpoint is reachable without a JWT *except* admin endpoints
-# (token issuance, policy CRUD writes, proposal approval, traffic
-# viewer mutations).
+# (token issuance, policy CRUD writes, traffic viewer mutations).
 #
 # Use case: someone is screen-sharing the bouncer UI and wants
 # zero-friction "click around" without juggling JWTs, but still
@@ -12,15 +11,13 @@ name: demo-open
 description: All non-admin internal endpoints are reachable without a JWT.
 action: |
   action.name in [
+    "ui_index",
     "ui_tokens",
     "ui_login",
     "ui_policies",
-    "ui_proposals",
     "ui_traffic",
-    "ui_traffic_propose",
     "ui_settings",
     "ui_services",
-    "ui_onboarding",
     "login",
     "logout",
     "whoami",
@@ -37,24 +34,9 @@ action: |
     "policies_get",
     "policies_dryrun",
     "traffic_subjects",
-    "proposals_list",
-    "proposals_create",
-    "proposals_get",
-    "proposals_update",
-    "proposals_delete",
-    "propose_policy",
     "mcp",
-    "connections_providers",
-    "connections_list",
-    "recipes_list",
-    "recipes_preview",
-    "agents_register",
-    "agents_list",
-    "agents_seen",
-    "agents_get",
     "services_list",
     "services_get",
-    "services_policies_list",
   ]
 condition: "true"
 result: permit
@@ -67,21 +49,13 @@ action: |
   action.name in [
     "tokens_issue",
     "tokens_issue_refresh",
+    "tokens_page_issue",
+    "tokens_page_issue_refresh",
     "policies_create",
     "policies_replace",
     "policies_delete",
-    "proposals_approve",
-    "proposals_reject",
     "traffic_list",
     "traffic_get",
-    "connections_put",
-    "connections_delete",
-    "recipes_apply",
-    "agents_approve",
-    "agents_reject",
-    "services_connect",
-    "services_policy_apply",
-    "services_policies_apply_all",
   ]
 condition: "true"
 result: permit

@@ -114,7 +114,7 @@ func TestAdminUIRedirectsAnonymous(t *testing.T) {
 }
 
 // TestAdminUIServesShellAuthed pins the authed branch: with a valid
-// admin cookie, /_admin 303s to /_admin/agents (the default
+// admin cookie, /_admin 303s to /_admin/services (the default
 // dashboard entry point) and that target serves the embedded HTML
 // shell.
 func TestAdminUIServesShellAuthed(t *testing.T) {
@@ -132,8 +132,8 @@ func TestAdminUIServesShellAuthed(t *testing.T) {
 		t.Fatalf("GET /_admin: status=%d, want 303", resp.StatusCode)
 	}
 	loc := resp.Header.Get("Location")
-	if loc != "/_admin/agents" {
-		t.Fatalf("GET /_admin: Location=%q, want /_admin/agents", loc)
+	if loc != "/_admin/services" {
+		t.Fatalf("GET /_admin: Location=%q, want /_admin/services", loc)
 	}
 
 	req2, _ := http.NewRequest(http.MethodGet, f.srv.BaseURL+loc, nil)
@@ -365,28 +365,10 @@ func TestMCPInitializeAndToolsList(t *testing.T) {
 			}
 		}
 	}
-	for _, name := range []string{"list_apis", "list_policies", "connections", "credentials_staged"} {
+	for _, name := range []string{"list_apis", "list_policies", "list_traffic"} {
 		if !have[name] {
 			t.Errorf("tools/list missing %q (have: %v)", name, have)
 		}
-	}
-
-	// Prompts surface (the setup body the agent walks
-	// through). One smoke check; per-bundle token prompts depend on
-	// installed bundles which this admin fixture doesn't load.
-	prompts := post("prompts/list", nil)
-	pResult, _ := prompts["result"].(map[string]any)
-	pArr, _ := pResult["prompts"].([]any)
-	havePrompt := map[string]bool{}
-	for _, x := range pArr {
-		if m, ok := x.(map[string]any); ok {
-			if name, _ := m["name"].(string); name != "" {
-				havePrompt[name] = true
-			}
-		}
-	}
-	if !havePrompt["setup"] {
-		t.Errorf("prompts/list missing setup (have: %v)", havePrompt)
 	}
 }
 

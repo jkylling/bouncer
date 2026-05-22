@@ -27,17 +27,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/jkylling/bouncer/internal/auth"
-	"github.com/jkylling/bouncer/internal/control/agents"
-	"github.com/jkylling/bouncer/internal/control/connections"
 	"github.com/jkylling/bouncer/internal/control/traffic"
-	"github.com/jkylling/bouncer/internal/datadir"
 	"github.com/jkylling/bouncer/internal/observability"
 	"github.com/jkylling/bouncer/internal/server"
 	"github.com/jkylling/bouncer/internal/server/admin"
@@ -49,21 +45,6 @@ import (
 // connection) cannot pin the process past a reasonable supervisor
 // retry interval.
 const shutdownTimeout = 10 * time.Second
-
-// envSnapshot freezes os.Environ() into the map shape
-// connections.ProviderAvailability consumes. Captured once at boot
-// so a runtime change to the process env doesn't flicker the wizard
-// UI mid-session.
-func envSnapshot() map[string]string {
-	pairs := os.Environ()
-	out := make(map[string]string, len(pairs))
-	for _, p := range pairs {
-		if i := strings.IndexByte(p, '='); i > 0 {
-			out[p[:i]] = p[i+1:]
-		}
-	}
-	return out
-}
 
 // Command returns the `bouncer serve` cobra subcommand.
 func Command() *cobra.Command {
@@ -113,11 +94,6 @@ func runServe(cfg *config) error {
 		cache.closeAll()
 		return fmt.Errorf("policy store: %w", err)
 	}
-	connStore := buildConnectionStore(cfg)
-	var agentStore *agents.Store
-	if cfg.DataDir != "" {
-		agentStore = agents.NewStore(datadir.Layout{Dir: cfg.DataDir}.Agents())
-	}
 
 	trafficStore, recorder, err := buildTraffic(cfg, cache)
 	if err != nil {
@@ -135,10 +111,6 @@ func runServe(cfg *config) error {
 		// Populated only when --mitm is on; otherwise empty and the
 		// /_api/ca.crt endpoint serves 404.
 		MITMCAPath:       caDownloadPath(cfg),
-		ConnectionStore:  connStore,
-		ProvidersInfo:    connections.ProviderAvailability(envSnapshot()),
-		AgentStore:       agentStore,
-		Env:              envSnapshot(),
 		InternalPolicies: admin.PolicySet(cfg.InternalPolicies),
 		TrafficStore:     trafficStore,
 		Recorder:         recorder,

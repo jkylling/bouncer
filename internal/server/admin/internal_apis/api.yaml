@@ -23,11 +23,15 @@ actions:
 # An anonymous denial on a UI shell is rendered as a 303 redirect to
 # the login page; an authenticated denial returns 403 like any other
 # route.
+- name: ui_index
+  filter: |
+    request.method == "GET" &&
+    (request.path == "/_admin" || request.path == "/_admin/")
+
 - name: ui_tokens
   filter: |
     request.method == "GET" &&
-    (request.path == "/_admin" || request.path == "/_admin/" ||
-     request.path.startsWith("/_admin/agents"))
+    request.path.startsWith("/_admin/tokens")
 
 - name: ui_login
   filter: |
@@ -38,11 +42,6 @@ actions:
   filter: |
     request.method == "GET" &&
     (request.path == "/_admin/policies" || request.path == "/_admin/policies/")
-
-- name: ui_proposals
-  filter: |
-    request.method == "GET" &&
-    (request.path == "/_admin/proposals" || request.path == "/_admin/proposals/")
 
 - name: ui_traffic
   filter: |
@@ -57,15 +56,6 @@ actions:
 - name: ui_services
   filter: |
     request.method == "GET" && request.path.startsWith("/_admin/services")
-
-- name: ui_onboarding
-  filter: |
-    request.method == "GET" &&
-    request.path.startsWith("/_admin/onboarding")
-
-- name: ui_traffic_propose
-  method: GET
-  path: /_admin/traffic/{id}/propose
 
 # --- Auth + identity -------------------------------------------------
 - name: login
@@ -87,6 +77,14 @@ actions:
 - name: tokens_issue_refresh
   method: POST
   path: /_api/issue/refresh
+
+- name: tokens_page_issue
+  method: POST
+  path: /_api/tokens/issue
+
+- name: tokens_page_issue_refresh
+  method: POST
+  path: /_api/tokens/issue/refresh
 
 # --- Discovery / docs ------------------------------------------------
 - name: ca_download
@@ -198,23 +196,6 @@ actions:
   method: GET
   path: /_api/traffic/subjects
 
-# --- Connections (wizard) -------------------------------------------
-- name: connections_providers
-  method: GET
-  path: /_api/connections/providers
-
-- name: connections_list
-  method: GET
-  path: /_api/connections
-
-- name: connections_put
-  method: POST
-  path: /_api/connections/{provider}
-
-- name: connections_delete
-  method: DELETE
-  path: /_api/connections/{provider}
-
 # --- Services (per-bundle UI surface) -------------------------------
 - name: services_list
   method: GET
@@ -223,68 +204,6 @@ actions:
 - name: services_get
   method: GET
   path: /_api/services/{slug}
-
-- name: services_connect
-  method: POST
-  path: /_api/services/{slug}/connect
-
-- name: services_policies_list
-  method: GET
-  path: /_api/services/{slug}/policies
-
-- name: services_policy_apply
-  method: POST
-  path: /_api/services/{slug}/policies/{id}/apply
-
-- name: services_policies_apply_all
-  method: POST
-  path: /_api/services/{slug}/policies/apply
-
-# --- Recipes (wizard) -----------------------------------------------
-- name: recipes_list
-  method: GET
-  path: /_api/recipes
-
-- name: recipes_preview
-  method: POST
-  path: /_api/recipes/{id}/preview
-
-- name: recipes_apply
-  method: POST
-  path: /_api/recipes/{id}/apply
-
-# --- Agents (registration + approval) -------------------------------
-# Register is intentionally open: anonymous agents post here to ask
-# for a slot, and the operator approves on the dashboard. Everything
-# else (list / approve / reject) is admin-only.
-- name: agents_register
-  method: POST
-  path: /_api/agents/register
-
-- name: agents_list
-  method: GET
-  path: /_api/agents
-
-# In-memory roll-up of Bearer-authenticated MCP callers. The
-# dashboard "Connected agents" card reads this; the older
-# /_api/traffic/subjects only surfaces subjects that made an
-# upstream proxied call, so MCP-only agents never appeared.
-# Literal path — must come before agents_get's {id} catch.
-- name: agents_seen
-  method: GET
-  path: /_api/agents/seen
-
-- name: agents_get
-  method: GET
-  path: /_api/agents/{id}
-
-- name: agents_approve
-  method: POST
-  path: /_api/agents/{id}/approve
-
-- name: agents_reject
-  method: POST
-  path: /_api/agents/{id}/reject
 
 # --- MCP -------------------------------------------------------------
 # /_api/mcp gates per-tool inside the JSON-RPC handler; the outer

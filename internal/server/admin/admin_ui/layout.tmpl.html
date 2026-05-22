@@ -31,19 +31,6 @@ centered shell, no nav).
   </main>
 </div>
 <script src="/_admin/static/js/utils.js"></script>
-<script>
-// Proposal feature removed; badge code kept for reference
-// fetch("/_api/proposals?status=proposed").then(r => r.ok ? r.json() : null).then(d => {
-//   if (!d || !Array.isArray(d.proposals)) return;
-//   const link = document.getElementById("nav-policies");
-//   if (link && d.proposals.length > 0) {
-//     const badge = document.createElement("span");
-//     badge.className = "nav-badge";
-//     badge.textContent = d.proposals.length;
-//     link.appendChild(badge);
-//   }
-// }).catch(() => {});
-</script>
 {{ block "page-script" . }}{{ end -}}
 </body>
 </html>
@@ -52,13 +39,8 @@ centered shell, no nav).
 {{- /*
 sidebar lives in its own template so a future page-add lands in one
 place. The argument is the page identifier (`tokens`, `traffic`,
-`policies`, `proposals`, `apis`, `settings`) — used to stamp
-aria-current="page" on the matching link.
-
-Identifier vs label mismatch is intentional: "tokens" is the current
-shape of the page (issue a JWT) but the sidebar label is "Agents"
-because that's what it'll become in phase 4. Same for "apis" surfaced
-as "Connections."
+`policies`, `services`, `settings`) — used to stamp aria-current="page"
+on the matching link.
 */ -}}
 {{- define "sidebar" -}}
 <aside class="sidebar">
@@ -68,17 +50,17 @@ as "Connections."
     <span class="logo-cloud">cloud</span>
   </a>
   <nav class="sidebar-nav" aria-label="Primary">
-    <a class="nav-item" href="/_admin/traffic" {{ if eq . "traffic" }}aria-current="page"{{ end }}>
-      <span class="nav-ico" aria-hidden="true">📡</span> Traffic
-    </a>
-    <a class="nav-item" id="nav-policies" href="/_admin/policies" {{ if or (eq . "policies") (eq . "proposals") }}aria-current="page"{{ end }}>
-      <span class="nav-ico" aria-hidden="true">🛡</span> Policies
-    </a>
-    <a class="nav-item" href="/_admin/agents" {{ if eq . "tokens" }}aria-current="page"{{ end }}>
-      <span class="nav-ico" aria-hidden="true">🤖</span> Agents
-    </a>
     <a class="nav-item" href="/_admin/services" {{ if eq . "services" }}aria-current="page"{{ end }}>
       <span class="nav-ico" aria-hidden="true">🧩</span> Services
+    </a>
+    <a class="nav-item" href="/_admin/tokens" {{ if eq . "tokens" }}aria-current="page"{{ end }}>
+      <span class="nav-ico" aria-hidden="true">🔑</span> Tokens
+    </a>
+    <a class="nav-item" href="/_admin/policies" {{ if eq . "policies" }}aria-current="page"{{ end }}>
+      <span class="nav-ico" aria-hidden="true">🛡</span> Policies
+    </a>
+    <a class="nav-item" href="/_admin/traffic" {{ if eq . "traffic" }}aria-current="page"{{ end }}>
+      <span class="nav-ico" aria-hidden="true">📡</span> Traffic
     </a>
     <a class="nav-item" href="/_admin/settings" {{ if eq . "settings" }}aria-current="page"{{ end }}>
       <span class="nav-ico" aria-hidden="true">⚙</span> Settings

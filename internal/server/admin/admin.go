@@ -40,7 +40,7 @@ const maxIssueBodyBytes int64 = 1 << 16
 
 // MountOn attaches the issue endpoints. Other admin surfaces
 // (login, whoami, apis, docs, traffic, policies) have their own Mount*
-// entry points. Redirects /_admin/ to /_admin/agents as the default
+// entry points. Redirects /_admin/ to /_admin/services as the default
 // dashboard entry point.
 //
 // Issuing an arbitrary access or refresh JWT is a
@@ -49,8 +49,8 @@ const maxIssueBodyBytes int64 = 1 << 16
 // every Mount* site is plain `r.Method(path, handler)` and gating
 // happens uniformly via InternalPolicyMiddleware.
 func MountOn(r chi.Router, keys *auth.ServerKeys) {
-	r.Get(UIPath, http.RedirectHandler("/_admin/agents", http.StatusSeeOther).ServeHTTP)
-	r.Get(UIPath+"/", http.RedirectHandler("/_admin/agents", http.StatusSeeOther).ServeHTTP)
+	r.Get(UIPath, http.RedirectHandler("/_admin/services", http.StatusSeeOther).ServeHTTP)
+	r.Get(UIPath+"/", http.RedirectHandler("/_admin/services", http.StatusSeeOther).ServeHTTP)
 	r.Post(IssuePath, issueHandler(keys))
 	r.Post(IssueRefreshPath, issueRefreshHandler(keys))
 }
