@@ -62,6 +62,21 @@ for refresh variants).
       <p class="form-help tf-expiry"></p>
     </div>
   </div>
+
+  <div class="card tf-setup-card">
+    <div class="card-head">
+      <h3>Connect a client</h3>
+      <button type="button" class="btn btn-secondary btn-sm tf-setup-copy">Copy</button>
+    </div>
+    <div class="card-body">
+      <p class="form-help" style="margin-top: 0;">
+        Trust bouncer's CA, route the client through it as an HTTPS
+        proxy, and present the issued JWT as a Bearer token. Paste
+        this into the shell that runs your agent / CLI.
+      </p>
+      <pre class="tf-setup"></pre>
+    </div>
+  </div>
 </div>
 {{- end -}}
 
@@ -86,6 +101,32 @@ function setupTokensForm(host, opts) {
   const outputCard = $(".tf-output-card");
   const outputEl = $(".tf-output");
   const expiryEl = $(".tf-expiry");
+  const setupEl = $(".tf-setup");
+
+  // setupSnippet renders the per-window shell setup block. `token`
+  // is the issued JWT (when one's been minted) or a placeholder so
+  // the snippet is useful even before the user fills the form.
+  function setupSnippet(token) {
+    const base = window.location.protocol + "//" + window.location.host;
+    const jwt = token || "<paste-issued-jwt-here>";
+    return [
+      "# Trust bouncer's CA so HTTPS clients accept the proxy's leaf certs.",
+      "curl -fsS " + base + "/_api/ca.crt -o ~/.config/bouncer-ca.crt",
+      "export SSL_CERT_FILE=$HOME/.config/bouncer-ca.crt",
+      "export REQUESTS_CA_BUNDLE=$HOME/.config/bouncer-ca.crt   # python",
+      "export NODE_EXTRA_CA_CERTS=$HOME/.config/bouncer-ca.crt  # node",
+      "",
+      "# Route HTTPS traffic through bouncer.",
+      "export HTTPS_PROXY=" + base,
+      "export HTTP_PROXY=" + base,
+      "",
+      "# Present the issued JWT as a Bearer token to the upstream.",
+      "# Most upstream clients accept this in their own way; for curl:",
+      "BOUNCER_JWT=\"" + jwt + "\"",
+      "curl -H \"Authorization: Bearer $BOUNCER_JWT\" https://<upstream>/...",
+    ].join("\n");
+  }
+  setupEl.textContent = setupSnippet("");
 
   function escHtml(s) {
     return String(s == null ? "" : s).replace(/[&<>"']/g, c => ({
@@ -227,21 +268,26 @@ function setupTokensForm(host, opts) {
         expiryEl.textContent = "No expiry — this is a refresh JWT.";
       }
       outputCard.hidden = false;
+      setupEl.textContent = setupSnippet(parsed.token);
     } catch (err) {
       status.textContent = "Network error: " + err.message;
       status.className = "tf-status err";
     }
   });
 
-  $(".tf-copy").addEventListener("click", () => {
-    const out = outputEl.textContent;
-    navigator.clipboard.writeText(out).then(() => {
-      const btn = $(".tf-copy");
-      const original = btn.textContent;
-      btn.textContent = "Copied!";
-      setTimeout(() => { btn.textContent = original; }, 1500);
+  function bindCopy(btnSel, srcEl) {
+    const btn = $(btnSel);
+    if (!btn) return;
+    btn.addEventListener("click", () => {
+      navigator.clipboard.writeText(srcEl.textContent).then(() => {
+        const original = btn.textContent;
+        btn.textContent = "Copied!";
+        setTimeout(() => { btn.textContent = original; }, 1500);
+      });
     });
-  });
+  }
+  bindCopy(".tf-copy", outputEl);
+  bindCopy(".tf-setup-copy", setupEl);
 
   loadServices();
 }
