@@ -893,11 +893,11 @@ func TestRoutesAcrossMultipleApis(t *testing.T) {
 // reject malformed JSON so the proxy can respond 400 at the boundary.
 // Empty bodies stay nil (indistinguishable from "no body").
 // TestBuildPrincipal pins the JWT-subject → *pb.Principal mapping the
-// proxy uses as the runtime caller identity. Today every access JWT
-// represents an agent, so kind is constant; subject flows through
-// untouched so the policy author can match on it directly.
+// proxy uses as the runtime caller identity. Authenticated callers
+// stamp kind=agent; the anonymous branch (auth: optional path) zeros
+// the subject and stamps kind=anonymous so a policy can gate on it.
 func TestBuildPrincipal(t *testing.T) {
-	got := buildPrincipal("user-1")
+	got := buildPrincipal("user-1", false)
 	if got == nil {
 		t.Fatal("nil principal")
 	}
@@ -906,6 +906,13 @@ func TestBuildPrincipal(t *testing.T) {
 	}
 	if got.GetKind() != "agent" {
 		t.Errorf("kind = %q, want agent", got.GetKind())
+	}
+	anon := buildPrincipal("user-1", true)
+	if anon.GetSubject() != "" {
+		t.Errorf("anon subject = %q, want empty", anon.GetSubject())
+	}
+	if anon.GetKind() != "anonymous" {
+		t.Errorf("anon kind = %q, want anonymous", anon.GetKind())
 	}
 }
 
@@ -1144,5 +1151,82 @@ func TestParseMultipartBodyRepeatedTextFieldIsList(t *testing.T) {
 	got := channels.GetListValue().GetValues()
 	if len(got) != 2 || got[0].GetStringValue() != "C1" || got[1].GetStringValue() != "C2" {
 		t.Errorf("channel list = %+v", got)
+	}
+}
+
+// TestAuthOptionalAdmitsAnonymous pins the auth: optional path: a
+// request to an API marked `auth: optional` without a Bearer is
+// admitted, runs through policy with kind=anonymous, and reaches the
+// upstream without an Authorization header. A policy gating on
+// `principal.kind == "anonymous"` permits.
+func TestAuthOptionalAdmitsAnonymous(t *testing.T) {
+	var gotAuth string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		_, _ = io.WriteString(w, "upstream-ok")
+	}))
+	defer upstream.Close()
+
+	api := &models.API{
+		Name:         "public",
+		BaseURL:      upstream.URL,
+		PathPrefixes: []string{"/public"},
+		Auth:         "optional",
+		Actions:      []models.Action{{Name: "get", Method: "GET", Path: "/public/v1/health"}},
+	}
+	b := runtime.NewBuilder()
+	if err := b.AddAPI(api); err != nil {
+		t.Fatalf("add api: %v", err)
+	}
+	rt, err := b.Build()
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if err := rt.AddPolicy(&models.Policy{
+		API: "public", Name: "open", Principal: `principal.kind == "anonymous"`,
+		Action: `true`, Condition: `true`, Result: models.Permit,
+	}); err != nil {
+		t.Fatalf("add policy: %v", err)
+	}
+
+	keys := mustKeys(t)
+	factory := func(string, auth.AccessCreds) (compiled.PhysicalAPI, error) {
+		return fakeGmailAPI{}, nil
+	}
+	srv := NewServer(Dependencies{Runtime: rt, Keys: keys, HTTPClient: upstream.Client(), APIFactory: factory})
+	proxy := httptest.NewServer(srv.Router())
+	defer proxy.Close()
+
+	resp, err := http.Get(proxy.URL + "/public/v1/health")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, body = %s", resp.StatusCode, body)
+	}
+	if gotAuth != "" {
+		t.Errorf("upstream saw Authorization = %q, want empty on anonymous path", gotAuth)
+	}
+}
+
+// TestAuthRequiredStill401sWithoutBearer pins the negative: an API
+// without `auth: optional` rejects a bearer-less request even though
+// the auth: optional path exists for other APIs.
+func TestAuthRequiredStill401sWithoutBearer(t *testing.T) {
+	rt := loadGmailRuntime(t, "https://example.invalid")
+	keys := mustKeys(t)
+	srv := NewServer(Dependencies{Runtime: rt, Keys: keys, APIFactory: gmailFactory})
+	proxy := httptest.NewServer(srv.Router())
+	defer proxy.Close()
+
+	resp, err := http.Get(proxy.URL + "/gmail/v1/users/me/profile")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", resp.StatusCode)
 	}
 }

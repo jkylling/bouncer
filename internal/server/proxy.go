@@ -54,7 +54,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	// 401/404 fall through to natural defaults in that case.
 	matchedAPI := s.runtime.APIForPath(r.URL.Path)
 
-	tok, err := s.authenticate(ctx, r)
+	tok, anonymous, err := s.authenticateOrAnonymous(ctx, r, matchedAPI)
 	if err != nil {
 		slog.WarnContext(ctx, "authenticate", "method", r.Method, "path", r.URL.Path, "err", err)
 		hook.errMsg = "unauthorized"
@@ -73,7 +73,14 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			"", nil)
 		return
 	}
-	subject := tok.Subject
+	var (
+		subject string
+		creds   auth.AccessCreds
+	)
+	if !anonymous {
+		subject = tok.Subject
+		creds = tok.Creds
+	}
 	span.SetAttributes(observability.Subject(subject))
 	hook.subject = subject
 
@@ -103,8 +110,8 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	principal := buildPrincipal(subject)
-	apiName, decision, err := s.evaluate(hook.attachObservers(ctx), tok.Creds, policyReq, principal)
+	principal := buildPrincipal(subject, anonymous)
+	apiName, decision, err := s.evaluate(hook.attachObservers(ctx), creds, policyReq, principal)
 	if err != nil {
 		hook.errMsg = err.Error()
 		s.handleEvalError(ctx, w, r, apiName, err)
@@ -154,7 +161,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		failRequest(ctx, w, r, http.StatusInternalServerError, "server error", "upstream lookup", err)
 		return
 	}
-	if err := s.forward(ctx, w, r, bodyBytes, tok.Creds, upstream, apiName, hook); err != nil {
+	if err := s.forward(ctx, w, r, bodyBytes, creds, upstream, apiName, hook); err != nil {
 		hook.errMsg = err.Error()
 		failRequest(ctx, w, r, http.StatusBadGateway, "bad gateway", "upstream", err)
 	}
@@ -295,6 +302,43 @@ func (s *Server) deniedStatusFor(apiName string, defaultStatus int) int {
 	return defaultStatus
 }
 
+// authenticateOrAnonymous wraps the bearer-required and auth: optional
+// paths into one call. Returns (tok, false, nil) when a valid bearer
+// was presented; (nil, true, nil) when no bearer was presented and the
+// matched API admits anonymous traffic; (nil, _, err) otherwise.
+//
+// The anonymous path is gated on the *matched* API rather than the
+// presence of the header alone — a request that doesn't match any
+// API still 401s (and 404s later in eval), so anonymous fall-through
+// can't be abused to probe arbitrary paths.
+//
+// A bearer that's present but invalid always fails the request, even
+// on an optional-auth API: an explicit malformed credential is a
+// client bug, not a "treat as anonymous" signal.
+func (s *Server) authenticateOrAnonymous(ctx context.Context, r *http.Request, matchedAPI string) (*auth.AccessToken, bool, error) {
+	if hv := r.Header.Get("Authorization"); hv == "" {
+		if matchedAPI != "" && s.authOptionalFor(matchedAPI) {
+			return nil, true, nil
+		}
+		return nil, false, fmt.Errorf("missing bearer")
+	}
+	tok, err := s.authenticate(ctx, r)
+	if err != nil {
+		return nil, false, err
+	}
+	return tok, false, nil
+}
+
+// authOptionalFor reads the per-API auth: optional flag. Centralised
+// so the proxy hot path doesn't drill into the runtime in two places.
+func (s *Server) authOptionalFor(apiName string) bool {
+	api := s.runtime.API(apiName)
+	if api == nil {
+		return false
+	}
+	return api.AuthOptional()
+}
+
 // authenticate parses Authorization, verifies the JWT, and returns
 // the verified AccessToken (carrying the upstream credential bundle)
 // + JWT subject. A token with no AccessToken / Headers / Cookies at
@@ -321,15 +365,21 @@ func (s *Server) authenticate(ctx context.Context, r *http.Request) (*auth.Acces
 	return tok, nil
 }
 
-// buildPrincipal builds the *pb.Principal the runtime expects from the
-// verified access-JWT subject. Today the access JWT only carries the
-// subject, so kind, scopes, and attributes stay empty — the policy
-// runtime tolerates absent fields (a CEL `principal.scopes` is the
-// empty list, not an error). `kind` is populated as "agent" because
-// every access JWT the proxy issues today represents a non-human
-// caller; once we issue user-bound tokens this branches on the
-// claim that distinguishes them.
-func buildPrincipal(subject string) *pb.Principal {
+// buildPrincipal builds the *pb.Principal the runtime expects.
+// `anonymous` distinguishes the two callers a policy may want to
+// gate on differently:
+//
+//   - anonymous=true: no Bearer was presented and the matched API
+//     declared `auth: optional`. Subject is empty and kind is
+//     "anonymous"; a policy permits via
+//     `principal.kind == "anonymous"`.
+//   - anonymous=false: a Bearer was verified. Subject is the JWT
+//     subject and kind is "agent" — every access JWT today
+//     represents a non-human caller.
+func buildPrincipal(subject string, anonymous bool) *pb.Principal {
+	if anonymous {
+		return &pb.Principal{Kind: "anonymous"}
+	}
 	return &pb.Principal{
 		Subject: subject,
 		Kind:    "agent",

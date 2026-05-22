@@ -44,7 +44,32 @@ type API struct {
 	// the path), 502 (upstream gateway), and 500 (internal eval bug)
 	// still use their natural codes.
 	AccessDeniedStatus int `yaml:"access_denied_status,omitempty"`
+
+	// Auth controls whether requests to this API require a Bearer
+	// JWT. Two values:
+	//
+	//   - "" / "required" (default): every request must carry a valid
+	//     bouncer JWT; a missing/invalid Authorization header is a
+	//     401 before policy eval runs.
+	//   - "optional": requests without a Bearer are admitted as the
+	//     anonymous principal (kind="anonymous", subject=""). Policy
+	//     still runs and decides whether to permit. A Bearer that *is*
+	//     present is verified normally — the API serves both
+	//     authenticated and anonymous callers. Useful for upstreams
+	//     whose schema endpoints (e.g. Google's discovery service)
+	//     don't need credentials but should still be routed through
+	//     the proxy.
+	//
+	// Forwarded requests on the anonymous path go upstream without
+	// an Authorization header — the JWT had no embedded credential
+	// to substitute. Upstreams that do require auth respond with
+	// their own 401, which the proxy passes through.
+	Auth string `yaml:"auth,omitempty"`
 }
+
+// AuthOptional reports whether the API admits anonymous (no-Bearer)
+// requests. False means a missing/invalid Bearer is a hard 401.
+func (a *API) AuthOptional() bool { return a.Auth == "optional" }
 
 // Metadata describes a single named meta — a logical resource shape that
 // the runtime can lazily fetch to back a policy variable.

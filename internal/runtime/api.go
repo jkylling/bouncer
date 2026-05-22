@@ -37,8 +37,13 @@ type APIRuntime struct {
 	// default" (401/403). Cached at compile time so the data-plane
 	// hot path doesn't re-read the spec.
 	accessDeniedStatus int
-	registry           *messages.Registry
-	metas              map[string]*compiled.Meta // keyed by full name (e.g. "gmail.message")
+	// authOptional is the models.API.AuthOptional() snapshot. When
+	// true, the data plane admits anonymous (no-Bearer) requests on
+	// this API and runs them through policy with an anonymous
+	// principal. See models.API.Auth.
+	authOptional bool
+	registry     *messages.Registry
+	metas        map[string]*compiled.Meta // keyed by full name (e.g. "gmail.message")
 	// actions is a slice in YAML-declared order so log-replay across
 	// requests is stable. The runtime walks every action on every
 	// request and never looks one up by name, so the slice is also
@@ -113,11 +118,15 @@ func compileAPIActions(api *models.API, reg *messages.Registry, allMetas map[str
 	if err := validateAccessDeniedStatus(api); err != nil {
 		return nil, err
 	}
+	if err := validateAuth(api); err != nil {
+		return nil, err
+	}
 	return &APIRuntime{
 		name:               api.Name,
 		baseURL:            api.BaseURL,
 		parsedBaseURL:      parsed,
 		accessDeniedStatus: api.AccessDeniedStatus,
+		authOptional:       api.AuthOptional(),
 		registry:           reg,
 		metas:              allMetas,
 		actions:            actions,
@@ -140,6 +149,19 @@ func validateAccessDeniedStatus(api *models.API) error {
 		return fmt.Errorf("api %q access_denied_status %d: must be in [200, 599]", api.Name, s)
 	}
 	return nil
+}
+
+// validateAuth rejects an unknown auth: value. "" / "required" /
+// "optional" are the supported settings; anything else is a typo
+// that would silently fall back to the required default and surprise
+// the operator.
+func validateAuth(api *models.API) error {
+	switch api.Auth {
+	case "", "required", "optional":
+		return nil
+	default:
+		return fmt.Errorf("api %q auth %q: must be one of required|optional", api.Name, api.Auth)
+	}
 }
 
 // Add registers a policy. The policy's API field must match this
@@ -208,6 +230,12 @@ func (r *APIRuntime) ParsedBaseURL() *url.URL { return r.parsedBaseURL }
 // paths, or 0 if unset. The data plane interprets 0 as "use the
 // natural status" (401 / 403 respectively).
 func (r *APIRuntime) AccessDeniedStatus() int { return r.accessDeniedStatus }
+
+// AuthOptional reports whether the API admits anonymous (no-Bearer)
+// requests. The data plane reads this to decide whether to skip the
+// 401 gate for an inbound request matched to this API. See
+// models.API.Auth.
+func (r *APIRuntime) AuthOptional() bool { return r.authOptional }
 
 // Evaluate selects the matching actions for the request, then walks
 // the candidate policies (deny-first, permit-second). For each policy,
