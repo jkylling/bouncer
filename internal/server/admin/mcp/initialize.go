@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/jkylling/bouncer/internal/control/policies"
+	"github.com/jkylling/bouncer/internal/control/proposals"
 	"github.com/jkylling/bouncer/internal/control/traffic"
 	"github.com/jkylling/bouncer/internal/runtime"
 )
@@ -40,6 +41,12 @@ type Deps struct {
 	// PolicyService backs the policy CRUD tools. Optional; when
 	// nil, the policy tools refuse with a clear error.
 	PolicyService *policies.Service
+
+	// ProposalService backs the propose_policy tool's non-admin
+	// path — drafts are enqueued for an operator to review at
+	// /_admin/proposals. Optional; when nil, non-admin agents get
+	// the validated draft back without queue persistence.
+	ProposalService *proposals.Service
 
 	// TrafficStore backs the traffic-list / get tools. Optional.
 	TrafficStore traffic.Store

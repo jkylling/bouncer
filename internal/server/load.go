@@ -12,6 +12,7 @@ import (
 	"github.com/jkylling/bouncer/internal/auth"
 	"github.com/jkylling/bouncer/internal/control/bundles"
 	"github.com/jkylling/bouncer/internal/control/policies"
+	"github.com/jkylling/bouncer/internal/control/proposals"
 	"github.com/jkylling/bouncer/internal/control/services"
 	"github.com/jkylling/bouncer/internal/control/traffic"
 	"github.com/jkylling/bouncer/internal/runtime"
@@ -44,6 +45,10 @@ type Config struct {
 	// runtime mirrors the on-disk policy set; only the control-plane
 	// write paths are gated.
 	PolicyStoreReadOnly bool
+
+	// ProposalStore is the backing for the human-reviewed policy
+	// drafts queue. Required.
+	ProposalStore proposals.Store
 
 	// UpstreamCallTimeout caps every upstream HTTP call (forward path
 	// and meta side calls share one client). Zero means "no timeout"
@@ -126,6 +131,9 @@ func Load(cfg *Config, keys *auth.ServerKeys) (*Server, error) {
 	if cfg.PolicyStore == nil {
 		return nil, fmt.Errorf("Config.PolicyStore is required")
 	}
+	if cfg.ProposalStore == nil {
+		return nil, fmt.Errorf("Config.ProposalStore is required")
+	}
 	policyService := policies.New(rt, cfg.PolicyStore)
 	if err := policyService.LoadFromStore(context.Background()); err != nil {
 		return nil, fmt.Errorf("load policies: %w", err)
@@ -191,6 +199,7 @@ func Load(cfg *Config, keys *auth.ServerKeys) (*Server, error) {
 		Recorder:          cfg.Recorder,
 		TrafficStore:      cfg.TrafficStore,
 		PolicyService:     policyService,
+		ProposalService:   proposals.New(cfg.ProposalStore, policyService),
 		AdminPasswordHash: cfg.AdminPasswordHash,
 		MITMCAPath:        cfg.MITMCAPath,
 		BundleData: admin.BundleData{

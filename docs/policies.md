@@ -34,8 +34,9 @@ curl -X POST <proxy>/_api/policies \
 
 To validate without persisting, POST the same body to
 `/_api/policies:dryRun`. Non-admin agents can draft a policy via
-the MCP `propose_policy` tool — it validates and returns the draft
-for an operator to apply.
+the MCP `propose_policy` tool (or `POST /_api/proposals`); the draft
+lands on the queue at `/_admin/proposals` where an operator reviews,
+edits, then approves to promote it into the live policy set.
 
 Before writing a real policy, fetch `GET /_api/apis` — the response
 lists every API + every action + every meta the proxy knows about.
@@ -399,7 +400,9 @@ succeed. Use `?field` to keep the optional, then `.orValue` /
      immediately. For operators.
    - **MCP `propose_policy`** — any authenticated agent can call
      this tool. With an admin bearer it applies the policy; without
-     one it returns the validated draft for the operator to apply.
+     one it enqueues a draft for review at `/_admin/proposals`.
+   - **`POST /_api/proposals`** — the HTTP equivalent of the above
+     for non-MCP harnesses.
 
 5. **Verify.** Hit the original request again. On success, you're
    done. On `403`, read the denial body's `next_steps` — it points

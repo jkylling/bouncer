@@ -64,6 +64,7 @@ type pageData struct {
 var pages = map[string]string{
 	"traffic":        "admin_ui/traffic.tmpl.html",
 	"policies":       "admin_ui/policies.tmpl.html",
+	"proposals":      "admin_ui/proposals.tmpl.html",
 	"settings":       "admin_ui/settings.tmpl.html",
 	"services":       "admin_ui/services.tmpl.html",
 	"service_detail": "admin_ui/service_detail.tmpl.html",
@@ -77,6 +78,7 @@ var pages = map[string]string{
 var pageMeta = map[string]pageData{
 	"traffic":        {Title: "traffic", Current: "traffic", ContainerClass: "wide"},
 	"policies":       {Title: "policies", Current: "policies", ContainerClass: "wide"},
+	"proposals":      {Title: "proposals", Current: "proposals", ContainerClass: "wide"},
 	"settings":       {Title: "settings", Current: "settings", ContainerClass: "wide"},
 	"services":       {Title: "services", Current: "services", ContainerClass: "wide"},
 	"service_detail": {Title: "service", Current: "services", ContainerClass: "wide"},

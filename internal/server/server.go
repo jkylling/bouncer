@@ -25,6 +25,7 @@ import (
 
 	"github.com/jkylling/bouncer/internal/auth"
 	"github.com/jkylling/bouncer/internal/control/policies"
+	"github.com/jkylling/bouncer/internal/control/proposals"
 	"github.com/jkylling/bouncer/internal/control/services"
 	"github.com/jkylling/bouncer/internal/control/traffic"
 	"github.com/jkylling/bouncer/internal/observability"
@@ -63,6 +64,7 @@ type Server struct {
 	recorder          Recorder
 	trafficStore      traffic.Store
 	policyService     *policies.Service
+	proposalService   *proposals.Service
 	adminPasswordHash string
 	mitmCAPath        string
 	bundleData        admin.BundleData
@@ -85,6 +87,7 @@ type Dependencies struct {
 	Recorder          Recorder
 	TrafficStore      traffic.Store
 	PolicyService     *policies.Service
+	ProposalService   *proposals.Service
 	AdminPasswordHash string
 	MITMCAPath        string
 	BundleData        admin.BundleData
@@ -109,6 +112,7 @@ func NewServer(deps Dependencies) *Server {
 		recorder:          deps.Recorder,
 		trafficStore:      deps.TrafficStore,
 		policyService:     deps.PolicyService,
+		proposalService:   deps.ProposalService,
 		adminPasswordHash: deps.AdminPasswordHash,
 		mitmCAPath:        deps.MITMCAPath,
 		bundleData:        deps.BundleData,

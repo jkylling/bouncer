@@ -31,13 +31,17 @@ func (s *Server) mountControlPlane(r chi.Router) {
 	if s.policyService != nil {
 		admin.MountPolicies(r, s.policyService)
 	}
+	if s.proposalService != nil {
+		admin.MountProposals(r, s.proposalService)
+	}
 	agentMD, policyMD, apiMD := admin.DocsBytes()
 	mcp.New(mcp.Deps{
-		Runtime:       s.runtime,
-		PolicyService: s.policyService,
-		TrafficStore:  s.trafficStore,
-		BundleReadmes: s.bundleData.Readmes,
-		APIBundle:     s.bundleData.APIBundle,
+		Runtime:         s.runtime,
+		PolicyService:   s.policyService,
+		ProposalService: s.proposalService,
+		TrafficStore:    s.trafficStore,
+		BundleReadmes:   s.bundleData.Readmes,
+		APIBundle:       s.bundleData.APIBundle,
 		Docs: mcp.Docs{
 			AgentGuide:      agentMD,
 			PolicyAuthoring: policyMD,

@@ -1,0 +1,356 @@
+{{- /* proposals page — review queue for policy drafts. Edits hot-
+validate against the live runtime; approval promotes into the
+active policy set. */ -}}
+
+{{- define "body" -}}
+<div id="proposals">
+<h1>Policy proposals</h1>
+<p class="lede">Drafts submitted for human review. Edit a draft to revalidate against the live runtime &mdash; only valid edits persist. Approve to promote into the active policy set.</p>
+
+<div class="toolbar">
+  <label style="margin: 0;">Status
+    <select id="status-filter">
+      <option value="proposed" selected>proposed</option>
+      <option value="approved">approved</option>
+      <option value="rejected">rejected</option>
+      <option value="">all</option>
+    </select>
+  </label>
+  <button type="button" id="refresh" class="secondary">Refresh</button>
+  <span class="muted" id="list-status"></span>
+</div>
+
+<div id="list-empty" class="empty hidden">No proposals match the current filter.</div>
+<div class="table-wrap">
+<table id="list" class="hidden">
+  <thead>
+    <tr><th class="col-id">ID</th><th>API</th><th>Name</th><th>Result</th><th>Status</th><th class="col-author">Author</th><th class="col-updated">Updated</th></tr>
+  </thead>
+  <tbody id="list-body"></tbody>
+</table>
+</div>
+
+<div id="detail" class="detail hidden">
+  <fieldset>
+    <legend>Selected proposal &middot; <span id="detail-id"></span></legend>
+    <p class="muted" id="detail-meta"></p>
+
+    <div id="delete-banner" class="banner hidden">
+      <strong>Removal proposal.</strong> Approving will <em>delete</em>
+      the live policy at this <code>(api, name)</code>. The CEL fields
+      below are not used and aren't editable.
+    </div>
+
+    <label>API <input id="f-api" autocomplete="off"></label>
+    <label>Name <input id="f-name" autocomplete="off"></label>
+    <label class="apply-only">Description (free-form note attached to the policy; survives approval)
+      <textarea id="f-description" autocomplete="off" rows="2"></textarea>
+    </label>
+    <label class="apply-only">Action (CEL predicate over <code>action.name</code> + <code>request</code> + <code>match</code>)
+      <input id="f-action" autocomplete="off">
+    </label>
+    <label class="apply-only">Condition (CEL bool over the action's binds)
+      <textarea id="f-condition" autocomplete="off"></textarea>
+    </label>
+    <label class="apply-only">Result
+      <select id="f-result">
+        <option value="permit">permit</option>
+        <option value="deny">deny</option>
+      </select>
+    </label>
+    <label>Rationale
+      <textarea id="f-rationale" autocomplete="off"></textarea>
+    </label>
+
+    <div class="compile-status apply-only" id="compile-status"></div>
+
+    <div class="row" style="margin-top: 0.8rem;">
+      <button type="button" id="save" disabled>Save edit</button>
+      <button type="button" id="approve" disabled>Approve</button>
+      <button type="button" id="reject" class="secondary" disabled>Reject</button>
+      <button type="button" id="delete" class="danger">Delete</button>
+      <span class="muted" id="action-status"></span>
+    </div>
+  </fieldset>
+</div>
+{{- end -}}
+
+{{- define "page-script" -}}
+<script>
+const listEl = $("list");
+const listBody = $("list-body");
+const listEmpty = $("list-empty");
+const listStatus = $("list-status");
+const statusFilter = $("status-filter");
+const detail = $("detail");
+const compileStatus = $("compile-status");
+const fields = {
+  api: $("f-api"), name: $("f-name"), description: $("f-description"),
+  action: $("f-action"), condition: $("f-condition"), result: $("f-result"),
+  rationale: $("f-rationale"),
+};
+const buttons = { save: $("save"), approve: $("approve"), reject: $("reject"), delete: $("delete") };
+const actionStatus = $("action-status");
+
+let selected = null;          // current Proposal record (server view)
+let dryRunSeq = 0;            // monotonic counter — drops stale dry-run results
+let dryRunTimer = null;       // debounce handle
+
+function pill(status) {
+  return `<span class="pill pill-${status}">${status}</span>`;
+}
+
+async function refresh() {
+  listStatus.textContent = "Loading…";
+  const status = statusFilter.value;
+  const url = "/_api/proposals" + (status ? `?status=${encodeURIComponent(status)}` : "");
+  const r = await fetchJSON("GET", url);
+  if (!r.ok) {
+    listStatus.textContent = `Error: ${r.raw || r.status}`;
+    listStatus.className = "muted err";
+    return;
+  }
+  listStatus.textContent = "";
+  const proposals = (r.body && r.body.proposals) || [];
+  proposals.sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
+  listBody.innerHTML = "";
+  if (!proposals.length) {
+    listEl.classList.add("hidden");
+    listEmpty.classList.remove("hidden");
+    return;
+  }
+  listEl.classList.remove("hidden");
+  listEmpty.classList.add("hidden");
+  for (const p of proposals) {
+    const tr = document.createElement("tr");
+    tr.className = "selectable";
+    tr.dataset.id = p.id;
+    // Delete proposals carry no policy.result on the wire (only the
+    // api+name are meaningful) — show the kind in that column so the
+    // reviewer can spot removal proposals at a glance.
+    const kind = (p.kind || "apply");
+    const resultCell = kind === "delete"
+      ? `<span class="pill pill-delete">delete</span>`
+      : (p.policy.result || "");
+    tr.innerHTML = `
+      <td class="col-id"><code>${p.id}</code></td>
+      <td>${p.policy.api}</td>
+      <td>${p.policy.name}</td>
+      <td>${resultCell}</td>
+      <td>${pill(p.status)}</td>
+      <td class="col-author">${p.author || ""}</td>
+      <td class="col-updated">${fmtTime(p.updated_at)}</td>
+    `;
+    tr.addEventListener("click", () => select(p.id));
+    listBody.appendChild(tr);
+  }
+  if (selected) highlightSelected();
+}
+
+function highlightSelected() {
+  for (const tr of listBody.querySelectorAll("tr")) {
+    tr.classList.toggle("selected", selected && tr.dataset.id === selected.id);
+  }
+}
+
+async function select(id) {
+  const r = await fetchJSON("GET", `/_api/proposals/${encodeURIComponent(id)}`);
+  if (!r.ok) {
+    actionStatus.textContent = `Could not load: ${r.raw || r.status}`;
+    actionStatus.className = "muted err";
+    return;
+  }
+  selected = r.body;
+  detail.classList.remove("hidden");
+  $("detail-id").textContent = selected.id;
+  $("detail-meta").innerHTML = `
+    Status ${pill(selected.status)} &middot;
+    Author <code>${selected.author || "(unknown)"}</code> &middot;
+    Origin <code>${selected.origin?.kind || "(none)"}</code>
+    ${selected.origin?.agent ? `&middot; Agent <code>${selected.origin.agent}</code>` : ""}
+    &middot; Created ${fmtTime(selected.created_at)}
+    &middot; Updated ${fmtTime(selected.updated_at)}
+    ${selected.decided_at ? `&middot; Decided ${fmtTime(selected.decided_at)} by <code>${selected.decided_by || ""}</code>` : ""}
+    ${selected.rejection_reason ? `&middot; Reason: ${selected.rejection_reason}` : ""}
+  `;
+  fields.api.value = selected.policy.api || "";
+  fields.name.value = selected.policy.name || "";
+  fields.description.value = selected.policy.description || "";
+  fields.action.value = selected.policy.action || "";
+  fields.condition.value = selected.policy.condition || "";
+  fields.result.value = selected.policy.result || "permit";
+  fields.rationale.value = selected.rationale || "";
+  const editable = selected.status === "proposed";
+  applyKind(selected.kind || "apply", editable);
+  buttons.save.disabled = true;
+  buttons.approve.disabled = !editable;
+  buttons.reject.disabled = !editable;
+  buttons.delete.disabled = false;
+  actionStatus.textContent = "";
+  highlightSelected();
+  if ((selected.kind || "apply") === "apply") {
+    await dryRun();
+  } else {
+    // Delete proposals don't validate against the runtime — there's
+    // no policy body to compile. Save is enabled outright (only
+    // editable fields are api/name/rationale).
+    if (editable) buttons.save.disabled = false;
+  }
+}
+
+// applyKind toggles the apply-only fields' visibility and the
+// removal banner. Called from select(); the kind is immutable
+// after create, so the form doesn't expose a kind selector — it
+// just renders to match the proposal's stored kind.
+function applyKind(kind, editable) {
+  const isDelete = kind === "delete";
+  $("delete-banner").classList.toggle("hidden", !isDelete);
+  for (const el of document.querySelectorAll(".apply-only")) {
+    el.classList.toggle("hidden", isDelete);
+  }
+  for (const f of Object.values(fields)) {
+    if (!editable) {
+      f.disabled = true;
+      continue;
+    }
+    // For delete, only api/name/rationale are editable; the rest stay
+    // disabled (they aren't rendered anyway, but keep the state
+    // honest for currentPolicy()).
+    f.disabled = isDelete && !["api", "name", "rationale"].includes(fieldKey(f));
+  }
+}
+
+// fieldKey reverses the `fields` map: given an element, returns
+// its key. Lets applyKind() decide which fields to disable per
+// kind without an extra dictionary lookup.
+function fieldKey(el) {
+  for (const [k, v] of Object.entries(fields)) {
+    if (v === el) return k;
+  }
+  return "";
+}
+
+function currentPolicy() {
+  const p = {
+    api: fields.api.value.trim(),
+    name: fields.name.value.trim(),
+    action: fields.action.value,
+    condition: fields.condition.value,
+    result: fields.result.value,
+  };
+  // omitempty on the wire — only send if the operator typed something.
+  const description = fields.description.value;
+  if (description) p.description = description;
+  return p;
+}
+
+async function dryRun() {
+  if (!selected) return;
+  const seq = ++dryRunSeq;
+  compileStatus.textContent = "Validating…";
+  compileStatus.className = "compile-status muted";
+  const r = await fetchJSON("POST", "/_api/policies:dryRun", currentPolicy());
+  if (seq !== dryRunSeq) return; // stale, a newer keystroke is in flight
+  if (r.ok && r.body && r.body.ok) {
+    compileStatus.textContent = "Valid.";
+    compileStatus.className = "compile-status compile-ok";
+    if (selected.status === "proposed") buttons.save.disabled = false;
+  } else {
+    const msg = r.body?.error || r.raw || `HTTP ${r.status}`;
+    compileStatus.textContent = msg;
+    compileStatus.className = "compile-status compile-err";
+    buttons.save.disabled = true; // never save an invalid edit
+  }
+}
+
+function scheduleDryRun() {
+  if (!selected || selected.status !== "proposed") return;
+  if ((selected.kind || "apply") === "delete") return; // no body to compile
+  if (dryRunTimer) clearTimeout(dryRunTimer);
+  dryRunTimer = setTimeout(dryRun, 250);
+}
+
+for (const f of Object.values(fields)) f.addEventListener("input", scheduleDryRun);
+
+buttons.save.addEventListener("click", async () => {
+  if (!selected) return;
+  actionStatus.textContent = "Saving…";
+  actionStatus.className = "muted";
+  const body = {
+    policy: currentPolicy(),
+    rationale: fields.rationale.value,
+  };
+  const r = await fetchJSON("PATCH", `/_api/proposals/${encodeURIComponent(selected.id)}`, body);
+  if (!r.ok) {
+    actionStatus.textContent = `Error: ${r.raw || r.status}`;
+    actionStatus.className = "muted err";
+    return;
+  }
+  actionStatus.textContent = "Saved.";
+  actionStatus.className = "muted ok";
+  selected = r.body;
+  buttons.save.disabled = true;
+  await refresh();
+});
+
+buttons.approve.addEventListener("click", async () => {
+  if (!selected) return;
+  // The server stamps the approver from the JWT subject; no prompt.
+  let body = { overwrite: false };
+  let r = await fetchJSON("POST", `/_api/proposals/${encodeURIComponent(selected.id)}/approve`, body);
+  if (!r.ok && r.status === 409) {
+    if (!confirm(`Conflict: ${r.raw || ""}\n\nOverwrite the existing policy?`)) return;
+    body.overwrite = true;
+    r = await fetchJSON("POST", `/_api/proposals/${encodeURIComponent(selected.id)}/approve`, body);
+  }
+  if (!r.ok) {
+    actionStatus.textContent = `Error: ${r.raw || r.status}`;
+    actionStatus.className = "muted err";
+    return;
+  }
+  actionStatus.textContent = "Approved &mdash; live in runtime.";
+  actionStatus.className = "muted ok";
+  selected = r.body;
+  await refresh();
+  await select(selected.id);
+});
+
+buttons.reject.addEventListener("click", async () => {
+  if (!selected) return;
+  // Reviewer is the JWT subject; we still ask for a reason since the
+  // server doesn't know why.
+  const reason = prompt("Reason?", "");
+  if (reason === null) return;
+  const r = await fetchJSON("POST", `/_api/proposals/${encodeURIComponent(selected.id)}/reject`, { reason });
+  if (!r.ok) {
+    actionStatus.textContent = `Error: ${r.raw || r.status}`;
+    actionStatus.className = "muted err";
+    return;
+  }
+  actionStatus.textContent = "Rejected.";
+  actionStatus.className = "muted ok";
+  selected = r.body;
+  await refresh();
+  await select(selected.id);
+});
+
+buttons.delete.addEventListener("click", async () => {
+  if (!selected) return;
+  if (!confirm(`Delete proposal ${selected.id}? This cannot be undone.`)) return;
+  const r = await fetchJSON("DELETE", `/_api/proposals/${encodeURIComponent(selected.id)}`);
+  if (!r.ok) {
+    actionStatus.textContent = `Error: ${r.raw || r.status}`;
+    actionStatus.className = "muted err";
+    return;
+  }
+  selected = null;
+  detail.classList.add("hidden");
+  await refresh();
+});
+
+statusFilter.addEventListener("change", refresh);
+$("refresh").addEventListener("click", refresh);
+refresh();
+</script>
+</div>
+{{- end -}}

@@ -104,6 +104,12 @@ type config struct {
 	// risking accidental edits from a shared admin host.
 	PoliciesReadOnly bool `mapstructure:"policies-readonly"`
 
+	// Proposals queue storage. Memory is the default — the queue is
+	// short-lived state (approved drafts promote into the policies
+	// store; rejected ones are dropped).
+	ProposalsStore ProposalsStoreKind `mapstructure:"proposals-store"`
+	ProposalsDB    string             `mapstructure:"proposals-db"`
+
 	// StoreDB is the convenience shortcut: any domain whose own
 	// --*-db flag is empty falls back to this when its backend is
 	// sqlite. Setting --traffic-store=sqlite and --policies-store=
@@ -238,6 +244,8 @@ func bindServeFlags(fs *pflag.FlagSet) {
 	fs.String("policies-store", "file", "policies storage backend (file|memory|sqlite); file uses --policies-dir")
 	fs.String("policies-db", "", "path to the sqlite DB file when --policies-store=sqlite (falls back to --store-db)")
 	fs.Bool("policies-readonly", false, "reject every mutating policy endpoint; the policies viewer stays available")
+	fs.String("proposals-store", "memory", "proposals queue backend (memory|sqlite)")
+	fs.String("proposals-db", "", "path to the sqlite DB file when --proposals-store=sqlite (falls back to --store-db)")
 	fs.String("store-db", "", "shared sqlite DB path; any domain set to sqlite without its own --*-db falls back to this so all three can live in one file")
 	fs.String("admin-password-hash", "", "bcrypt hash for the /_api/admin/login flow. Auto-loaded from `<data-dir>/admin-password.hash` when --data-dir is set; otherwise generate via `htpasswd -bnBC 12 \"\" <pw> | tr -d ':\\n'`.")
 	fs.String("data-dir", "", "directory created by `bouncer init`. Defaults to the current working directory when it looks like an initialized data dir (secret.hex + admin-password.hash present), or when --init is set. When set, defaults --secret-hex, --apis-dir, --policies-dir, --admin-password-hash, --store-db, and --mitm-ca-cert/key from the layout files (any explicit flag overrides).")
@@ -399,6 +407,9 @@ func applyDataDir(cfg *config, fs *pflag.FlagSet) error {
 		if !fs.Changed("policies-store") {
 			cfg.PoliciesStore = PoliciesStoreSqlite
 		}
+		if !fs.Changed("proposals-store") {
+			cfg.ProposalsStore = ProposalsStoreSqlite
+		}
 	}
 	if !fs.Changed("mitm-ca-cert") && datadir.Exists(l.MITMCert()) {
 		cfg.MITMCAPath = l.MITMCert()
@@ -427,6 +438,9 @@ func (c *config) validate() error {
 		return err
 	}
 	if err := validateStoreDB("policies", c.PoliciesStore == PoliciesStoreSqlite, c.PoliciesDB, c.StoreDB); err != nil {
+		return err
+	}
+	if err := validateStoreDB("proposals", c.ProposalsStore == ProposalsStoreSqlite, c.ProposalsDB, c.StoreDB); err != nil {
 		return err
 	}
 	if err := admin.PolicySet(c.InternalPolicies).Validate(); err != nil {

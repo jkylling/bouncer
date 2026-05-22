@@ -38,3 +38,17 @@ func adminBearer(t *testing.T, keys *auth.ServerKeys) string {
 	}
 	return "Bearer " + tok
 }
+
+// userBearer issues a non-admin access JWT for the named subject.
+// Used by tests that exercise authenticated-but-not-admin paths or
+// subject scoping (a non-admin caller only sees their own
+// resources).
+func userBearer(t *testing.T, keys *auth.ServerKeys, subject string) string {
+	t.Helper()
+	tok, err := auth.IssueAccessToken(keys, subject,
+		auth.AccessCreds{AccessToken: "x"}, time.Hour, false)
+	if err != nil {
+		t.Fatalf("issue user: %v", err)
+	}
+	return "Bearer " + tok
+}

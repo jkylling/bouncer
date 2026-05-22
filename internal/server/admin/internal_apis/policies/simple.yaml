@@ -44,12 +44,18 @@ action: |
     "ui_index",
     "ui_tokens",
     "ui_policies",
+    "ui_proposals",
     "ui_traffic",
     "ui_settings",
     "ui_services",
     "policies_list",
     "policies_get",
     "policies_dryrun",
+    "proposals_list",
+    "proposals_create",
+    "proposals_get",
+    "proposals_update",
+    "proposals_delete",
     "services_list",
     "services_get",
   ]
@@ -58,7 +64,7 @@ result: permit
 ---
 api: bouncer-internal
 name: admin-only
-description: Token issuance, policy CRUD writes, and the traffic viewer are admin-only.
+description: Token issuance, policy CRUD writes, traffic, and proposal approve/reject are admin-only.
 principal: '"admin" in principal.scopes'
 action: |
   action.name in [
@@ -69,6 +75,8 @@ action: |
     "policies_create",
     "policies_replace",
     "policies_delete",
+    "proposals_approve",
+    "proposals_reject",
     "traffic_list",
     "traffic_get",
   ]

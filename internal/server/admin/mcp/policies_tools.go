@@ -7,6 +7,7 @@ import (
 
 	"github.com/jkylling/bouncer/internal/auth"
 	"github.com/jkylling/bouncer/internal/control/policies"
+	"github.com/jkylling/bouncer/internal/control/proposals"
 	"github.com/jkylling/bouncer/internal/runtime/models"
 )
 
@@ -140,16 +141,15 @@ func runDryRunPolicy(_ context.Context, deps Deps, raw json.RawMessage) (any, *E
 
 // proposePolicyResult is the response for propose_policy. `ok` mirrors
 // dry_run_policy (compile success); `applied` says whether the policy
-// actually landed in the live runtime — only true on the admin path.
-// `message` carries the human-readable next step the agent should
-// surface (apply via admin, name conflict, etc.); `policy` echoes the
-// validated draft so the agent can show it to the user verbatim.
+// landed in the live runtime (admin path); `proposal_id` is populated
+// when the draft was enqueued on the proposals queue for human review.
 type proposePolicyResult struct {
-	OK      bool           `json:"ok"`
-	Applied bool           `json:"applied"`
-	Policy  *models.Policy `json:"policy,omitempty"`
-	Message string         `json:"message,omitempty"`
-	Error   string         `json:"error,omitempty"`
+	OK         bool           `json:"ok"`
+	Applied    bool           `json:"applied"`
+	ProposalID string         `json:"proposal_id,omitempty"`
+	Policy     *models.Policy `json:"policy,omitempty"`
+	Message    string         `json:"message,omitempty"`
+	Error      string         `json:"error,omitempty"`
 }
 
 func runProposePolicy(ctx context.Context, deps Deps, raw json.RawMessage) (any, *Error) {
@@ -173,12 +173,33 @@ func runProposePolicy(ctx context.Context, deps Deps, raw json.RawMessage) (any,
 			Message: "Policy is valid but (api, name) already exists. Pick a different name or ask the operator to replace the existing policy.",
 		}, nil
 	}
-	if !auth.CallerFromContext(ctx).IsAdmin() {
+	caller := auth.CallerFromContext(ctx)
+	if !caller.IsAdmin() {
+		// Non-admin: enqueue onto the proposals queue so an operator
+		// can review at /_admin/proposals. nil ProposalService is the
+		// legacy "just return the draft" behaviour.
+		if deps.ProposalService == nil {
+			return proposePolicyResult{
+				OK:      true,
+				Applied: false,
+				Policy:  &p,
+				Message: "Policy compiled cleanly. Surface this draft to the user; an operator with admin role must apply it.",
+			}, nil
+		}
+		prop, err := deps.ProposalService.Create(ctx, proposals.CreateInput{
+			Policy: p,
+			Origin: proposals.Origin{Kind: proposals.OriginAgent, Agent: caller.Subject},
+			Author: caller.Subject,
+		})
+		if err != nil {
+			return nil, internalError(err.Error())
+		}
 		return proposePolicyResult{
-			OK:      true,
-			Applied: false,
-			Policy:  &p,
-			Message: "Policy compiled cleanly. Surface this draft to the user; an operator with admin role must apply it (via the admin UI or by re-invoking propose_policy with an admin bearer).",
+			OK:         true,
+			Applied:    false,
+			ProposalID: prop.ID.String(),
+			Policy:     &p,
+			Message:    "Draft enqueued for review at /_admin/proposals (id " + prop.ID.String() + ").",
 		}, nil
 	}
 	if err := deps.PolicyService.Create(ctx, &p); err != nil {

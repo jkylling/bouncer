@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/jkylling/bouncer/internal/control/policies"
+	"github.com/jkylling/bouncer/internal/control/proposals"
 	"github.com/jkylling/bouncer/internal/control/store"
 	"github.com/jkylling/bouncer/internal/control/traffic"
 )
@@ -50,6 +51,27 @@ func (k *PoliciesStoreKind) UnmarshalText(b []byte) error {
 		return nil
 	}
 	return fmt.Errorf("invalid policies store %q (file|memory|sqlite)", b)
+}
+
+// ProposalsStoreKind selects the proposals queue backend. Memory is
+// the default — the queue is short-lived state (approved proposals
+// promote into the policies store; rejected ones are dropped) so
+// surviving restart isn't strictly necessary.
+type ProposalsStoreKind string
+
+const (
+	ProposalsStoreMemory ProposalsStoreKind = "memory"
+	ProposalsStoreSqlite ProposalsStoreKind = "sqlite"
+)
+
+func (k *ProposalsStoreKind) UnmarshalText(b []byte) error {
+	s := ProposalsStoreKind(strings.ToLower(strings.TrimSpace(string(b))))
+	switch s {
+	case ProposalsStoreMemory, ProposalsStoreSqlite:
+		*k = s
+		return nil
+	}
+	return fmt.Errorf("invalid proposals store %q (memory|sqlite)", b)
 }
 
 // backendCache interns sqlite backends by path so two domains pointed
@@ -156,5 +178,22 @@ func buildPolicyStore(cfg *config, cache *backendCache) (policies.Store, error) 
 		return policies.Open(b)
 	default:
 		return nil, fmt.Errorf("unhandled policies store %q", cfg.PoliciesStore)
+	}
+}
+
+// buildProposalStore opens the configured proposals.Store. Default
+// is in-memory (the queue is short-lived state).
+func buildProposalStore(cfg *config, cache *backendCache) (proposals.Store, error) {
+	switch cfg.ProposalsStore {
+	case ProposalsStoreMemory:
+		return proposals.NewMemoryStore(), nil
+	case ProposalsStoreSqlite:
+		b, err := cache.sqliteAt(resolveDBPath(cfg.ProposalsDB, cfg.StoreDB))
+		if err != nil {
+			return nil, fmt.Errorf("open proposals db: %w", err)
+		}
+		return proposals.Open(b)
+	default:
+		return nil, fmt.Errorf("unhandled proposals store %q", cfg.ProposalsStore)
 	}
 }

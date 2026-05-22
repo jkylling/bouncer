@@ -20,6 +20,7 @@ func TestDashboardTabs(t *testing.T) {
 		{"/_admin/services", "Services"},
 		{"/_admin/tokens", "Tokens"},
 		{"/_admin/policies", "Policies"},
+		{"/_admin/proposals", "Proposals"},
 		{"/_admin/traffic", "Traffic"},
 		{"/_admin/settings", "Settings"},
 		{"/_admin/", "Services"},

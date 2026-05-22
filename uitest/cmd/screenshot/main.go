@@ -36,6 +36,7 @@ var liveShots = []struct {
 	{name: "service-detail", path: "/_admin/services/google"},
 	{name: "tokens", path: "/_admin/tokens"},
 	{name: "policies", path: "/_admin/policies"},
+	{name: "proposals", path: "/_admin/proposals"},
 	{name: "traffic", path: "/_admin/traffic"},
 	{name: "settings", path: "/_admin/settings"},
 }

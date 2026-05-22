@@ -94,6 +94,11 @@ func runServe(cfg *config) error {
 		cache.closeAll()
 		return fmt.Errorf("policy store: %w", err)
 	}
+	proposalStore, err := buildProposalStore(cfg, cache)
+	if err != nil {
+		cache.closeAll()
+		return fmt.Errorf("proposal store: %w", err)
+	}
 
 	trafficStore, recorder, err := buildTraffic(cfg, cache)
 	if err != nil {
@@ -105,6 +110,7 @@ func runServe(cfg *config) error {
 		ApisDir:             cfg.ApisDir,
 		PolicyStore:         policyStore,
 		PolicyStoreReadOnly: cfg.PoliciesReadOnly,
+		ProposalStore:       proposalStore,
 		UpstreamCallTimeout: cfg.UpstreamCallTimeout,
 		RefreshTTL:          cfg.RefreshTTL,
 		AdminPasswordHash:   cfg.AdminPasswordHash,

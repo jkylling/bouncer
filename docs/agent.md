@@ -275,8 +275,8 @@ When a request is denied and you believe the policy should be
 relaxed (or you're adding coverage for an unhandled case), use the
 MCP `propose_policy` tool. It validates the draft against the live
 runtime; with an admin bearer it applies the policy directly, and
-without one it returns the validated draft so the agent can surface
-it to the operator.
+without one it enqueues a draft on the proposals queue at
+`/_admin/proposals` for an operator to review.
 
 ```
 tools/call propose_policy
@@ -288,6 +288,20 @@ tools/call propose_policy
   "result": "permit"
 }
 ```
+
+The non-admin result includes `proposal_id`; surface it to the user
+so they can follow up at `/_admin/proposals/<id>`. The operator may
+edit the draft (the runtime re-validates the edit), then approve to
+promote it into the live policy set or reject with a reason.
+
+HTTP equivalents for non-MCP harnesses:
+
+- `POST /_api/proposals` (any auth) — submit a draft.
+- `GET /_api/proposals` — list drafts (subject-scoped for non-admin).
+- `PATCH /_api/proposals/{id}` — edit a `proposed` draft.
+- `POST /_api/proposals/{id}/approve` (admin) — promote into the
+  live policy set.
+- `POST /_api/proposals/{id}/reject` (admin) — close with a reason.
 
 ## Inspecting traffic
 
