@@ -17,11 +17,12 @@ func TestDashboardTabs(t *testing.T) {
 	tabs := []struct {
 		path, heading string
 	}{
-		{"/_admin/traffic", "Traffic"},
-		{"/_admin/policies", "Policies"},
-		{"/_admin/", "Agents"},
 		{"/_admin/services", "Services"},
+		{"/_admin/tokens", "Tokens"},
+		{"/_admin/policies", "Policies"},
+		{"/_admin/traffic", "Traffic"},
 		{"/_admin/settings", "Settings"},
+		{"/_admin/", "Services"},
 	}
 
 	for _, tab := range tabs {

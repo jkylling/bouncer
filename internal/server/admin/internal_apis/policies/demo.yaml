@@ -22,8 +22,6 @@ action: |
     "logout",
     "whoami",
     "ca_download",
-    "install_wrapper",
-    "install_ca_pem",
     "docs_agent",
     "docs_policies",
     "docs_apis",

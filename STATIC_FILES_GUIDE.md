@@ -80,16 +80,16 @@ Generic `.tab` / `.tab-pane` classes replace per-page duplicates like `.harness-
 
 ### Pattern 3: Standalone JS Module
 
-For larger scripts (e.g., the entire traffic_propose form logic):
+For larger scripts:
 
-1. Create `static/js/traffic-propose.js`
-2. Extract functions to the module, expose via `window.TrafficPropose = {...}`
-3. Load via `<script src="/_admin/static/js/traffic-propose.js"></script>`
+1. Create `static/js/<name>.js`
+2. Extract functions to the module, expose via `window.<Name> = {...}`
+3. Load via `<script src="/_admin/static/js/<name>.js"></script>`
 4. Call from `page-script` block
 
 ### Example: Extract copy-button handler
 
-**Before** (in agents.tmpl.html):
+**Before** (inline in a page template):
 ```js
 document.addEventListener("click", async (e) => {
   const btn = e.target.closest("[data-copy-target]");

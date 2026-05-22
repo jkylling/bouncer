@@ -33,8 +33,9 @@ curl -X POST <proxy>/_api/policies \
 ```
 
 To validate without persisting, POST the same body to
-`/_api/policies:dryRun`. To submit as a proposal a human reviews
-first, POST to `/_api/proposals`.
+`/_api/policies:dryRun`. Non-admin agents can draft a policy via
+the MCP `propose_policy` tool — it validates and returns the draft
+for an operator to apply.
 
 Before writing a real policy, fetch `GET /_api/apis` — the response
 lists every API + every action + every meta the proxy knows about.
@@ -395,18 +396,14 @@ succeed. Use `?field` to keep the optional, then `.orValue` /
 
 4. **Decide the install path:**
    - **Direct CRUD** (admin JWT) — `POST /_api/policies`. Live
-     immediately. For operators, not agents.
-   - **Proposal** (any authenticated JWT) — `POST /_api/proposals`
-     with `policy:`, `origin: {"kind": "agent", "agent": "<id>"}`,
-     and a `rationale:`. A human reviews and approves.
-   - **Propose-from-traffic** — when you got a 403 just now, hit
-     `POST /_api/traffic/{request-id}/propose-policy?submit=true`.
-     The runtime drafts a candidate condition matching that
-     specific request as a starting point.
+     immediately. For operators.
+   - **MCP `propose_policy`** — any authenticated agent can call
+     this tool. With an admin bearer it applies the policy; without
+     one it returns the validated draft for the operator to apply.
 
 5. **Verify.** Hit the original request again. On success, you're
    done. On `403`, read the denial body's `next_steps` — it points
-   at this guide, the live policy list, and the propose endpoint.
+   at this guide and the live policy list.
 
 ## Worked examples
 

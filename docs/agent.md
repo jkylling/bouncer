@@ -3,29 +3,19 @@
 This proxy fronts a fixed set of upstream APIs (Google Workspace,
 your own services, etc.) and gates every inbound request through a
 policy engine. Each request is matched to a registered API + action
-and either forwarded to the upstream with the operator's stored
-upstream credential, or denied.
+and either forwarded to the upstream with the JWT-embedded upstream
+credential, or denied.
 
 You — the agent or operator-script — present a Bearer JWT issued by
-this proxy. The proxy holds the upstream credential; you never see
-it.
+this proxy. The JWT itself carries the upstream credential (access
+token + any extra headers); bouncer is stateless about it.
 
-## Recommended onboarding
+## Getting a JWT
 
-If you can speak the Model Context Protocol, the easiest way to wire
-up bouncer is to invoke the `/bouncer:setup` MCP prompt. It installs
-a small `bouncer-wrap` wrapper script + the proxy's CA cert and
-writes a project-level instruction fragment so future sessions know
-to prefix upstream calls with `bouncer-wrap`. After that, per-service
-prompts (`/google-token`, `/slack-token`, …) registered from the
-installed API bundles stage local credentials for the matching CLIs.
-
-The `/bouncer:setup` prompt expects you to be reachable at the same
-URL the MCP server lives at — `http://localhost:8080` for the
-default self-hosted deployment. See the `## bouncer` section the
-prompt writes into the project's instruction file for the day-to-day
-usage contract (when to call `bouncer-wrap`, how to react to
-`credentials_not_staged` / `service_not_connected` 401 bodies).
+The operator issues a JWT for the service you need on the
+`/_admin/tokens` page (or via the `bouncer issue-token` CLI) and
+hands it to you. You set it as a Bearer header on every request
+against the proxy. There is no per-agent registration step.
 
 ## Authentication
 
@@ -38,18 +28,18 @@ Authorization: Bearer <access-jwt>
 
 The JWT is issued by one of:
 
-- `cmd/issue-token` — operator CLI. Issues both an access and a
-  refresh JWT bound to a specific upstream refresh token. Pass
-  `--admin` to stamp the `admin: true` claim for control-plane work.
+- `/_admin/tokens` — operator UI. Pick a service + token variant, fill
+  in the declared fields (access token, refresh token + client pair,
+  cookies, …), copy the JWT.
+- `bouncer issue-token` — operator CLI. Same shape; useful for
+  scripted issuance and CI.
 - `POST /token` — refresh flow. Trade a refresh JWT for a fresh
   access JWT (RFC 6749 §6).
-- `POST /_api/issue/tokens` — admin-only issue endpoint. Requires an
-  admin JWT; useful for an operator scripting issue-on-demand.
-- `POST /_api/admin/login` — password-based login. Operator presents
-  the shared admin password (compared against `--admin-password-hash`)
-  and receives an admin JWT both as a JSON `token` and on the
-  HttpOnly `auth_proxy_admin` cookie. The browser flow at
-  `/_admin/login` uses this.
+- `POST /_api/issue/tokens` / `POST /_api/tokens/issue` —
+  admin-only JSON issue endpoints. Same JSON shape as the UI form.
+- `POST /_api/admin/login` — password-based login for the dashboard
+  itself. Returns an admin JWT both as a JSON `token` and on the
+  HttpOnly `auth_proxy_admin` cookie.
 
 A request without a valid Authorization header gets `401
 unauthorized`.
@@ -84,10 +74,10 @@ Control-plane endpoints fall into three tiers:
   (`/_admin/login`), and the MITM CA download (`/_api/ca.crt`) sit
   here.
 - **Authenticated** — any valid JWT, admin or not. Reads on policies
-  and proposals, the propose-from-request endpoint, and your own
-  drafts. Subject-scoped: a non-admin sees only their own resources.
-- **Admin** — JWT must carry `admin: true`. Issue, traffic reads,
-  policy writes, proposal approve/reject all gate here.
+  and traffic. Subject-scoped: a non-admin sees only their own
+  traffic events.
+- **Admin** — JWT must carry `admin: true`. Token issuance, policy
+  writes, and the full traffic viewer gate here.
 
 Anonymous calls to JSON endpoints get `401`. Anonymous browser
 navigations to UI shells (`/_admin/...`) get `303` to the login
@@ -150,9 +140,10 @@ descriptions instead of hand-coded URLs.
 Tools (subset of the catalogue, full list via `tools/list`):
 
 - `list_apis` / `list_policies` / `get_policy` / `dry_run_policy`
-- `list_proposals` / `get_proposal` / `propose_policy`
+- `propose_policy` — validates a draft; with an admin bearer it
+  applies the policy directly, otherwise it returns the draft for
+  the operator to surface.
 - `list_traffic` / `get_traffic_event`
-- `approve_proposal` / `reject_proposal` (admin-only)
 
 Resources:
 
@@ -178,7 +169,7 @@ Issue a JWT once and configure the harness to send it on every
 request:
 
 ```sh
-# Admin JWT (control-plane writes — approve / reject proposals).
+# Admin JWT (control-plane writes — apply a propose_policy draft).
 bouncer issue-token --subject claude-code --admin --access-token "$UPSTREAM_TOKEN"
 ```
 
@@ -235,9 +226,10 @@ A typical workflow:
 2. If the entry has `readme_url`, fetch it for the API author's
    guidance and any placeholder tokens worth substituting.
 3. Validate the draft via `POST /_api/policies:dryRun`.
-4. Submit via `POST /_api/proposals` (subject-scoped, the operator
-   approves) or — if you carry the `admin` claim — apply directly
-   via `POST /_api/policies`.
+4. If you carry the `admin` claim, apply directly via `POST
+   /_api/policies`. Otherwise surface the draft to the operator —
+   the MCP `propose_policy` tool returns the validated draft when
+   the caller isn't admin.
 
 ## Authoring
 
@@ -247,7 +239,7 @@ proxy:
 - [`/_api/docs/policies`](./docs/policies) — write a CEL policy that
   permits or denies a specific action. Includes a self-contained CEL
   primer (literals, optionals, list/map ops, common idioms). Read
-  this when you got a `403 forbidden` and want to draft a proposal,
+  this when you got a `403 forbidden` and want to draft an exception,
   or when you're authoring the rule set from scratch.
 - [`/_api/docs/apis`](./docs/apis) — describe a new upstream API to
   bouncer (resources, fetch URLs, actions). Read this when you're
@@ -280,67 +272,22 @@ returns `403 forbidden` and the `:capabilities` endpoint reports
 ## Proposing a new policy
 
 When a request is denied and you believe the policy should be
-relaxed (or you're adding coverage for an unhandled case), submit a
-proposal — a draft policy a human reviewer can edit, reject, or
-approve. Approval applies the policy through the same pipeline the
-direct CRUD endpoint uses.
+relaxed (or you're adding coverage for an unhandled case), use the
+MCP `propose_policy` tool. It validates the draft against the live
+runtime; with an admin bearer it applies the policy directly, and
+without one it returns the validated draft so the agent can surface
+it to the operator.
 
 ```
-POST /_api/proposals
+tools/call propose_policy
 {
-  "policy": {
-    "api": "gmail",
-    "name": "let-me-list-labels",
-    "action": "action.name == \"list_labels\"",
-    "condition": "true",
-    "result": "permit"
-  },
-  "origin": {"kind": "agent", "agent": "your-agent-id"},
-  "rationale": "I need read-only access to my own labels."
+  "api": "gmail",
+  "name": "let-me-list-labels",
+  "action": "action.name == \"list_labels\"",
+  "condition": "true",
+  "result": "permit"
 }
 ```
-
-The traffic viewer (`/_admin/traffic`) ships with a "propose policy
-from this request" link on every recorded request — useful when
-your denial just happened and you want to draft a rule that would
-have permitted it. The link routes through:
-
-```
-POST /_api/traffic/{request-id}/propose-policy?submit=true
-```
-
-### Proposing a deletion
-
-When an existing policy is wrong (too permissive, stale, replaced
-by a better one) you can propose its **removal** through the same
-review surface. Same endpoint; add `kind: "delete"` and only the
-`api` + `name` of `policy` are read:
-
-```
-POST /_api/proposals
-{
-  "kind": "delete",
-  "policy": {"api": "gmail", "name": "let-me-list-labels"},
-  "rationale": "Replaced by a tighter version that gates on subject."
-}
-```
-
-Approval calls `policies.Delete` on the live runtime — idempotent
-on a missing target (a delete proposal whose policy is already
-gone still flips to `approved`). Default `kind` is `apply` so
-existing callers don't change. The MCP catalogue mirrors this:
-`propose_policy` gains a `kind` argument, and a
-`propose_policy_deletion` shorthand takes only `api` + `name` +
-`rationale`.
-
-The `/_admin/policies` page also has a **Propose deletion** button
-on each policy that calls the same endpoint.
-
-The proposal lands in `proposed` state; a human reviewer at
-`/_admin/proposals` can edit the condition, then approve. Approval
-is gated by the same `--policies-readonly` flag — a read-only
-deployment cannot promote a proposal even after a reviewer signs
-off.
 
 ## Inspecting traffic
 
@@ -368,8 +315,8 @@ expose other principals' traffic without operator opt-in.
 - `404 not found` — the path prefix isn't registered. Check
   `GET /_api/apis` for the canonical list.
 - `403 forbidden` — a policy denied your request. Look at
-  `/_admin/policies` for the rule set, or propose an exception via
-  `/_api/proposals`.
+  `/_admin/policies` for the rule set, or call the MCP
+  `propose_policy` tool to draft an exception.
 - `502 bad gateway` — the upstream returned an error the proxy
   could not classify. Inspect `/_api/traffic/{id}` for the captured
   upstream status and any meta-fetch errors.

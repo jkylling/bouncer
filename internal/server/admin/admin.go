@@ -1,7 +1,7 @@
 // Package admin owns the bouncer control-plane HTTP routes — the
 // human-facing UI under `/_admin/...` and the JSON API families under
 // `/_api/...`. Each surface has its own Mount* entry point (login,
-// whoami, apis, docs, traffic, policies, proposals, propose) so the
+// whoami, apis, docs, traffic, policies, services, tokens) so the
 // parent server composes them piecemeal.
 package admin
 

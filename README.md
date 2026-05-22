@@ -92,7 +92,7 @@ data directory:
 <data-dir>/
   secret.hex            32-byte server secret (mode 0600). Treat like a private key.
   admin-password.hash   bcrypt of the admin password used at /_admin/login.
-  store/                sqlite databases for traffic, policies, proposals.
+  store/                sqlite databases for traffic + policies.
   apis/                 API specs. Top-level *.yaml are loose specs the operator drops in;
                         immediate subdirectories are bundles installed via `bouncer apis add`.
   policies/             CEL policies (one YAML per policy). Drop files in and restart.
@@ -256,13 +256,8 @@ span describing the same request all join on `trace_id`.
 
 The proxy hot path (auth → policy eval → forward) and the OAuth2
 refresh flow are complete. The control plane (`/_api/...`) exposes
-the token-issue endpoints plus a small set of read-only routes
-behind the admin UI; the rest (policy CRUD, proposal workflow,
-traffic viewer, policy-from-request) is in progress.
-
-`POST /token` and `/_api/issue/*` are intentionally unauthenticated
-for now. Keep the listener on a trusted network until the
-control-plane auth gate lands.
+the token-issue endpoints, the services view, policy CRUD, and the
+traffic viewer behind the admin UI / admin JWTs.
 
 ## Development
 

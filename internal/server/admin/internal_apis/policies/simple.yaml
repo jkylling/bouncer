@@ -47,8 +47,6 @@ action: |
     "ui_traffic",
     "ui_settings",
     "ui_services",
-    "install_wrapper",
-    "install_ca_pem",
     "policies_list",
     "policies_get",
     "policies_dryrun",

@@ -41,10 +41,10 @@ go run ./uitest/cmd/install-playwright   # once per machine
 make ui                                  # ~3 s, headless
 ```
 
-Touch them when changing onboarding-wizard UI, the dashboard
-sidebar, or the wire shape any of those pages POST to
-(`/_api/connections`, `/_api/recipes/*`, `/_api/agents/*`).
-Ordinary changes don't need them.
+Touch them when changing the dashboard sidebar, the tokens-form
+flow, or the wire shape any of those pages POST to
+(`/_api/tokens/issue*`, `/_api/policies/*`). Ordinary changes don't
+need them.
 
 ### Screenshot tool — `uitest/cmd/screenshot`
 
@@ -165,10 +165,9 @@ it.
   tarball, validates the manifest, and atomically renames into
   `<apis-dir>/<bundle-name>/`. Loose top-level `*.yaml` files in the
   same dir are loaded as single-API specs.
-- `control/{policies,proposals,propose,traffic,store}/` — CRUD
-  primitives the in-progress control plane will compose into the
-  policy-CRUD / proposal / traffic-viewer surfaces. Read-only paths
-  are exposed today; write paths are still being built.
+- `control/{policies,traffic,services,store}/` — primitives the
+  control plane composes into the policy-CRUD, traffic-viewer, and
+  services surfaces.
 - `cli/{initcmd,serve,apiscmd,issuetoken}/` — subcommand
   implementations. `cmd/bouncer/main.go` is just argv routing.
 

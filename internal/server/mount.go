@@ -22,7 +22,6 @@ func (s *Server) mountControlPlane(r chi.Router) {
 	admin.MountAPIs(r, s.runtime, s.bundleData)
 	admin.MountDocs(r)
 	admin.MountCA(r, s.mitmCAPath)
-	admin.MountInstall(r, s.mitmCAPath)
 	admin.MountSettings(r)
 	admin.MountServices(r, s.servicesRegistry)
 	admin.MountTokensPage(r, s.keys, s.servicesRegistry)

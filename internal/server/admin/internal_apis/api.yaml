@@ -91,14 +91,6 @@ actions:
   method: GET
   path: /_api/ca.crt
 
-- name: install_wrapper
-  method: GET
-  path: /install/bouncer-wrap
-
-- name: install_ca_pem
-  method: GET
-  path: /install/ca.pem
-
 - name: docs_agent
   method: GET
   path: /_api/docs
@@ -149,39 +141,6 @@ actions:
 - name: policies_delete
   method: DELETE
   path: /_api/policies/{api}/{name}
-
-# --- Proposals -------------------------------------------------------
-- name: proposals_list
-  method: GET
-  path: /_api/proposals
-
-- name: proposals_create
-  method: POST
-  path: /_api/proposals
-
-- name: proposals_get
-  method: GET
-  path: /_api/proposals/{id}
-
-- name: proposals_update
-  method: PATCH
-  path: /_api/proposals/{id}
-
-- name: proposals_delete
-  method: DELETE
-  path: /_api/proposals/{id}
-
-- name: proposals_approve
-  method: POST
-  path: /_api/proposals/{id}/approve
-
-- name: proposals_reject
-  method: POST
-  path: /_api/proposals/{id}/reject
-
-- name: propose_policy
-  method: POST
-  path: /_api/traffic/{id}/propose-policy
 
 # --- Traffic viewer --------------------------------------------------
 - name: traffic_list

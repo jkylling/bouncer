@@ -54,8 +54,7 @@ func policiesTools() []tool {
 }
 
 // policyInputSchema is the shared sub-schema for a policy body. Used
-// by dry_run_policy and by the `policy` field of propose_policy in
-// the proposals family.
+// by dry_run_policy and by propose_policy.
 func policyInputSchema() map[string]any {
 	return map[string]any{
 		"type": "object",

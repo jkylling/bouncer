@@ -143,7 +143,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		admin.WriteDenialRemapped(w,
 			s.deniedStatusFor(apiName, http.StatusForbidden),
 			http.StatusForbidden,
-			"a policy denied this request — see matched_actions for the actions your request fired and next_steps for the live policy set and propose-policy entry points",
+			"a policy denied this request — see matched_actions for the actions your request fired and next_steps for the live policy set",
 			apiName, matchedActions)
 		return
 	}
