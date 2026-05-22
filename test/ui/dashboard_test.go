@@ -1,6 +1,6 @@
 //go:build ui
 
-package uitest
+package ui
 
 import (
 	"testing"
@@ -8,7 +8,7 @@ import (
 
 // TestDashboardTabs visits each sidebar tab and asserts the active
 // page heading. Screenshots land in
-// uitest/screenshots/TestDashboardTabs/.
+// test/ui/screenshots/TestDashboardTabs/.
 func TestDashboardTabs(t *testing.T) {
 	proc := startBouncer(t)
 	s := newSession(t, proc)

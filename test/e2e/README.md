@@ -10,7 +10,7 @@ that an operator could replicate by hand.
 ```sh
 make e2e          # from the repo root
 # or directly:
-go test -tags=e2e -timeout 5m ./e2e/...
+go test -tags=e2e -timeout 5m ./test/e2e/...
 ```
 
 The `e2e` build tag keeps this suite out of the default `go test
@@ -57,7 +57,7 @@ jobs:
 ```
 
 The suite has no special VM hooks; anywhere that can run
-`go test -tags=e2e ./e2e/...` is enough.
+`go test -tags=e2e ./test/e2e/...` is enough.
 
 ## Adding a test
 

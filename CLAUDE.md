@@ -12,14 +12,14 @@ CI. The full list lives in the `Makefile`; the ones worth knowing:
 |-----------------|-----------------------------------------------------------------------------------------|
 | `make ci`       | `fmt-check` + `vet` + `staticcheck` + `test` + `e2e`. Mirrors `.github/workflows/ci.yml`. |
 | `make test`     | Unit tests only. Excludes the `e2e` build tag.                                          |
-| `make e2e`      | Black-box binary tests under `e2e/`. Builds the binary once, drives it as a subprocess. |
+| `make e2e`      | Black-box binary tests under `test/e2e/`. Builds the binary once, drives it as a subprocess. |
 | `make fmt`      | `gofmt -w .`                                                                            |
 | `make fmt-check`| Fail on gofmt drift without mutating the tree (CI gate).                                |
 | `make vet`      | `go vet ./...`                                                                          |
 | `make staticcheck` | `go tool staticcheck ./...` — honnef.co/go/tools pinned via the `tool` directive in go.mod. |
 | `make build`    | Host-platform binaries into `./bin/`.                                                   |
 | `make release`  | Cross-compile every cmd × OS/arch into `./dist/` with version stamping. Tag-driven CI.  |
-| `make ui`       | Browser tests under `uitest/`. Drives `bouncer serve` + a real Chromium via playwright-go; saves screenshots to `uitest/screenshots/`. **Not** part of `make ci`. |
+| `make ui`       | Browser tests under `test/ui/`. Drives `bouncer serve` + a real Chromium via playwright-go; saves screenshots to `test/ui/screenshots/`. **Not** part of `make ci`. |
 
 `make ci` is the per-PR gate. Run it after any non-trivial change.
 
@@ -37,7 +37,7 @@ one-time playwright-go bundle download (~150 MB into
 `~/.cache/ms-playwright/`):
 
 ```sh
-go run ./uitest/cmd/install-playwright   # once per machine
+go run ./test/ui/cmd/install-playwright  # once per machine
 make ui                                  # ~3 s, headless
 ```
 
@@ -46,20 +46,20 @@ flow, or the wire shape any of those pages POST to
 (`/_api/tokens/issue*`, `/_api/policies/*`). Ordinary changes don't
 need them.
 
-### Screenshot tool — `uitest/cmd/screenshot`
+### Screenshot tool — `test/ui/cmd/screenshot`
 
-Iterating on visuals goes through `uitest/cmd/screenshot`. It logs
+Iterating on visuals goes through `test/ui/cmd/screenshot`. It logs
 into a running bouncer, captures every dashboard page at one or
 more viewports, and (optionally) screenshots the hosted-mockup as
 a side-by-side reference:
 
 ```sh
 # Live UI only, both wide and narrow viewports
-go run ./uitest/cmd/screenshot \
+go run ./test/ui/cmd/screenshot \
     -live http://127.0.0.1:8080 -password <admin-pw>
 
 # Live + mockup, screenshots into /tmp/screens/
-go run ./uitest/cmd/screenshot \
+go run ./test/ui/cmd/screenshot \
     -live http://127.0.0.1:8080 -password <admin-pw> \
     -mockup file:///path/to/hosted-mockup/0/index.html \
     -out /tmp/screens
@@ -210,7 +210,7 @@ it.
 
 ## E2E binary tests
 
-`e2e/` is a black-box suite that builds the `bouncer` binary and
+`test/e2e/` is a black-box suite that builds the `bouncer` binary and
 drives it as a subprocess. **Whenever you change the CLI surface
 area — subcommands, flags, env vars, data-dir layout, admin HTTP
 routes, error messages clients depend on — update the e2e tests in
@@ -231,6 +231,6 @@ This includes:
 - changing the validation messages an operator would script against
   (e.g. the "must set --secret-hex" banner)
 
-Run with `make e2e` (or `go test -tags=e2e ./e2e/...`). The suite is
+Run with `make e2e` (or `go test -tags=e2e ./test/e2e/...`). The suite is
 behind the `e2e` build tag so it doesn't slow down `go test ./...`;
 that's a convenience, not a license to skip it on a CLI change.

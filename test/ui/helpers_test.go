@@ -1,6 +1,6 @@
 //go:build ui
 
-package uitest
+package ui
 
 import (
 	"bytes"
@@ -22,7 +22,7 @@ import (
 	"github.com/playwright-community/playwright-go"
 )
 
-// adminPassword is the password every uitest provisions the test
+// adminPassword is the password every ui test provisions the test
 // bouncer with via $BOUNCER_ADMIN_PASSWORD. The same value gets
 // typed into the login form.
 const adminPassword = "uitest-password"
@@ -70,7 +70,7 @@ func TestMain(m *testing.M) {
 	// Launch playwright + a single Chromium that every test shares.
 	pw, err := playwright.Run()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "playwright.Run (did you forget `go run ./uitest/cmd/install-playwright`?):", err)
+		fmt.Fprintln(os.Stderr, "playwright.Run (did you forget `go run ./test/ui/cmd/install-playwright`?):", err)
 		os.Exit(1)
 	}
 	browser, err := pw.Chromium.Launch(playwright.BrowserTypeLaunchOptions{
@@ -91,10 +91,10 @@ func TestMain(m *testing.M) {
 }
 
 // repoRoot returns the bouncer module root by walking up from this
-// source file. The uitest package always lives at <root>/uitest/.
+// source file. The ui package always lives at <root>/test/ui/.
 func repoRoot() string {
 	_, here, _, _ := runtime.Caller(0)
-	return filepath.Dir(filepath.Dir(here))
+	return filepath.Dir(filepath.Dir(filepath.Dir(here)))
 }
 
 // bouncerProc is a running `bouncer serve` subprocess and the URL it
@@ -261,7 +261,7 @@ func newSession(t *testing.T, proc *bouncerProc) *session {
 		_ = ctx.Close()
 		t.Fatalf("new page: %v", err)
 	}
-	shotDir := filepath.Join(repoRoot(), "uitest", "screenshots", t.Name())
+	shotDir := filepath.Join(repoRoot(), "test", "ui", "screenshots", t.Name())
 	_ = os.MkdirAll(shotDir, 0o755)
 	s := &session{t: t, proc: proc, ctx: ctx, page: page, shotDir: shotDir}
 
@@ -328,7 +328,7 @@ func (s *session) login() {
 	}
 }
 
-// shot takes a full-page screenshot under <repo>/uitest/screenshots/<test>/<step>-<name>.png.
+// shot takes a full-page screenshot under <repo>/test/ui/screenshots/<test>/<step>-<name>.png.
 // step counter increments so the filename sort matches the call order.
 func (s *session) shot(name string) {
 	s.t.Helper()

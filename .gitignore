@@ -8,5 +8,5 @@
 /store/
 
 # UI test artefacts (playwright-go).
-/uitest/screenshots/
+/test/ui/screenshots/
 .claude/worktrees/

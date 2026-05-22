@@ -16,7 +16,7 @@ without playwright installed isn't blocked.
 ```sh
 make ui            # from the repo root
 # or directly:
-go test -tags=ui -timeout 5m ./uitest/...
+go test -tags=ui -timeout 5m ./test/ui/...
 ```
 
 ## First-time setup
@@ -25,7 +25,7 @@ playwright-go ships its own Chromium build via a one-time install
 step. Run once per machine:
 
 ```sh
-go run ./uitest/cmd/install-playwright
+go run ./test/ui/cmd/install-playwright
 ```
 
 The binaries land in `~/.cache/ms-playwright/`. Re-runs are no-ops.
@@ -33,7 +33,7 @@ The binaries land in `~/.cache/ms-playwright/`. Re-runs are no-ops.
 ## Layout
 
 ```
-uitest/
+test/ui/
 ├── README.md                this file
 ├── STORIES.md               operator-facing scenarios this suite mirrors
 ├── helpers_test.go          spawn bouncer, login, screenshot helpers

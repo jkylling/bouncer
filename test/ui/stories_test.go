@@ -1,6 +1,6 @@
 //go:build ui
 
-package uitest
+package ui
 
 import (
 	"strings"

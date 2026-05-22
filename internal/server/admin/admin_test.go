@@ -18,7 +18,7 @@ import (
 // them via httptest. No proxy / runtime / factory dependencies — the
 // admin package's job is the routes and the issue primitive, and the
 // tests stay focused on those. End-to-end coverage lives in the
-// parent package's issue_e2e_test.go.
+// parent package's issue_test.go.
 func testServer(t *testing.T) (*httptest.Server, *auth.ServerKeys) {
 	t.Helper()
 	keys := mustKeys(t)

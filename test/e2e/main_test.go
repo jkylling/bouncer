@@ -72,10 +72,10 @@ func buildBinary(pkg, name string) (string, func(), error) {
 }
 
 // repoRoot returns the directory that holds go.mod. The e2e package
-// lives at <root>/e2e/, so one parent up is the root. Computed off
-// this file's runtime location so `go test` invoked from any cwd
+// lives at <root>/test/e2e/, so two parents up is the root. Computed
+// off this file's runtime location so `go test` invoked from any cwd
 // still finds the module root.
 func repoRoot() string {
 	_, file, _, _ := runtime.Caller(0)
-	return filepath.Dir(filepath.Dir(file))
+	return filepath.Dir(filepath.Dir(filepath.Dir(file)))
 }

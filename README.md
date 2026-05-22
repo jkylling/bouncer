@@ -298,7 +298,8 @@ sequence the GitHub Actions workflow runs, so a green local
 | `internal/control/`                 | control-plane primitives (tokens, bundles, policies, …)                      |
 | `internal/cli/`                     | subcommand implementations                                                   |
 | `internal/integration/`             | network-touching tests (build tag: `integration`)                            |
-| `e2e/`                              | black-box binary tests (build tag: `e2e`)                                    |
+| `test/e2e/`                         | black-box binary tests (build tag: `e2e`)                                    |
+| `test/ui/`                          | browser tests (build tag: `ui`)                                              |
 | `testdata/apis/`                    | API specs used by tests (mirror of `bouncer-gws`)                            |
 | `testdata/policies/`                | sample policy YAMLs used by tests                                            |
 | `proto/`                            | `.proto` → `internal/pb/` (`Request` / `Response` / `Principal`)             |

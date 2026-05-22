@@ -33,7 +33,7 @@ help:
 	@echo 'Targets:'
 	@echo '  build      — go build all CLIs into ./bin (host platform)'
 	@echo '  test       — go test ./... (excludes the e2e suite)'
-	@echo '  e2e        — go test -tags=e2e ./e2e/... on the host'
+	@echo '  e2e        — go test -tags=e2e ./test/e2e/... on the host'
 	@echo '  fmt        — gofmt -w .'
 	@echo '  fmt-check  — fail if anything in the tree needs gofmt'
 	@echo '  vet        — go vet ./...'
@@ -65,14 +65,14 @@ test:
 # (the admin-password hash on every init) is the cliff; a local run
 # finishes in well under a minute.
 e2e:
-	go test -tags=e2e -timeout 5m ./e2e/...
+	go test -tags=e2e -timeout 5m ./test/e2e/...
 
 # ui drives a real browser via playwright-go against a real `bouncer
 # serve`. Behind a separate build tag so a contributor without
 # Playwright's Chromium bundle isn't blocked. One-time install:
-#   go run ./uitest/cmd/install-playwright
+#   go run ./test/ui/cmd/install-playwright
 ui:
-	go test -tags=ui -timeout 5m ./uitest/...
+	go test -tags=ui -timeout 5m ./test/ui/...
 
 # go_files lists the .go files under this module's tree, excluding
 # .claude/ (agent-managed worktrees we don't own), .git/, and the
