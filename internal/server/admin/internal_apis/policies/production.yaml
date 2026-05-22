@@ -50,7 +50,6 @@ action: |
     "policies_delete",
     "traffic_list",
     "traffic_get",
-    "traffic_subjects",
     "mcp",
     "services_list",
     "services_get",

@@ -358,7 +358,7 @@ This directory was created by `+"`bouncer init`"+`. The layout is:
 
 - %s : 32-byte server secret (hex). Treat like a private key.
 - %s : bcrypt hash of the admin password (for /_admin/login).
-- %s/ : sqlite store(s) for traffic / policies / proposals (populated on first serve).
+- %s/ : sqlite store(s) for traffic and policies (populated on first serve).
 - %s/ : API specs. Top-level *.yaml files are loose specs; immediate subdirs are bundles installed via "bouncer apis add ...".
 - %s/ : drop policy YAML specs here.
 %s

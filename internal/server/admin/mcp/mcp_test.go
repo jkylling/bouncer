@@ -288,8 +288,7 @@ func TestResourcesReadBundleReadme(t *testing.T) {
 
 // bundleTestServer is the testServer twin with BundleReadmes wired
 // in so the bundle-resource path has something to serve. Kept minimal
-// — no policy/proposal stores since the bundle path doesn't touch
-// them.
+// — no policy store since the bundle path doesn't touch it.
 func bundleTestServer(t *testing.T, readmes map[string][]byte) (*httptest.Server, *auth.ServerKeys) {
 	t.Helper()
 	keys, err := auth.FromSecret(auth.DevStubSecret())

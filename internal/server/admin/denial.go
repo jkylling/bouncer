@@ -29,8 +29,8 @@ type DenialResponse struct {
 
 	// API is the registered API whose path-prefix claimed the
 	// request. Populated on policy-deny (403) so an agent reading
-	// the body knows where to author its proposal — empty on the
-	// other denial paths (401, 404 no_match) where there is no
+	// the body knows where to draft a permitting policy — empty on
+	// the other denial paths (401, 404 no_match) where there is no
 	// matched API to name.
 	API string `json:"api,omitempty"`
 

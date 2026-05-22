@@ -185,9 +185,6 @@ func (b *blockingStore) Get(ctx context.Context, id traffic.EventID) (traffic.Ev
 func (b *blockingStore) List(ctx context.Context, opts traffic.ListOpts) ([]traffic.Summary, traffic.Cursor, error) {
 	return nil, "", errors.New("not implemented")
 }
-func (b *blockingStore) Subjects(ctx context.Context) ([]traffic.SubjectSummary, error) {
-	return nil, errors.New("not implemented")
-}
 func (b *blockingStore) Close() error { return nil }
 
 func (b *blockingStore) calls() int {

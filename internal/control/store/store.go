@@ -1,8 +1,8 @@
 // Package store is the shared backend layer the bouncer
-// control-plane stores (traffic, policies, proposals) build on top
-// of. Each domain still owns its own data shape, schema, and queries
-// — what's shared here is *where the bits live*: a SQLite database
-// handle or a filesystem root.
+// control-plane stores (traffic, policies) build on top of. Each
+// domain still owns its own data shape, schema, and queries — what's
+// shared here is *where the bits live*: a SQLite database handle or
+// a filesystem root.
 //
 // A deployment can wire one Backend across every domain (a single
 // sqlite file with multiple tables, a single root directory with

@@ -18,12 +18,6 @@ const (
 	TrafficListPath = "/_api/traffic"
 	TrafficItemPath = "/_api/traffic/{id}"
 	TrafficUIPath   = "/_admin/traffic"
-
-	// TrafficSubjectsPath returns one row per JWT subject seen in
-	// stored traffic. The Agents page reads this to show "agents that
-	// have authenticated" without needing the agents.Store (which
-	// nothing populates in the local-bouncer model).
-	TrafficSubjectsPath = "/_api/traffic/subjects"
 )
 
 // PrincipalExtractor maps an inbound request to a principal subject
@@ -57,7 +51,6 @@ func MountTraffic(r chi.Router, store traffic.Store, principal PrincipalExtracto
 	// The default sets gate the JSON endpoints to admin and the UI
 	// shell to authenticated callers (anonymous bounces to login).
 	r.Get(TrafficListPath, listHandler(store, principal))
-	r.Get(TrafficSubjectsPath, subjectsHandler(store))
 	r.Get(TrafficItemPath, getHandler(store, principal))
 	mountUIPage(r, TrafficUIPath, "traffic")
 }
@@ -68,22 +61,6 @@ func MountTraffic(r chi.Router, store traffic.Store, principal PrincipalExtracto
 //	api, action, method, decision, path_prefix, since, until, limit, cursor.
 //
 // `since` / `until` accept RFC 3339; everything else is a literal string.
-//
-// subjectsHandler serves GET /_api/traffic/subjects — a per-subject
-// roll-up of stored traffic. Read-only by design; "revoke this
-// subject" is intentionally a follow-up because it requires new
-// state on the JWT-verify hot path.
-func subjectsHandler(store traffic.Store) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		out, err := store.Subjects(r.Context())
-		if err != nil {
-			writeJSONError(w, "internal error", http.StatusInternalServerError)
-			return
-		}
-		writeJSON(w, map[string]any{"subjects": out})
-	}
-}
-
 func listHandler(store traffic.Store, principal PrincipalExtractor) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		opts, err := parseListOpts(r)

@@ -151,10 +151,6 @@ actions:
   method: GET
   path: /_api/traffic/{id}
 
-- name: traffic_subjects
-  method: GET
-  path: /_api/traffic/subjects
-
 # --- Services (per-bundle UI surface) -------------------------------
 - name: services_list
   method: GET

@@ -116,9 +116,9 @@ func (f *FileStore) Delete(_ context.Context, api, name string) error {
 	scoped := filterByAPI(all, api)
 	apiPolicies := remove(scoped, name)
 	if len(apiPolicies) == len(scoped) {
-		// Nothing matched. Mirror the proposals/sqlite contract so
-		// a bypass-Service caller can distinguish "already gone"
-		// from "deleted just now".
+		// Nothing matched. Match the sqlite-store contract so a
+		// bypass-Service caller can distinguish "already gone" from
+		// "deleted just now".
 		return fmt.Errorf("%w: %s/%s", ErrNotFound, api, name)
 	}
 	if err := f.writeAPIFile(api, apiPolicies); err != nil {

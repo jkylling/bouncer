@@ -1,8 +1,8 @@
 // Package policies fronts the live `*runtime.Runtime` policy set with
 // validate-then-persist-then-apply semantics. Every write goes through
-// one Service so the control-plane HTTP handlers, the proposal-approval
-// path, and (eventually) IaC bulk-import all run the same checks and
-// touch the runtime in the same order.
+// one Service so the control-plane HTTP handlers and (eventually) IaC
+// bulk-import all run the same checks and touch the runtime in the
+// same order.
 //
 // Reads bypass the Service entirely — they go straight to the runtime,
 // which holds the source of truth at request time. Writes:
@@ -32,12 +32,11 @@ import (
 // boot, Put + Delete for control-plane writes. Live reads go through
 // the runtime, not the store.
 //
-// Delete returns ErrNotFound when (api, name) is unknown, mirroring
-// the proposals.Store contract. Service.Delete still runs `find` up
-// front, so the typical 404 path doesn't reach the store; the
-// sentinel exists for callers that bypass the Service (a future
-// reconciliation loop, a bulk import) and want a clean
-// already-deleted signal.
+// Delete returns ErrNotFound when (api, name) is unknown.
+// Service.Delete still runs `find` up front, so the typical 404 path
+// doesn't reach the store; the sentinel exists for callers that
+// bypass the Service (a future reconciliation loop, a bulk import)
+// and want a clean already-deleted signal.
 type Store interface {
 	List(ctx context.Context) ([]models.Policy, error)
 	Put(ctx context.Context, policy models.Policy) error
@@ -54,8 +53,7 @@ var (
 	ErrReadOnly = errors.New("policy store is read-only")
 )
 
-// Service is the policy CRUD coordinator. Construct one per process and
-// share it between the HTTP handlers and the proposal-approval path so
+// Service is the policy CRUD coordinator. Construct one per process so
 // every write goes through the same pipeline.
 //
 // `mu` serialises every mutating operation so the find + persist +

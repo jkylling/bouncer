@@ -10,8 +10,7 @@ import (
 type eventKind struct{}
 
 // EventID identifies one captured request. Tagged with eventKind so
-// the compiler refuses to mix it with proposal ids or any future id
-// class.
+// the compiler refuses to mix it with any future id class.
 type EventID = id.Type[eventKind]
 
 // NewEventID returns a fresh time-prefixed event ID.

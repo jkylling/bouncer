@@ -14,8 +14,8 @@ const (
 	RoleAnonymous Role = iota
 
 	// RoleUser is a verified, non-admin JWT. May read its own
-	// resources and create proposals; cannot read across subjects
-	// or mutate operator-controlled state.
+	// resources; cannot read across subjects or mutate
+	// operator-controlled state.
 	RoleUser
 
 	// RoleAdmin is a verified JWT carrying `admin: true`. Full

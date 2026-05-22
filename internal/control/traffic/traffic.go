@@ -205,27 +205,7 @@ type Store interface {
 	Insert(ctx context.Context, ev Event) error
 	List(ctx context.Context, opts ListOpts) ([]Summary, Cursor, error)
 	Get(ctx context.Context, id EventID) (Event, error)
-
-	// Subjects returns one row per distinct JWT subject observed in
-	// stored traffic, with first-seen, last-seen, and request count.
-	// Empty-subject (unauthenticated) events are excluded — callers
-	// asking "which agents have authenticated" don't want them. The
-	// returned slice is sorted last-seen-descending.
-	Subjects(ctx context.Context) ([]SubjectSummary, error)
-
 	Close() error
-}
-
-// SubjectSummary is one row of the Subjects query — a per-JWT-subject
-// roll-up of stored traffic. Drives the Agents-page "agents that have
-// authenticated" list; nothing depends on it being stable across a
-// proxy restart since the source data is the traffic store, which is
-// itself ephemeral by design.
-type SubjectSummary struct {
-	Subject      string    `json:"subject"`
-	FirstSeen    time.Time `json:"first_seen"`
-	LastSeen     time.Time `json:"last_seen"`
-	RequestCount int64     `json:"request_count"`
 }
 
 // Tunables live here so the package doc can't drift from the actual

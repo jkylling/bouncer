@@ -181,10 +181,7 @@ type Policy struct {
 
 	// Description is a free-form human-facing note: what the policy
 	// is for, why it exists, who owns it. Optional and ignored by
-	// the runtime. Carried through the proposal flow so an agent
-	// that submits a draft with a rationale can preserve that
-	// context after approval — operators reviewing the live set
-	// later see the same note.
+	// the runtime.
 	Description string `yaml:"description,omitempty" json:"description,omitempty"`
 
 	// Principal is an optional CEL bool predicate evaluated against the

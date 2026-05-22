@@ -31,7 +31,6 @@ action: |
     "policies_list",
     "policies_get",
     "policies_dryrun",
-    "traffic_subjects",
     "mcp",
     "services_list",
     "services_get",

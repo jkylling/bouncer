@@ -12,7 +12,8 @@ import (
 // tool is one MCP tool: schema for tools/list, executor for
 // tools/call. Each tool also declares whether it requires the admin
 // tier — read-only listings work for any authenticated caller, but
-// anything that writes (propose / approve / reject) gates here.
+// anything that mutates state (propose_policy admin path, traffic
+// reads) gates here.
 type tool struct {
 	Name        string
 	Title       string
@@ -169,9 +170,9 @@ func encodeText(v any) (string, error) {
 }
 
 // requireService is the shared "this surface isn't wired" guard. A
-// deployment that disables traffic recording or proposal review
-// keeps the MCP endpoint mounted but the dependent tools refuse
-// with a clear message rather than a confusing nil-deref.
+// deployment that disables traffic recording keeps the MCP endpoint
+// mounted but the dependent tools refuse with a clear message
+// rather than a confusing nil-deref.
 func requireService(present bool, what string) *Error {
 	if present {
 		return nil

@@ -1,15 +1,15 @@
 // Package id provides a generic, type-safe identifier wrapper.
 //
-// Each domain (proposal, traffic event, …) declares a zero-size
-// marker struct and aliases id.Type to it:
+// Each domain (traffic event, …) declares a zero-size marker struct
+// and aliases id.Type to it:
 //
-//	type proposalKind struct{}
-//	type ProposalID = id.Type[proposalKind]
+//	type eventKind struct{}
+//	type EventID = id.Type[eventKind]
 //
 // Distinct markers produce distinct types, so the compiler refuses to
-// assign a ProposalID to a slot expecting an EventID — even though
-// both are strings under the hood. The marker is purely a phantom: it
-// has no fields, no methods, and never appears at runtime.
+// mix a traffic EventID with a future ID of another domain — even
+// though both are strings under the hood. The marker is purely a
+// phantom: it has no fields, no methods, and never appears at runtime.
 //
 // The shared method set (String, Marshal/UnmarshalText, Scan, Value)
 // covers the wire formats every ID in this codebase uses — JSON,
@@ -94,7 +94,7 @@ const TimeBytes = 16
 // milliseconds since Unix epoch; the trailing 10 bytes are
 // crypto/rand. The result is hex-encoded and optionally fronted with
 // `prefix` so a stray ID in a log line is recognisable as belonging
-// to its domain (e.g. "prop_..." for proposals).
+// to its domain (e.g. "evt_..." for traffic events).
 //
 // crypto/rand failure is unrecoverable: emitting a non-unique ID
 // would confuse every downstream system, so the panic is the safer

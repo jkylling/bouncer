@@ -140,44 +140,6 @@ func (s *memoryStore) List(ctx context.Context, opts ListOpts) ([]Summary, Curso
 	return out, next, nil
 }
 
-// Subjects walks the in-memory ring once, aggregating per-subject
-// first/last seen + request count. O(n) over stored events; the
-// store's byte budget caps n at a few thousand, well within "build
-// the response without paging."
-func (s *memoryStore) Subjects(_ context.Context) ([]SubjectSummary, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	agg := map[string]*SubjectSummary{}
-	for el := s.ll.Front(); el != nil; el = el.Next() {
-		ev := el.Value.(*Event)
-		if ev.Subject == "" {
-			continue
-		}
-		row, ok := agg[ev.Subject]
-		if !ok {
-			row = &SubjectSummary{
-				Subject:   ev.Subject,
-				FirstSeen: ev.Timestamp,
-				LastSeen:  ev.Timestamp,
-			}
-			agg[ev.Subject] = row
-		}
-		row.RequestCount++
-		if ev.Timestamp.Before(row.FirstSeen) {
-			row.FirstSeen = ev.Timestamp
-		}
-		if ev.Timestamp.After(row.LastSeen) {
-			row.LastSeen = ev.Timestamp
-		}
-	}
-	out := make([]SubjectSummary, 0, len(agg))
-	for _, r := range agg {
-		out = append(out, *r)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].LastSeen.After(out[j].LastSeen) })
-	return out, nil
-}
-
 // Close is a no-op for the in-memory store.
 func (s *memoryStore) Close() error { return nil }
 

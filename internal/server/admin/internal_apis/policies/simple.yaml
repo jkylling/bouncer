@@ -71,7 +71,6 @@ action: |
     "policies_delete",
     "traffic_list",
     "traffic_get",
-    "traffic_subjects",
   ]
 condition: "true"
 result: permit

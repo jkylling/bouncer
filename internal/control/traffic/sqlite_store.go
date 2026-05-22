@@ -80,43 +80,6 @@ func newSQLiteStore(b store.SQLBackend, opts Options) (*sqliteStore, error) {
 // Close is a no-op — the *sql.DB is owned by the store.SQLBackend.
 func (s *sqliteStore) Close() error { return nil }
 
-// Subjects rolls up the events table by subject. SQLite handles the
-// aggregation natively; the events_subject_ts index keeps the
-// GROUP BY cheap.
-func (s *sqliteStore) Subjects(ctx context.Context) ([]SubjectSummary, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT subject, MIN(ts) AS first_ms, MAX(ts) AS last_ms, COUNT(*) AS n
-		FROM events
-		WHERE subject != ''
-		GROUP BY subject
-		ORDER BY last_ms DESC
-	`)
-	if err != nil {
-		return nil, fmt.Errorf("traffic: subjects query: %w", err)
-	}
-	defer rows.Close()
-	var out []SubjectSummary
-	for rows.Next() {
-		var (
-			subject              string
-			firstMS, lastMS, cnt int64
-		)
-		if err := rows.Scan(&subject, &firstMS, &lastMS, &cnt); err != nil {
-			return nil, fmt.Errorf("traffic: subjects scan: %w", err)
-		}
-		out = append(out, SubjectSummary{
-			Subject:      subject,
-			FirstSeen:    time.UnixMilli(firstMS).UTC(),
-			LastSeen:     time.UnixMilli(lastMS).UTC(),
-			RequestCount: cnt,
-		})
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("traffic: subjects rows: %w", err)
-	}
-	return out, nil
-}
-
 // Insert writes ev and runs eviction in one transaction. Pin status
 // is preserved on duplicate IDs.
 func (s *sqliteStore) Insert(ctx context.Context, ev Event) error {
