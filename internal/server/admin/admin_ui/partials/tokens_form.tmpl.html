@@ -25,24 +25,24 @@ for refresh variants).
       <h3>Issue token</h3>
     </div>
     <div class="card-body">
-      <div class="form-row tf-subject-row">
-        <label>Subject <span class="muted">(JWT <code>sub</code> claim)</span></label>
-        <input type="text" class="tf-subject" value="agent" autocomplete="off">
-        <p class="form-help">Free-form identifier. Shows up on traffic events for the requests this JWT makes.</p>
+      <div class="form-grid tf-picker">
+        <div class="form-row tf-service-row">
+          <label>Service</label>
+          <select class="tf-service"><option>Loading…</option></select>
+        </div>
+        <div class="form-row tf-variant-row" hidden>
+          <label>Variant</label>
+          <select class="tf-variant"></select>
+        </div>
       </div>
-
-      <div class="form-row tf-service-row">
-        <label>Service</label>
-        <select class="tf-service"><option>Loading…</option></select>
-      </div>
-
-      <div class="form-row tf-variant-row" hidden>
-        <label>Variant</label>
-        <select class="tf-variant"></select>
-        <p class="form-help tf-variant-desc"></p>
-      </div>
+      <p class="form-help tf-variant-desc" hidden></p>
 
       <form class="tf-form" hidden>
+        <div class="form-row tf-subject-row">
+          <label>Subject <span class="muted">(JWT <code>sub</code> claim)</span></label>
+          <input type="text" class="tf-subject" value="agent" autocomplete="off">
+          <p class="form-help">Free-form identifier. Shows up on traffic events for the requests this JWT makes.</p>
+        </div>
         <div class="tf-fields"></div>
         <div class="form-actions">
           <button type="submit" class="btn btn-primary tf-submit">Issue JWT</button>
@@ -151,7 +151,9 @@ function setupTokensForm(host, opts) {
 
   function onVariantChange() {
     currentVariant = (currentService.token_variants || []).find(v => v.id === variantSel.value);
-    variantDesc.textContent = currentVariant.description || "";
+    const desc = (currentVariant.description || "").trim();
+    variantDesc.textContent = desc;
+    variantDesc.hidden = desc === "";
     renderFields(currentVariant);
     form.hidden = false;
     outputCard.hidden = true;
