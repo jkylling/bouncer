@@ -73,21 +73,6 @@ func WriteDenial(w http.ResponseWriter, status int, message string) {
 	writeDenial(w, status, status, message, "", nil)
 }
 
-// WriteDenialDetail is the richer variant used by the data plane's
-// policy-deny site: in addition to the standard fields, it
-// surfaces the API the path routed to and the action names whose
-// match logic fired on the request. An agent reading the body sees
-// "your request matched these actions on API <X>; write or propose
-// a policy that gates one of them" and has everything it needs to
-// draft the fix without a follow-up GET /_api/apis.
-//
-// Pass api="" / matchedActions=nil and this collapses to the same
-// body as WriteDenial — handy for the 401/404 sites where neither
-// detail applies.
-func WriteDenialDetail(w http.ResponseWriter, status int, message, api string, matchedActions []string) {
-	writeDenial(w, status, status, message, api, matchedActions)
-}
-
 // WriteDenialRemapped is the variant used by the data plane when an
 // API's `access_denied_status` override decouples the wire status
 // from the semantic one. wireStatus drives the HTTP response line;

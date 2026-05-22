@@ -251,11 +251,6 @@ func (r *Runtime) ValidatePolicy(policy *models.Policy) error {
 // registered.
 func (r *Runtime) API(name string) *APIRuntime { return r.apis[name] }
 
-// APISpec returns the *models.API this runtime was built from, or
-// nil if name is not registered. The returned spec is the input
-// YAML-shaped object — callers must not mutate it.
-func (r *Runtime) APISpec(name string) *models.API { return r.specs[name] }
-
 // APISpecs returns every registered API's spec, sorted
 // alphabetically by name so the control-plane API listing is
 // stable across calls.

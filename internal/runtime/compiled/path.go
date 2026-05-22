@@ -118,18 +118,6 @@ func (t *PathTemplate) Match(req *pb.Request) (map[string]string, bool) {
 	return params, true
 }
 
-// ParamNames returns the captured parameter names in template order.
-// Useful for diagnostics and tests.
-func (t *PathTemplate) ParamNames() []string {
-	var out []string
-	for _, s := range t.segs {
-		if s.param != "" {
-			out = append(out, s.param)
-		}
-	}
-	return out
-}
-
 // SplitPath splits a URL path on `/` after stripping a single leading
 // `/`, preserving empty segments. Used by both path-template parsing
 // and request-side `path_segments` building so policies see exactly the

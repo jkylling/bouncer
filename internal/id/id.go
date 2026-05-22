@@ -114,28 +114,6 @@ func NewTimePrefixed[K any](t time.Time, prefix string) Type[K] {
 	return Type[K](prefix + hex.EncodeToString(b[:]))
 }
 
-// TimestampOf extracts the embedded millisecond timestamp from an ID
-// produced by NewTimePrefixed. `prefix` must match what was passed at
-// construction. Returns the zero time on malformed input — callers
-// that care about correctness over leniency should sanity-check.
-func TimestampOf[K any](id Type[K], prefix string) time.Time {
-	s := string(id)
-	if len(s) < len(prefix) || s[:len(prefix)] != prefix {
-		return time.Time{}
-	}
-	b, err := hex.DecodeString(s[len(prefix):])
-	if err != nil || len(b) != TimeBytes {
-		return time.Time{}
-	}
-	ms := uint64(b[0])<<40 |
-		uint64(b[1])<<32 |
-		uint64(b[2])<<24 |
-		uint64(b[3])<<16 |
-		uint64(b[4])<<8 |
-		uint64(b[5])
-	return time.UnixMilli(int64(ms))
-}
-
 // Compile-time interface guards. Drift in the method set above
 // surfaces here at build time rather than as a confused runtime
 // failure inside encoding/json or database/sql.

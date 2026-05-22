@@ -75,9 +75,6 @@ func TestParsePathTemplate_Params(t *testing.T) {
 	if got["user_id"] != "abc" || got["message_id"] != "def" {
 		t.Errorf("captures = %v, want user_id=abc message_id=def", got)
 	}
-	if names := tpl.ParamNames(); len(names) != 2 || names[0] != "user_id" || names[1] != "message_id" {
-		t.Errorf("ParamNames = %v", names)
-	}
 }
 
 func TestPathTemplate_MethodMismatch(t *testing.T) {

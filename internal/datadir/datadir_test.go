@@ -58,17 +58,6 @@ func TestResolveFallsBackToCwdWhenInitialized(t *testing.T) {
 	}
 }
 
-func TestResolveRequiredErrors(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
-	fs := pflag.NewFlagSet("t", pflag.ContinueOnError)
-	BindFlag(fs)
-	_ = fs.Parse(nil)
-	if _, err := ResolveRequired(fs); err == nil {
-		t.Fatal("expected error")
-	}
-}
-
 func TestLayoutPaths(t *testing.T) {
 	l := Layout{Dir: "/data"}
 	cases := map[string]string{

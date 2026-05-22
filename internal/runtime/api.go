@@ -196,9 +196,6 @@ func (r *APIRuntime) compile(policy *models.Policy) (*compiled.Policy, error) {
 	return compiled.NewPolicy(policy, r.name, r.registry)
 }
 
-// Name returns the API's name.
-func (r *APIRuntime) Name() string { return r.name }
-
 // BaseURL returns the API's upstream base URL.
 func (r *APIRuntime) BaseURL() string { return r.baseURL }
 

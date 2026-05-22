@@ -5,7 +5,6 @@
 package datadir
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -65,14 +64,6 @@ func Resolve(fs *pflag.FlagSet) string {
 	return ""
 }
 
-// ResolveRequired returns Resolve's result or a standard error.
-func ResolveRequired(fs *pflag.FlagSet) (string, error) {
-	if dir := Resolve(fs); dir != "" {
-		return dir, nil
-	}
-	return "", errors.New("--data-dir is required (or set $BOUNCER_DATA_DIR, or run from a directory laid out by `bouncer init`)")
-}
-
 // Layout is the resolved data dir; methods return per-domain paths.
 type Layout struct {
 	Dir string
@@ -86,7 +77,6 @@ func (l Layout) Secret() string    { return filepath.Join(l.Dir, SecretFile) }
 func (l Layout) AdminHash() string { return filepath.Join(l.Dir, AdminPasswordFile) }
 func (l Layout) MITMCert() string  { return filepath.Join(l.Dir, MITMCertFile) }
 func (l Layout) MITMKey() string   { return filepath.Join(l.Dir, MITMKeyFile) }
-func (l Layout) Readme() string    { return filepath.Join(l.Dir, ReadmeFile) }
 
 // ReadSecret reads <dir>/secret.hex (trimmed of trailing newline).
 func (l Layout) ReadSecret() (string, error) {
