@@ -18,10 +18,15 @@ import (
 
 // ----- access-only mode -----
 
+// testSecretHex is a 64-char hex string every loadConfig test reuses
+// to clear the secret-required guard. Identical across tests so a
+// comparison-style assertion in one place can't drift from the rest.
+var testSecretHex = strings.Repeat("aa", 32)
+
 func TestLoadConfigDefaults(t *testing.T) {
 	cfg, err := loadConfig([]string{
 		"--subject", "agent-1",
-		"--dev-stub-secret",
+		"--secret-hex", testSecretHex,
 		"--access-token", "ya29-x",
 	})
 	require.NoError(t, err)
@@ -32,35 +37,25 @@ func TestLoadConfigDefaults(t *testing.T) {
 }
 
 func TestLoadConfigRequiresSubject(t *testing.T) {
-	_, err := loadConfig([]string{"--dev-stub-secret", "--access-token", "x"})
+	_, err := loadConfig([]string{"--secret-hex", testSecretHex, "--access-token", "x"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "subject")
 }
 
 func TestLoadConfigRequiresAccessToken(t *testing.T) {
-	_, err := loadConfig([]string{"--subject", "s", "--dev-stub-secret"})
+	_, err := loadConfig([]string{"--subject", "s", "--secret-hex", testSecretHex})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "access-token")
 }
 
-func TestLoadConfigRejectsBothSecretFlags(t *testing.T) {
-	hex64 := strings.Repeat("aa", 32)
-	_, err := loadConfig([]string{
-		"--subject", "s", "--access-token", "x",
-		"--secret-hex", hex64, "--dev-stub-secret",
-	})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "mutually exclusive")
-}
-
 // TestAccessTokenVerifies pins the cross-binary invariant: a token
-// issued under --dev-stub-secret verifies against keys derived from
-// the same stub. Without this the access-only mode is silently
+// issued under a given secret verifies against keys derived from
+// that same secret. Without this the access-only mode is silently
 // broken.
 func TestAccessTokenVerifies(t *testing.T) {
 	cfg, err := loadConfig([]string{
 		"--subject", "agent-1",
-		"--dev-stub-secret",
+		"--secret-hex", testSecretHex,
 		"--access-token", "upstream-bearer",
 		"--ttl", "1m",
 	})
@@ -101,7 +96,7 @@ func TestLoadConfigCredentialsMode(t *testing.T) {
 	creds := writeCredentialsFile(t, dir)
 	out := filepath.Join(dir, "credentials.json")
 	cfg, err := loadConfig([]string{
-		"--dev-stub-secret",
+		"--secret-hex", testSecretHex,
 		"--subject", "me",
 		"--credentials-file", creds,
 		"--proxy-url", "http://localhost:8080",
@@ -113,7 +108,7 @@ func TestLoadConfigCredentialsMode(t *testing.T) {
 
 func TestLoadConfigCredentialsRequiresCredentialsFile(t *testing.T) {
 	_, err := loadConfig([]string{
-		"--dev-stub-secret",
+		"--secret-hex", testSecretHex,
 		"--subject", "me",
 		"--proxy-url", "http://x",
 		"--out", "/tmp/x.json",
@@ -163,7 +158,7 @@ func TestLoadConfigRejectsProxyURLWithToken(t *testing.T) {
 	dir := t.TempDir()
 	creds := writeCredentialsFile(t, dir)
 	_, err := loadConfig([]string{
-		"--dev-stub-secret",
+		"--secret-hex", testSecretHex,
 		"--subject", "me",
 		"--credentials-file", creds,
 		"--proxy-url", "http://host.lima.internal:8080/token",
@@ -177,7 +172,7 @@ func TestLoadConfigRejectsProxyURLMissingScheme(t *testing.T) {
 	dir := t.TempDir()
 	creds := writeCredentialsFile(t, dir)
 	_, err := loadConfig([]string{
-		"--dev-stub-secret",
+		"--secret-hex", testSecretHex,
 		"--subject", "me",
 		"--credentials-file", creds,
 		"--proxy-url", "host.lima.internal:8080",
@@ -190,7 +185,7 @@ func TestLoadConfigRejectsProxyURLMissingScheme(t *testing.T) {
 func TestLoadConfigCredentialsRequiresProxyURL(t *testing.T) {
 	dir := t.TempDir()
 	_, err := loadConfig([]string{
-		"--dev-stub-secret",
+		"--secret-hex", testSecretHex,
 		"--subject", "me",
 		"--credentials-file", writeCredentialsFile(t, dir),
 		"--out", filepath.Join(dir, "x.json"),
@@ -209,7 +204,7 @@ func TestCredentialsFileEndToEnd(t *testing.T) {
 	creds := writeCredentialsFile(t, dir)
 	out := filepath.Join(dir, "credentials.json")
 	cfg, err := loadConfig([]string{
-		"--dev-stub-secret",
+		"--secret-hex", testSecretHex,
 		"--subject", "me",
 		"--credentials-file", creds,
 		"--proxy-url", "http://localhost:8080",
@@ -262,7 +257,7 @@ func TestCredentialsFileToleratesExtraFields(t *testing.T) {
 }`), 0o600))
 	out := filepath.Join(dir, "credentials.json")
 	cfg, err := loadConfig([]string{
-		"--dev-stub-secret",
+		"--secret-hex", testSecretHex,
 		"--subject", "me",
 		"--credentials-file", credsPath,
 		"--proxy-url", "http://localhost:8080",
@@ -289,7 +284,7 @@ func TestCredentialsFileCustomTokenURL(t *testing.T) {
 	creds := writeCredentialsFile(t, dir)
 	out := filepath.Join(dir, "credentials.json")
 	cfg, err := loadConfig([]string{
-		"--dev-stub-secret",
+		"--secret-hex", testSecretHex,
 		"--subject", "me",
 		"--credentials-file", creds,
 		"--proxy-url", "http://localhost:8080",
@@ -405,20 +400,4 @@ func TestLoadConfigSecretHexCwdNotInitialized(t *testing.T) {
 	_, err := loadConfig([]string{"--subject", "me", "--access-token", "x"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "--secret-hex")
-}
-
-// TestLoadConfigSecretHexCwdSkipsWhenDevStub: --dev-stub-secret
-// suppresses the cwd auto-load (otherwise the existing mutex check
-// would reject the dev-stub combo when an unrelated init data dir
-// happens to be cwd).
-func TestLoadConfigSecretHexCwdSkipsWhenDevStub(t *testing.T) {
-	t.Setenv("BOUNCER_SECRET_HEX", "")
-	chdirInitialized(t, strings.Repeat("aa", 32))
-	cfg, err := loadConfig([]string{
-		"--subject", "me", "--access-token", "x",
-		"--dev-stub-secret",
-	})
-	require.NoError(t, err)
-	require.Empty(t, cfg.SecretHex)
-	require.True(t, cfg.DevStubSecret)
 }

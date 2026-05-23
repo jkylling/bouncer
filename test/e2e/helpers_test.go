@@ -25,6 +25,12 @@ import (
 // under a second on a developer laptop.
 const readyTimeout = 10 * time.Second
 
+// testSecretHex is the 64-char hex string e2e tests reuse to clear
+// the serve / issue-token secret-required guard. Identical across
+// tests so a serve + issue-token pair can round-trip without
+// coordinating per-test secrets.
+const testSecretHex = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
 // shutdownTimeout caps how long Stop() waits for the binary to exit
 // after SIGTERM. The serve loop's own shutdownTimeout is 10s; we add
 // a small margin so a clean shutdown finishes inside our budget

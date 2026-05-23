@@ -9,12 +9,12 @@ import (
 	"testing"
 )
 
-// TestIssueTokenAccessOnlyDevStub pins the simplest happy path: a
-// single short-lived JWT printed to stdout, derived from the dev
-// stub secret. CI smoke tests use this shape.
-func TestIssueTokenAccessOnlyDevStub(t *testing.T) {
+// TestIssueTokenAccessOnly pins the simplest happy path: a single
+// short-lived JWT printed to stdout, derived from an explicit
+// --secret-hex. CI smoke tests use this shape.
+func TestIssueTokenAccessOnly(t *testing.T) {
 	res := run(t,
-		"issue-token", "--dev-stub-secret",
+		"issue-token", "--secret-hex", testSecretHex,
 		"--subject", "ci",
 		"--access-token", "stub",
 		"--ttl", "5m",
@@ -46,30 +46,12 @@ func TestIssueTokenSecretFromEnv(t *testing.T) {
 	}
 }
 
-// TestIssueTokenRejectsBothSecretFlags pins the mutual-exclusion
-// check. A misconfigured CI step that sets both shouldn't silently
-// pick one — the operator deserves a clear error.
-func TestIssueTokenRejectsBothSecretFlags(t *testing.T) {
-	hex64 := strings.Repeat("bb", 32)
-	res := run(t,
-		"issue-token", "--dev-stub-secret",
-		"--secret-hex", hex64,
-		"--subject", "x", "--access-token", "y",
-	)
-	if res.Err == nil {
-		t.Fatalf("expected error, got success: %s", res.Stdout)
-	}
-	if !strings.Contains(res.Stderr, "mutually exclusive") {
-		t.Errorf("stderr = %q, want one about mutual exclusion", res.Stderr)
-	}
-}
-
 // TestIssueTokenRequiresSubject pins the validation: without
 // --subject the binary refuses, rather than issuing a token with
 // an empty sub claim.
 func TestIssueTokenRequiresSubject(t *testing.T) {
 	res := run(t,
-		"issue-token", "--dev-stub-secret", "--access-token", "x",
+		"issue-token", "--secret-hex", testSecretHex, "--access-token", "x",
 	)
 	if res.Err == nil {
 		t.Fatal("expected error for missing --subject")
@@ -88,7 +70,7 @@ func TestIssueTokenCredentialsFile(t *testing.T) {
 	creds := writeCredentialsFile(t, dir)
 	out := filepath.Join(dir, "credentials.json")
 	res := run(t,
-		"issue-token", "--dev-stub-secret",
+		"issue-token", "--secret-hex", testSecretHex,
 		"--subject", "me",
 		"--credentials-file", creds,
 		"--proxy-url", "http://127.0.0.1:8080",
@@ -130,7 +112,7 @@ func TestIssueTokenRejectsProxyURLWithPath(t *testing.T) {
 	dir := t.TempDir()
 	creds := writeCredentialsFile(t, dir)
 	res := run(t,
-		"issue-token", "--dev-stub-secret",
+		"issue-token", "--secret-hex", testSecretHex,
 		"--subject", "me",
 		"--credentials-file", creds,
 		"--proxy-url", "http://127.0.0.1:8080/token",
@@ -151,7 +133,7 @@ func TestIssueTokenRejectsRelativeProxyURL(t *testing.T) {
 	dir := t.TempDir()
 	creds := writeCredentialsFile(t, dir)
 	res := run(t,
-		"issue-token", "--dev-stub-secret",
+		"issue-token", "--secret-hex", testSecretHex,
 		"--subject", "me",
 		"--credentials-file", creds,
 		"--proxy-url", "localhost:8080",
@@ -192,7 +174,7 @@ func TestIssueTokenSecretFromCwd(t *testing.T) {
 // a bootstrap admin token.
 func TestIssueTokenAdminFlagFlows(t *testing.T) {
 	res := run(t,
-		"issue-token", "--dev-stub-secret",
+		"issue-token", "--secret-hex", testSecretHex,
 		"--subject", "boot", "--access-token", "x", "--admin",
 	)
 	if res.Err != nil {

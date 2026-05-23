@@ -13,6 +13,13 @@ import (
 	"github.com/jkylling/bouncer/internal/cli/initcmd"
 )
 
+// testSecretHex is a 64-char hex string every loadConfig test reuses
+// to clear the secret-required guard. The value itself is arbitrary —
+// only matters that it is non-empty, well-formed, and identical
+// across tests so a comparison-style assertion in one place doesn't
+// drift from the rest.
+var testSecretHex = strings.Repeat("aa", 32)
+
 // testConfig returns a config populated with the production timeout
 // defaults — every test that drives newHTTPServer wants this shape.
 func testConfig() *config {
@@ -91,10 +98,10 @@ func TestSlowlorisClientGetsClosedByReadHeaderTimeout(t *testing.T) {
 }
 
 // TestLoadConfigDefaults pins the baseline: every flag defaulted, plus
-// --dev-stub-secret to clear the secret-required guard. Defaults are
+// --secret-hex to clear the secret-required guard. Defaults are
 // the production timeouts.
 func TestLoadConfigDefaults(t *testing.T) {
-	cfg, err := loadConfig([]string{"--dev-stub-secret"})
+	cfg, err := loadConfig([]string{"--secret-hex", testSecretHex})
 	if err != nil {
 		t.Fatalf("loadConfig: %v", err)
 	}
@@ -107,8 +114,8 @@ func TestLoadConfigDefaults(t *testing.T) {
 	if cfg.PoliciesDir != "./policies" {
 		t.Errorf("PoliciesDir = %q, want ./policies", cfg.PoliciesDir)
 	}
-	if !cfg.DevStubSecret {
-		t.Error("DevStubSecret = false, want true")
+	if cfg.SecretHex != testSecretHex {
+		t.Errorf("SecretHex = %q, want %q", cfg.SecretHex, testSecretHex)
 	}
 	if cfg.InboundReadHeaderTimeout != defaultInboundReadHeaderTimeout {
 		t.Errorf("InboundReadHeaderTimeout = %v, want %v", cfg.InboundReadHeaderTimeout, defaultInboundReadHeaderTimeout)
@@ -121,28 +128,14 @@ func TestLoadConfigDefaults(t *testing.T) {
 // TestLoadConfigRequiresSecret pins the "no implicit dev stub"
 // invariant: the previous main silently booted with a deterministic
 // well-known key when --secret-hex was empty, which is a footgun for
-// prod. loadConfig now refuses unless the operator explicitly opts in.
+// prod. loadConfig now refuses unless --secret-hex is provided.
 func TestLoadConfigRequiresSecret(t *testing.T) {
 	_, err := loadConfig(nil)
 	if err == nil {
-		t.Fatal("loadConfig with no secret flags should error")
+		t.Fatal("loadConfig with no secret should error")
 	}
-	if !strings.Contains(err.Error(), "secret-hex") || !strings.Contains(err.Error(), "dev-stub-secret") {
-		t.Errorf("error = %v, want one mentioning both flags", err)
-	}
-}
-
-// TestLoadConfigRejectsBothSecretFlags pins that --secret-hex and
-// --dev-stub-secret can't both be set: silently preferring one over
-// the other would make a misconfigured prod deployment look fine.
-func TestLoadConfigRejectsBothSecretFlags(t *testing.T) {
-	hex64 := strings.Repeat("aa", 32)
-	_, err := loadConfig([]string{"--secret-hex", hex64, "--dev-stub-secret"})
-	if err == nil {
-		t.Fatal("loadConfig with both secret flags should error")
-	}
-	if !strings.Contains(err.Error(), "mutually exclusive") {
-		t.Errorf("error = %v, want one about mutual exclusion", err)
+	if !strings.Contains(err.Error(), "secret-hex") {
+		t.Errorf("error = %v, want one mentioning secret-hex", err)
 	}
 }
 
@@ -170,24 +163,24 @@ func TestLoadConfigReadsEnv(t *testing.T) {
 //   - Explicit --mitm without cert/key paths is a misconfig and must
 //     refuse to boot.
 //   - Default-on --mitm with no CA paths silently disables (so a
-//     bare `bouncer serve --dev-stub-secret …` without a data-dir
-//     just runs as a direct path-prefix proxy).
+//     bare `bouncer serve --secret-hex …` without a data-dir just
+//     runs as a direct path-prefix proxy).
 //   - --mitm-ca-cert/key paths without --mitm activate MITM (the
 //     paths are the user's signal; we don't require the redundant
 //     --mitm flag in default-on world).
 func TestLoadConfigMITMRequiresCAPair(t *testing.T) {
-	_, err := loadConfig([]string{"--dev-stub-secret", "--mitm"})
+	_, err := loadConfig([]string{"--secret-hex", testSecretHex, "--mitm"})
 	if err == nil || !strings.Contains(err.Error(), "mitm-ca") {
 		t.Fatalf("explicit --mitm without paths: err = %v, want one mentioning mitm-ca", err)
 	}
-	cfg, err := loadConfig([]string{"--dev-stub-secret"})
+	cfg, err := loadConfig([]string{"--secret-hex", testSecretHex})
 	if err != nil {
 		t.Fatalf("default --mitm with no paths: err = %v, want nil", err)
 	}
 	if cfg.MITM {
 		t.Fatalf("default --mitm with no paths: MITM = true, want false (silent fallback)")
 	}
-	cfg, err = loadConfig([]string{"--dev-stub-secret", "--mitm-ca-cert", "/x", "--mitm-ca-key", "/y"})
+	cfg, err = loadConfig([]string{"--secret-hex", testSecretHex, "--mitm-ca-cert", "/x", "--mitm-ca-key", "/y"})
 	if err != nil {
 		t.Fatalf("paths set, --mitm default: err = %v, want nil", err)
 	}
@@ -200,15 +193,15 @@ func TestLoadConfigMITMRequiresCAPair(t *testing.T) {
 // --traffic-store=sqlite: it must be paired with --traffic-db, and
 // --traffic-db without sqlite is a misconfig.
 func TestLoadConfigTrafficStoreValidation(t *testing.T) {
-	_, err := loadConfig([]string{"--dev-stub-secret", "--traffic-store", "sqlite"})
+	_, err := loadConfig([]string{"--secret-hex", testSecretHex, "--traffic-store", "sqlite"})
 	if err == nil || !strings.Contains(err.Error(), "traffic-db") {
 		t.Fatalf("err = %v, want one mentioning traffic-db", err)
 	}
-	_, err = loadConfig([]string{"--dev-stub-secret", "--traffic-db", "/tmp/x.db"})
+	_, err = loadConfig([]string{"--secret-hex", testSecretHex, "--traffic-db", "/tmp/x.db"})
 	if err == nil || !strings.Contains(err.Error(), "without --traffic-store=sqlite") {
 		t.Fatalf("err = %v, want one about traffic-db set without sqlite", err)
 	}
-	_, err = loadConfig([]string{"--dev-stub-secret", "--traffic-store", "weird"})
+	_, err = loadConfig([]string{"--secret-hex", testSecretHex, "--traffic-store", "weird"})
 	if err == nil || !strings.Contains(err.Error(), "invalid traffic store") {
 		t.Fatalf("err = %v, want one rejecting unknown store", err)
 	}
@@ -217,7 +210,7 @@ func TestLoadConfigTrafficStoreValidation(t *testing.T) {
 // TestLoadConfigTrafficDefaults sanity-checks the default mode is
 // `none` — no recorder, no /_api/traffic routes, zero overhead.
 func TestLoadConfigTrafficDefaults(t *testing.T) {
-	cfg, err := loadConfig([]string{"--dev-stub-secret"})
+	cfg, err := loadConfig([]string{"--secret-hex", testSecretHex})
 	if err != nil {
 		t.Fatalf("loadConfig: %v", err)
 	}
@@ -236,7 +229,7 @@ func TestLoadConfigTrafficDefaults(t *testing.T) {
 // fresh deployment behaves the same as before the unified-store
 // refactor: file-backed policies, no traffic capture.
 func TestLoadConfigStoreDefaults(t *testing.T) {
-	cfg, err := loadConfig([]string{"--dev-stub-secret"})
+	cfg, err := loadConfig([]string{"--secret-hex", testSecretHex})
 	if err != nil {
 		t.Fatalf("loadConfig: %v", err)
 	}
@@ -251,7 +244,7 @@ func TestLoadConfigStoreDefaults(t *testing.T) {
 // file with a single path.
 func TestLoadConfigStoreDBFallback(t *testing.T) {
 	cfg, err := loadConfig([]string{
-		"--dev-stub-secret",
+		"--secret-hex", testSecretHex,
 		"--traffic-store", "sqlite",
 		"--policies-store", "sqlite",
 		"--store-db", "/tmp/all.db",
@@ -269,7 +262,7 @@ func TestLoadConfigStoreDBFallback(t *testing.T) {
 // fallback) is rejected at boot.
 func TestLoadConfigPoliciesStoreSqliteRequiresPath(t *testing.T) {
 	_, err := loadConfig([]string{
-		"--dev-stub-secret",
+		"--secret-hex", testSecretHex,
 		"--policies-store", "sqlite",
 	})
 	if err == nil {
@@ -285,7 +278,7 @@ func TestLoadConfigPoliciesStoreSqliteRequiresPath(t *testing.T) {
 // this an operator setting both ends up confused about which wins.
 func TestLoadConfigFlagOverridesEnv(t *testing.T) {
 	t.Setenv("BOUNCER_ADDR", ":9090")
-	cfg, err := loadConfig([]string{"--addr", ":7070", "--dev-stub-secret"})
+	cfg, err := loadConfig([]string{"--addr", ":7070", "--secret-hex", testSecretHex})
 	if err != nil {
 		t.Fatalf("loadConfig: %v", err)
 	}
@@ -294,22 +287,8 @@ func TestLoadConfigFlagOverridesEnv(t *testing.T) {
 	}
 }
 
-// TestDeriveSecretDevStub pins the dev-stub byte pattern: the previous
-// implementation set every byte to 0xAA, and any caller relying on a
-// specific secret across local restarts would break if that flipped.
-func TestDeriveSecretDevStub(t *testing.T) {
-	got, err := deriveSecret(&config{DevStubSecret: true})
-	if err != nil {
-		t.Fatalf("deriveSecret: %v", err)
-	}
-	for i, b := range got {
-		if b != 0xAA {
-			t.Fatalf("byte[%d] = %#x, want 0xAA", i, b)
-		}
-	}
-}
-
-// TestDeriveSecretFromHex pins the hex path on a non-stub config.
+// TestDeriveSecretFromHex pins the hex path: the bytes decoded from
+// the 64-char hex string land in the returned [32]byte unmodified.
 func TestDeriveSecretFromHex(t *testing.T) {
 	hex64 := strings.Repeat("cd", 32)
 	got, err := deriveSecret(&config{SecretHex: hex64})
@@ -362,9 +341,8 @@ func TestLoadConfigInitDefaultsDataDirToCwd(t *testing.T) {
 func TestLoadConfigInitBootstrapsAndIsIdempotent(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "data")
 	t.Setenv("BOUNCER_ADMIN_PASSWORD", "pw")
-	// No --dev-stub-secret: the freshly-written secret.hex is what
-	// we want loadConfig to pick up via applyDataDir; mixing in the
-	// stub would trip the mutually-exclusive check.
+	// The freshly-written secret.hex is what we want loadConfig to
+	// pick up via applyDataDir; no explicit --secret-hex.
 	args := []string{"--init", "--data-dir", dir}
 
 	cfg, err := loadConfig(args)

@@ -161,9 +161,9 @@ func TestServeUnknownCommand(t *testing.T) {
 }
 
 // TestServeRejectsMissingSecret pins that boot refuses without
-// either --secret-hex or --dev-stub-secret. An operator who
-// accidentally passes `bouncer serve` with no flags should get a
-// clear error, not a silent boot with a footgun secret.
+// --secret-hex. An operator who accidentally passes `bouncer serve`
+// with no flags should get a clear error, not a silent boot with a
+// footgun secret.
 func TestServeRejectsMissingSecret(t *testing.T) {
 	res := run(t, "serve", "--apis-dir", t.TempDir(), "--policies-dir", t.TempDir())
 	if res.Err == nil {

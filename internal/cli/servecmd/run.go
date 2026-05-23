@@ -5,8 +5,8 @@
 //
 // Wiring:
 //   - load API YAML from --apis-dir and policy YAML from --policies-dir,
-//   - derive server keys from --secret-hex (or --dev-stub-secret for a
-//     deterministic stub suitable for local development only),
+//   - derive server keys from --secret-hex (typically auto-loaded from
+//     <data-dir>/secret.hex written by `bouncer init`),
 //   - compile every bundled API into a shared Runtime so policies on any
 //     API can reference any other's meta types,
 //   - listen on --addr and forward Permit decisions to the matched API's

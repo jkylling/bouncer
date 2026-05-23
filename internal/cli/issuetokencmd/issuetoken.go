@@ -16,7 +16,7 @@
 //     --proxy-url, --out.
 //
 // The secret used here MUST be configured on the proxy (--secret-hex
-// or --dev-stub-secret on both sides).
+// on both sides).
 package issuetokencmd
 
 import (
@@ -59,12 +59,14 @@ Two modes:
 
 Examples:
 
-  # Access-only — local dev token good for one curl call.
-  bouncer issue-token --dev-stub-secret \
+  # Access-only — local dev token good for one curl call. The secret
+  # is auto-loaded from <data-dir>/secret.hex when invoked inside an
+  # initialized data dir; otherwise pass --secret-hex / BOUNCER_SECRET_HEX.
+  bouncer issue-token --data-dir /var/lib/bouncer \
       --subject demo --access-token "$GOOGLE_ACCESS_TOKEN" --ttl 5m
 
   # Credentials file — feed the file to gws-cli (or any OAuth2 client).
-  bouncer issue-token --dev-stub-secret \
+  bouncer issue-token --data-dir /var/lib/bouncer \
       --subject me \
       --credentials-file ./google-creds.json \
       --proxy-url http://localhost:8080 \
@@ -80,9 +82,8 @@ Environment:
 
 type config struct {
 	// Shared
-	Subject       string `mapstructure:"subject"`
-	SecretHex     string `mapstructure:"secret-hex"`
-	DevStubSecret bool   `mapstructure:"dev-stub-secret"`
+	Subject   string `mapstructure:"subject"`
+	SecretHex string `mapstructure:"secret-hex"`
 
 	// Access-only mode
 	AccessToken string        `mapstructure:"access-token"`
@@ -138,7 +139,6 @@ func bindFlags(fs *pflag.FlagSet) {
 	// Shared
 	fs.String("subject", "", "JWT sub claim (typically the holder's identifier)")
 	fs.String("secret-hex", "", "32-byte server secret as 64 hex chars (or BOUNCER_SECRET_HEX)")
-	fs.Bool("dev-stub-secret", false, "use deterministic dev stub secret (NEVER use in prod)")
 	datadir.BindFlag(fs)
 
 	// Access-only
@@ -181,7 +181,7 @@ func configFromFlags(fs *pflag.FlagSet) (*config, error) {
 // cwd-if-initialized) so an operator can drop into their data dir
 // and run a bare `issue-token --subject ... --access-token ...`.
 func defaultSecretFromDataDir(cfg *config, fs *pflag.FlagSet) error {
-	if cfg.SecretHex != "" || cfg.DevStubSecret {
+	if cfg.SecretHex != "" {
 		return nil
 	}
 	if fs.Changed("secret-hex") {
@@ -260,11 +260,8 @@ func runIssueToken(cfg *config) error {
 // can mix-and-match shell aliases — but the *required* set per mode
 // must be satisfied.
 func (c *config) validate() error {
-	if c.SecretHex == "" && !c.DevStubSecret {
-		return errors.New("must set --secret-hex (or BOUNCER_SECRET_HEX), or pass --dev-stub-secret")
-	}
-	if c.SecretHex != "" && c.DevStubSecret {
-		return errors.New("--secret-hex and --dev-stub-secret are mutually exclusive")
+	if c.SecretHex == "" {
+		return errors.New("must set --secret-hex (or BOUNCER_SECRET_HEX); typically auto-loaded from <data-dir>/secret.hex")
 	}
 	if c.Subject == "" {
 		return errors.New("--subject is required")
@@ -482,8 +479,5 @@ func loadCredentialsFile(path string) (*credentialsFile, error) {
 }
 
 func deriveSecret(cfg *config) ([32]byte, error) {
-	if cfg.DevStubSecret {
-		return auth.DevStubSecret(), nil
-	}
 	return auth.SecretFromHex(cfg.SecretHex)
 }

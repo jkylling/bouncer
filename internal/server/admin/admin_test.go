@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jkylling/bouncer/internal/auth"
+	"github.com/jkylling/bouncer/internal/auth/authtest"
 	"github.com/jkylling/bouncer/internal/control/tokens"
 )
 
@@ -31,7 +32,7 @@ func testServer(t *testing.T) (*httptest.Server, *auth.ServerKeys) {
 
 func mustKeys(t *testing.T) *auth.ServerKeys {
 	t.Helper()
-	keys, err := auth.FromSecret(auth.DevStubSecret())
+	keys, err := auth.FromSecret(authtest.Secret())
 	if err != nil {
 		t.Fatalf("FromSecret: %v", err)
 	}

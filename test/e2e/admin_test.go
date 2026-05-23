@@ -434,22 +434,21 @@ func TestLogoutClearsCookie(t *testing.T) {
 
 // TestIssueTokenAdminBootstrapAcceptedByLogin pins the bootstrap
 // alternative: when no admin password is set (or as a one-off
-// override), `bouncer issue-token --admin --dev-stub-secret` issues
+// override), `bouncer issue-token --admin --secret-hex <…>` issues
 // a token that /_api/whoami accepts as admin. This is the documented
 // recovery path when the password is lost.
 func TestIssueTokenAdminBootstrapAcceptedByLogin(t *testing.T) {
 	dir := mustInit(t, initOpts{})
-	// Override the secret with the dev stub so issue-token's stub
-	// matches what serve will use to verify. Pass --secret-hex
-	// pointing at the all-AA stub on serve, then issue via stub.
-	stubHex := strings.Repeat("aa", 32)
+	// Pin both sides to the same secret so issue-token's signature
+	// verifies inside serve. Overriding --secret-hex on serve also
+	// confirms the flag wins over the data-dir's auto-loaded secret.
 	srv := startServe(t, serveOpts{
 		DataDir: dir,
-		Extra:   []string{"--secret-hex", stubHex},
+		Extra:   []string{"--secret-hex", testSecretHex},
 	})
 
 	res := run(t,
-		"issue-token", "--dev-stub-secret",
+		"issue-token", "--secret-hex", testSecretHex,
 		"--subject", "boot", "--access-token", "x", "--admin",
 	)
 	if res.Err != nil {

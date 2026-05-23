@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/jkylling/bouncer/internal/auth"
+	"github.com/jkylling/bouncer/internal/auth/authtest"
 	"github.com/jkylling/bouncer/internal/control/policies"
 	"github.com/jkylling/bouncer/internal/runtime"
 	"github.com/jkylling/bouncer/internal/runtime/models"
@@ -23,7 +24,7 @@ import (
 // admin/anonymous bearers as needed.
 func testServer(t *testing.T) (*httptest.Server, *auth.ServerKeys, *runtime.Runtime, *policies.Service) {
 	t.Helper()
-	keys, err := auth.FromSecret(auth.DevStubSecret())
+	keys, err := auth.FromSecret(authtest.Secret())
 	if err != nil {
 		t.Fatalf("keys: %v", err)
 	}
@@ -291,7 +292,7 @@ func TestResourcesReadBundleReadme(t *testing.T) {
 // — no policy store since the bundle path doesn't touch it.
 func bundleTestServer(t *testing.T, readmes map[string][]byte) (*httptest.Server, *auth.ServerKeys) {
 	t.Helper()
-	keys, err := auth.FromSecret(auth.DevStubSecret())
+	keys, err := auth.FromSecret(authtest.Secret())
 	if err != nil {
 		t.Fatalf("keys: %v", err)
 	}

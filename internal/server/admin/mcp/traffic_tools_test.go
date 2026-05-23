@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/jkylling/bouncer/internal/auth"
+	"github.com/jkylling/bouncer/internal/auth/authtest"
 	"github.com/jkylling/bouncer/internal/control/policies"
 	"github.com/jkylling/bouncer/internal/control/traffic"
 	"github.com/jkylling/bouncer/internal/runtime"
@@ -74,7 +75,7 @@ func TestGetTrafficEventFullForAdmin(t *testing.T) {
 // the same data to read.
 func trafficTestServer(t *testing.T) (*httptest.Server, *auth.ServerKeys, string) {
 	t.Helper()
-	keys, err := auth.FromSecret(auth.DevStubSecret())
+	keys, err := auth.FromSecret(authtest.Secret())
 	if err != nil {
 		t.Fatalf("keys: %v", err)
 	}

@@ -8,15 +8,17 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/jkylling/bouncer/internal/auth"
+	"github.com/jkylling/bouncer/internal/auth/authtest"
 	"github.com/jkylling/bouncer/internal/server/admin"
 )
 
-// newTestKeys returns a deterministic ServerKeys built from the dev
-// stub secret. Every external admin_test test that needs to issue or
-// verify a JWT goes through this so they share one signing key.
+// newTestKeys returns a deterministic ServerKeys built from the
+// authtest secret. Every external admin_test test that needs to
+// issue or verify a JWT goes through this so they share one signing
+// key.
 func newTestKeys(t *testing.T) *auth.ServerKeys {
 	t.Helper()
-	keys, err := auth.FromSecret(auth.DevStubSecret())
+	keys, err := auth.FromSecret(authtest.Secret())
 	if err != nil {
 		t.Fatalf("FromSecret: %v", err)
 	}

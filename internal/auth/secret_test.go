@@ -38,19 +38,3 @@ func TestSecretFromHexRejectsNonHex(t *testing.T) {
 		t.Fatal("expected error for non-hex input")
 	}
 }
-
-// TestDevStubSecretIsStable pins that two binaries calling
-// DevStubSecret get the same bytes. If the constant ever changes the
-// test fails loudly — protecting users who rely on
-// `--dev-stub-secret` to keep a token usable across restarts.
-func TestDevStubSecretIsStable(t *testing.T) {
-	a, b := DevStubSecret(), DevStubSecret()
-	if a != b {
-		t.Fatal("DevStubSecret returned different bytes on two calls")
-	}
-	for i, x := range a {
-		if x != devStubByte {
-			t.Fatalf("byte[%d] = %#x, want %#x", i, x, devStubByte)
-		}
-	}
-}

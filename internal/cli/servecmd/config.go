@@ -45,13 +45,9 @@ type config struct {
 	PoliciesDir string `mapstructure:"policies-dir"`
 
 	// SecretHex is the 64-char hex form of the 32-byte server secret.
-	// Mutually exclusive with DevStubSecret.
+	// Auto-loaded from <data-dir>/secret.hex when --data-dir is set
+	// and the flag/env are unset.
 	SecretHex string `mapstructure:"secret-hex"`
-
-	// DevStubSecret picks the deterministic `0xAA × 32` secret. Local
-	// dev only; explicit flag so an empty --secret-hex doesn't
-	// silently boot with the stub.
-	DevStubSecret bool `mapstructure:"dev-stub-secret"`
 
 	InboundReadHeaderTimeout time.Duration `mapstructure:"inbound-read-header-timeout"`
 	InboundReadTimeout       time.Duration `mapstructure:"inbound-read-timeout"`
@@ -158,13 +154,13 @@ type config struct {
 const serveLong = `Run the policy-enforcing HTTP proxy.
 
 Loads API YAML from --apis-dir and policy YAML from --policies-dir,
-derives a server keypair from --secret-hex (or --dev-stub-secret for
-local dev), and listens on --addr. The two directories are split
-because the API set is roughly stable per upstream vendor while
-policies are user-owned and may live elsewhere (e.g. mounted in from
-a control-plane volume). Inbound requests must present a proxy JWT
-in the Authorization header; issue one via the bundled UI at
-/_admin/, the HTTP API at POST /_api/issue/tokens, or cmd/issue-token.
+derives a server keypair from --secret-hex, and listens on --addr.
+The two directories are split because the API set is roughly stable
+per upstream vendor while policies are user-owned and may live
+elsewhere (e.g. mounted in from a control-plane volume). Inbound
+requests must present a proxy JWT in the Authorization header; issue
+one via the bundled UI at /_admin/, the HTTP API at POST
+/_api/issue/tokens, or cmd/issue-token.
 
 Examples:
 
@@ -174,20 +170,20 @@ Examples:
   bouncer init /var/lib/bouncer
   bouncer serve --addr :443 --data-dir /var/lib/bouncer
 
-  # Local dev: dev stub secret, test-fixture APIs/policies, default port.
-  bouncer serve --dev-stub-secret \
+  # Local dev: explicit secret hex, test-fixture APIs/policies, default port.
+  bouncer serve --secret-hex "$(openssl rand -hex 32)" \
       --apis-dir ./testdata/apis --policies-dir ./testdata/policies
 
   # Generate a fresh secret once, persist for the lifetime of issued tokens.
   openssl rand -hex 32 > /etc/bouncer/secret.hex
 
   # Local debug: pretty-print every span to stdout.
-  bouncer serve --dev-stub-secret --otel-exporter stdout --log-format json
+  bouncer serve --data-dir /var/lib/bouncer --otel-exporter stdout --log-format json
 
   # Ship spans to an OTLP/HTTP collector. The exporter honours the
   # standard OTEL_EXPORTER_OTLP_ENDPOINT/HEADERS/COMPRESSION env vars.
   OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4318 \
-      bouncer serve --dev-stub-secret --otel-exporter otlphttp
+      bouncer serve --data-dir /var/lib/bouncer --otel-exporter otlphttp
 
   # MITM mode: the listener accepts plaintext HTTP CONNECTs and TLS-
   # terminates with on-the-fly certs signed by the supplied CA. An
@@ -222,7 +218,6 @@ func bindServeFlags(fs *pflag.FlagSet) {
 	fs.String("apis-dir", "./apis", "directory of API YAML specs and installed bundles. Top-level *.yaml are loose specs; immediate subdirectories with a bouncer.yaml are bundles installed via `bouncer apis add`. Overridden by <data-dir>/apis when --data-dir is set and this flag was not.")
 	fs.String("policies-dir", "./policies", "directory of policy YAML specs (operator-managed; the bundled config/ ships API specs only)")
 	fs.String("secret-hex", "", "32-byte server secret as 64 hex chars (or BOUNCER_SECRET_HEX)")
-	fs.Bool("dev-stub-secret", false, "use deterministic dev stub secret (NEVER use in prod)")
 	fs.Duration("inbound-read-header-timeout", defaultInboundReadHeaderTimeout, "max time to read inbound request line + headers")
 	fs.Duration("inbound-read-timeout", defaultInboundReadTimeout, "max time from accept to inbound body fully read")
 	fs.Duration("inbound-write-timeout", defaultInboundWriteTimeout, "max time spent writing the inbound response")
@@ -421,15 +416,12 @@ func applyDataDir(cfg *config, fs *pflag.FlagSet) error {
 }
 
 // validate enforces cross-field invariants viper's per-key getters
-// can't express — chiefly that exactly one of --secret-hex /
-// --dev-stub-secret is set, so a config typo can't silently downgrade
-// prod to the deterministic stub.
+// can't express — chiefly that --secret-hex is set, so a missing
+// secret fails loud at boot rather than silently producing forgeable
+// tokens.
 func (c *config) validate() error {
-	switch {
-	case c.SecretHex == "" && !c.DevStubSecret:
-		return fmt.Errorf("must set --secret-hex (or BOUNCER_SECRET_HEX), or pass --dev-stub-secret for local dev")
-	case c.SecretHex != "" && c.DevStubSecret:
-		return fmt.Errorf("--secret-hex and --dev-stub-secret are mutually exclusive")
+	if c.SecretHex == "" {
+		return fmt.Errorf("must set --secret-hex (or BOUNCER_SECRET_HEX); typically auto-loaded from <data-dir>/secret.hex")
 	}
 	if c.MITM && (c.MITMCAPath == "" || c.MITMCAKey == "") {
 		return fmt.Errorf("--mitm requires both --mitm-ca-cert and --mitm-ca-key")
@@ -466,13 +458,9 @@ func validateStoreDB(name string, isSqlite bool, perDB, fallback string) error {
 	return nil
 }
 
-// deriveSecret produces the 32-byte server secret from cfg. Either
-// --dev-stub-secret picks the deterministic stub, or --secret-hex is
-// parsed; loadConfig.validate has already rejected the "neither" and
-// "both" cases so this function does not have to.
+// deriveSecret produces the 32-byte server secret from cfg.
+// loadConfig.validate has already rejected an empty --secret-hex so
+// this function only has to parse.
 func deriveSecret(cfg *config) ([32]byte, error) {
-	if cfg.DevStubSecret {
-		return auth.DevStubSecret(), nil
-	}
 	return auth.SecretFromHex(cfg.SecretHex)
 }

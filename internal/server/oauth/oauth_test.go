@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jkylling/bouncer/internal/auth"
+	"github.com/jkylling/bouncer/internal/auth/authtest"
 )
 
 // stubUpstream returns an httptest server that asserts the inbound
@@ -35,7 +36,7 @@ func stubUpstream(t *testing.T, status int, body string) (*httptest.Server, *url
 
 func mustKeys(t *testing.T) *auth.ServerKeys {
 	t.Helper()
-	keys, err := auth.FromSecret(auth.DevStubSecret())
+	keys, err := auth.FromSecret(authtest.Secret())
 	require.NoError(t, err)
 	return keys
 }
