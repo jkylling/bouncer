@@ -13,7 +13,11 @@ import (
 // the inline "Wrong password." status, no cookie is set, and a
 // follow-up navigation to /_admin/ bounces back to the login screen.
 func TestLoginRejectsBadPassword(t *testing.T) {
-	proc := startBouncer(t)
+	// The default policy set (`demo`) permits anonymous on /_admin/,
+	// so the post-bad-password redirect-back-to-login assertion only
+	// holds under the auth-required `simple` set. Story is about the
+	// login gate; pin the mode that has one.
+	proc := startBouncerCustom(t, nil, "--internal-policies", "simple")
 	s := newSession(t, proc)
 	// The bad password POST returns 401, which the browser logs as a
 	// console.error on the failed fetch. That's the path under test —
@@ -60,7 +64,12 @@ func TestLoginRejectsBadPassword(t *testing.T) {
 // admin cookie is cleared and a navigation to /_admin/ redirects
 // back to login.
 func TestLogoutEndsSession(t *testing.T) {
-	proc := startBouncer(t)
+	// The post-logout "redirect to login" assertion only holds under
+	// the auth-required `simple` set; the default `demo` permits
+	// anonymous on /_admin/, so a logged-out browser keeps loading
+	// the dashboard. Story is about session termination; pin the
+	// mode that gates on it.
+	proc := startBouncerCustom(t, nil, "--internal-policies", "simple")
 	s := newSession(t, proc)
 	s.login()
 

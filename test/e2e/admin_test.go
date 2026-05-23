@@ -92,13 +92,19 @@ func TestAdminLoginRejectsBadPassword(t *testing.T) {
 	}
 }
 
-// TestAdminUIRedirectsAnonymous pins the browser redirect: an
-// anonymous GET on /_admin lands at /_admin/login with the
-// `?next=` round-trip parameter. Same redirect is tested for the
-// trailing-slash variant, which chi treats as a distinct route.
+// TestAdminUIRedirectsAnonymous pins the auth-required browser
+// redirect under --internal-policies=simple: an anonymous GET on
+// /_admin lands at /_admin/login with the `?next=` round-trip
+// parameter. Same redirect is tested for the trailing-slash variant,
+// which chi treats as a distinct route. The default policy set
+// (`demo`) permits anonymous on the UI shell, so this test pins the
+// `simple` set explicitly.
 func TestAdminUIRedirectsAnonymous(t *testing.T) {
 	dir := mustInit(t, initOpts{})
-	srv := startServe(t, serveOpts{DataDir: dir})
+	srv := startServe(t, serveOpts{
+		DataDir: dir,
+		Extra:   []string{"--internal-policies", "simple"},
+	})
 
 	for _, path := range []string{"/_admin", "/_admin/"} {
 		resp, _ := httpDo(t, httpClient(), http.MethodGet, srv.BaseURL+path, nil, nil)

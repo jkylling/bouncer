@@ -246,7 +246,7 @@ func bindServeFlags(fs *pflag.FlagSet) {
 	fs.String("data-dir", "", "directory created by `bouncer init`. Defaults to the current working directory when it looks like an initialized data dir (secret.hex + admin-password.hash present), or when --init is set. When set, defaults --secret-hex, --apis-dir, --policies-dir, --admin-password-hash, --store-db, and --mitm-ca-cert/key from the layout files (any explicit flag overrides).")
 	fs.Bool("init", false, "bootstrap --data-dir if it isn't already initialized (equivalent to running `bouncer init <data-dir>` first). Defaults --data-dir to the current working directory when unset. No-op when the dir already has a secret + admin-password hash.")
 	fs.StringSlice("with-apis", nil, "install one or more bundle refs before serving (e.g. github.com/jkylling/bouncer-gws@v0.1.0, or just github.com/jkylling/bouncer-gws to track main). Already-installed refs are skipped; repeat the flag for several bundles.")
-	fs.String("internal-policies", "simple", "embedded policy set gating the control-plane surface (/_admin + /_api): demo (open except admin), simple (mirrors current access control), production (admin-only)")
+	fs.String("internal-policies", "demo", "embedded policy set gating the control-plane surface (/_admin + /_api): demo (default; open except admin actions like token issuance and policy CRUD writes), simple (any-JWT-required for reads and proposal create), production (admin-only)")
 }
 
 // buildConfig reads viper + post-parse setup against an already-bound

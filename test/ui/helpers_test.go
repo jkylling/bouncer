@@ -119,6 +119,15 @@ func startBouncer(t *testing.T) *bouncerProc {
 // the data dir's apis subdir before serve starts. Tests that need a
 // registered API to attach policies / traffic to use this.
 func startBouncerWithAPIs(t *testing.T, apiYAMLs []string) *bouncerProc {
+	return startBouncerCustom(t, apiYAMLs)
+}
+
+// startBouncerCustom is the workhorse the other helpers delegate to.
+// extraArgs are appended verbatim to the `serve` invocation so a
+// story that needs a non-default flag (e.g. --internal-policies
+// simple to opt back into the auth-required redirect flow) can ask
+// for it without a bespoke helper.
+func startBouncerCustom(t *testing.T, apiYAMLs []string, extraArgs ...string) *bouncerProc {
 	t.Helper()
 	dataDir := t.TempDir()
 	if len(apiYAMLs) > 0 {
@@ -139,13 +148,14 @@ func startBouncerWithAPIs(t *testing.T, apiYAMLs []string) *bouncerProc {
 	}
 	port := pickPort(t)
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	cmd := exec.Command(bouncerBin,
+	args := append([]string{
 		"serve",
 		"--init",
 		"--data-dir", dataDir,
 		"--mitm=false",
 		"--addr", addr,
-	)
+	}, extraArgs...)
+	cmd := exec.Command(bouncerBin, args...)
 	cmd.Env = append(os.Environ(),
 		"BOUNCER_ADMIN_PASSWORD="+adminPassword,
 	)
