@@ -135,13 +135,18 @@ func (h *Handler) serveConnect(w http.ResponseWriter, r *http.Request) {
 	// SNI-less fallback uses the CONNECT host, not hello.Conn.LocalAddr
 	// (which would collapse every SNI-less tunnel onto one leaf bearing
 	// the proxy's IP — strict-trust clients would refuse the chain).
+	var leafNotAfter time.Time
 	tlsConfig := &tls.Config{
 		GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
 			name := hello.ServerName
 			if name == "" {
 				name = host
 			}
-			return h.ca.leafFor(name)
+			leaf, err := h.ca.leafFor(name)
+			if err == nil && leaf.Leaf != nil {
+				leafNotAfter = leaf.Leaf.NotAfter
+			}
+			return leaf, err
 		},
 		MinVersion: tls.VersionTLS12,
 		NextProtos: []string{"http/1.1"},
@@ -159,6 +164,26 @@ func (h *Handler) serveConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	span.End()
+
+	// Close the tunnel before the leaf cert expires so a reconnecting
+	// client gets a fresh cert on the new TLS handshake.
+	tunnelDone := make(chan struct{})
+	defer close(tunnelDone)
+	if !leafNotAfter.IsZero() {
+		remaining := time.Until(leafNotAfter.Add(-h.ca.effectiveMargin()))
+		if remaining > 0 {
+			timer := time.NewTimer(remaining)
+			go func() {
+				select {
+				case <-timer.C:
+					slog.DebugContext(tunnelCtx, "mitm tunnel closing: leaf cert approaching expiry", "host", host)
+					conn.Close()
+				case <-tunnelDone:
+					timer.Stop()
+				}
+			}()
+		}
+	}
 
 	// One-conn http.Server runs the inner router. BaseContext threads
 	// the tunnel SpanContext into every request so otelhttp inside the

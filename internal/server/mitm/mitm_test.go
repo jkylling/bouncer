@@ -8,7 +8,9 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -298,5 +300,51 @@ func TestConnectInnerErrorPropagates(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	if !strings.Contains(string(body), "boom") {
 		t.Errorf("body = %q, want one containing boom", body)
+	}
+}
+
+// TestTunnelClosesBeforeCertExpiry: a long-lived CONNECT tunnel must be
+// torn down before the leaf cert expires. Without this, a keep-alive
+// tunnel outlasts the 24h leaf and reconnecting clients see an expired
+// cert from the stale TLS session.
+func TestTunnelClosesBeforeCertExpiry(t *testing.T) {
+	ca, caCertPEM := mustCA(t)
+	ca.LeafTTL = 3 * time.Second
+	ca.ExpiryMargin = 1 * time.Second
+
+	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(204)
+	})
+	proxy := httptest.NewServer(New(ca, inner, Options{}))
+	defer proxy.Close()
+
+	client := proxyClient(t, proxy.URL, caCertPEM)
+	var handshakes atomic.Int32
+	tr := client.Transport.(*http.Transport).Clone()
+	tr.TLSClientConfig.VerifyPeerCertificate = func(_ [][]byte, _ [][]*x509.Certificate) error {
+		handshakes.Add(1)
+		return nil
+	}
+	client.Transport = tr
+
+	resp, err := client.Get("https://example.com/1")
+	if err != nil {
+		t.Fatalf("request 1: %v", err)
+	}
+	resp.Body.Close()
+	if got := handshakes.Load(); got != 1 {
+		t.Fatalf("handshakes after req 1 = %d, want 1", got)
+	}
+
+	// Deadline is LeafTTL - ExpiryMargin = 2s. Sleep well past it.
+	time.Sleep(3 * time.Second)
+
+	resp, err = client.Get("https://example.com/2")
+	if err != nil {
+		t.Fatalf("request 2: %v", err)
+	}
+	resp.Body.Close()
+	if got := handshakes.Load(); got < 2 {
+		t.Errorf("handshakes after req 2 = %d, want >= 2 (tunnel should have been closed)", got)
 	}
 }

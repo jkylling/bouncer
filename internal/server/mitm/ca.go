@@ -110,15 +110,18 @@ func parsePrivateKey(block *pem.Block) (any, error) {
 	}
 }
 
+func (ca *CA) effectiveMargin() time.Duration {
+	if ca.ExpiryMargin > 0 {
+		return ca.ExpiryMargin
+	}
+	return DefaultExpiryMargin
+}
+
 // leafFor returns the cached leaf for host or issues a new one. Add
 // on an existing key overwrites and refreshes LRU position, so a
 // stale hit just falls through to issue.
 func (ca *CA) leafFor(host string) (*tls.Certificate, error) {
-	margin := ca.ExpiryMargin
-	if margin <= 0 {
-		margin = DefaultExpiryMargin
-	}
-	if e, ok := ca.cache.Get(host); ok && time.Now().Add(margin).Before(e.notAfter) {
+	if e, ok := ca.cache.Get(host); ok && time.Now().Add(ca.effectiveMargin()).Before(e.notAfter) {
 		return e.leaf, nil
 	}
 	leaf, notAfter, err := ca.issueLeaf(host)
