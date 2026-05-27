@@ -307,6 +307,158 @@ func TestPoliciesUIIndexEmbedsHTML(t *testing.T) {
 	}
 }
 
+func TestPoliciesExportReturnsYAML(t *testing.T) {
+	ts, _, bearer := policyServer(t)
+	p := goodPolicy()
+	doJSON(t, bearer, http.MethodPost, ts.URL+PoliciesPath, p).Body.Close()
+
+	resp := doJSON(t, bearer, http.MethodGet, ts.URL+PoliciesExportPath, nil)
+	requireStatus(t, resp, http.StatusOK)
+	defer resp.Body.Close()
+
+	if ct := resp.Header.Get("Content-Type"); ct != "application/x-yaml" {
+		t.Errorf("Content-Type = %q, want application/x-yaml", ct)
+	}
+	if cd := resp.Header.Get("Content-Disposition"); !strings.Contains(cd, "policies.yaml") {
+		t.Errorf("Content-Disposition = %q, want attachment with policies.yaml", cd)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "name: p1") {
+		t.Errorf("body missing policy name, got:\n%s", body)
+	}
+}
+
+func TestPoliciesExportEmpty(t *testing.T) {
+	ts, _, bearer := policyServer(t)
+	resp := doJSON(t, bearer, http.MethodGet, ts.URL+PoliciesExportPath, nil)
+	requireStatus(t, resp, http.StatusOK)
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if len(bytes.TrimSpace(body)) != 0 {
+		t.Errorf("expected empty export, got:\n%s", body)
+	}
+}
+
+func doRaw(t *testing.T, bearer, method, url, contentType string, body []byte) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(method, url, bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	if bearer != "" {
+		req.Header.Set("Authorization", bearer)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do: %v", err)
+	}
+	return resp
+}
+
+func TestPoliciesImportCreatesNew(t *testing.T) {
+	ts, _, bearer := policyServer(t)
+	yamlBody := []byte("api: svc\nname: imported\naction: \"true\"\ncondition: \"true\"\nresult: permit\n")
+
+	resp := doRaw(t, bearer, http.MethodPost, ts.URL+PoliciesImportPath, "application/x-yaml", yamlBody)
+	got := decodeOK[importResponse](t, resp, http.StatusOK)
+	if len(got.Created) != 1 || got.Created[0] != "svc/imported" {
+		t.Errorf("created = %v, want [svc/imported]", got.Created)
+	}
+	if len(got.Overwritten) != 0 {
+		t.Errorf("overwritten = %v, want empty", got.Overwritten)
+	}
+}
+
+func TestPoliciesImportOverwriteReported(t *testing.T) {
+	ts, _, bearer := policyServer(t)
+	p := goodPolicy()
+	doJSON(t, bearer, http.MethodPost, ts.URL+PoliciesPath, p).Body.Close()
+
+	yamlBody := []byte("api: svc\nname: p1\naction: \"true\"\ncondition: \"true\"\nresult: deny\n")
+	resp := doRaw(t, bearer, http.MethodPost, ts.URL+PoliciesImportPath, "application/x-yaml", yamlBody)
+	got := decodeOK[importResponse](t, resp, http.StatusOK)
+	if len(got.Overwritten) != 1 || got.Overwritten[0] != "svc/p1" {
+		t.Errorf("overwritten = %v, want [svc/p1]", got.Overwritten)
+	}
+}
+
+func TestPoliciesImportDryRun(t *testing.T) {
+	ts, _, bearer := policyServer(t)
+	yamlBody := []byte("api: svc\nname: drytest\naction: \"true\"\ncondition: \"true\"\nresult: permit\n")
+
+	resp := doRaw(t, bearer, http.MethodPost, ts.URL+PoliciesImportPath+"?dry_run=true", "application/x-yaml", yamlBody)
+	got := decodeOK[importResponse](t, resp, http.StatusOK)
+	if len(got.Created) != 1 {
+		t.Errorf("created = %v, want 1 entry", got.Created)
+	}
+
+	// Verify nothing was actually persisted.
+	list := decodeOK[policiesListResponse](t,
+		doJSON(t, bearer, http.MethodGet, ts.URL+PoliciesPath, nil), http.StatusOK)
+	if len(list.Policies) != 0 {
+		t.Errorf("list after dry-run = %d, want 0", len(list.Policies))
+	}
+}
+
+func TestPoliciesImportInvalidYAML(t *testing.T) {
+	ts, _, bearer := policyServer(t)
+	resp := doRaw(t, bearer, http.MethodPost, ts.URL+PoliciesImportPath, "application/x-yaml", []byte("not: valid: yaml: ["))
+	requireStatus(t, resp, http.StatusBadRequest).Body.Close()
+}
+
+func TestPoliciesImportValidationError(t *testing.T) {
+	ts, _, bearer := policyServer(t)
+	yamlBody := []byte("api: svc\nname: bad\naction: \"true\"\ncondition: no_such_var\nresult: permit\n")
+	resp := doRaw(t, bearer, http.MethodPost, ts.URL+PoliciesImportPath, "application/x-yaml", yamlBody)
+	requireStatus(t, resp, http.StatusBadRequest)
+	defer resp.Body.Close()
+	var got importResponse
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got.Errors) == 0 {
+		t.Errorf("errors empty, want validation message")
+	}
+}
+
+func TestPoliciesImportEmpty(t *testing.T) {
+	ts, _, bearer := policyServer(t)
+	resp := doRaw(t, bearer, http.MethodPost, ts.URL+PoliciesImportPath, "application/x-yaml", []byte(""))
+	requireStatus(t, resp, http.StatusBadRequest).Body.Close()
+}
+
+func TestPoliciesImportRoundTrip(t *testing.T) {
+	ts, _, bearer := policyServer(t)
+	p := goodPolicy()
+	doJSON(t, bearer, http.MethodPost, ts.URL+PoliciesPath, p).Body.Close()
+
+	// Export
+	exportResp := doJSON(t, bearer, http.MethodGet, ts.URL+PoliciesExportPath, nil)
+	requireStatus(t, exportResp, http.StatusOK)
+	yamlBody, _ := io.ReadAll(exportResp.Body)
+	exportResp.Body.Close()
+
+	// Delete the existing policy
+	doJSON(t, bearer, http.MethodDelete, ts.URL+PoliciesPath+"/svc/p1", nil).Body.Close()
+
+	// Import the exported YAML
+	importResp := doRaw(t, bearer, http.MethodPost, ts.URL+PoliciesImportPath, "application/x-yaml", yamlBody)
+	got := decodeOK[importResponse](t, importResp, http.StatusOK)
+	if len(got.Created) != 1 {
+		t.Errorf("round-trip created = %v, want 1", got.Created)
+	}
+
+	// Verify it's back
+	list := decodeOK[policiesListResponse](t,
+		doJSON(t, bearer, http.MethodGet, ts.URL+PoliciesPath, nil), http.StatusOK)
+	if len(list.Policies) != 1 || list.Policies[0].Name != "p1" {
+		t.Errorf("round-trip list = %+v, want one entry named p1", list.Policies)
+	}
+}
+
 func TestPoliciesListFiltersByAPI(t *testing.T) {
 	// Adds two APIs so we can verify ?api= filtering.
 	b := runtime.NewBuilder()

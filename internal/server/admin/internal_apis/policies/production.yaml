@@ -49,6 +49,8 @@ action: |
     "policies_create",
     "policies_replace",
     "policies_delete",
+    "policies_export",
+    "policies_import",
     "proposals_list",
     "proposals_create",
     "proposals_get",

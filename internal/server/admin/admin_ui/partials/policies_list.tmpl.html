@@ -45,6 +45,9 @@ Both pages parse this file via templates.go's ParseFS so the
       </div>
       <div style="display: flex; gap: 6px;">
         <button type="button" class="btn btn-secondary btn-sm pl-refresh">Refresh</button>
+        <button type="button" class="btn btn-secondary btn-sm pl-export">Export</button>
+        <button type="button" class="btn btn-secondary btn-sm pl-import">Import</button>
+        <input type="file" class="pl-import-file" accept=".yaml,.yml" style="display: none;">
         <button type="button" class="btn btn-primary btn-sm pl-new-policy">+ New policy</button>
       </div>
     </div>
@@ -135,11 +138,14 @@ function setupPoliciesList(host, scope) {
     condition: $(".pl-f-condition"),
     result: $(".pl-f-result"),
   };
+  const importFileInput = $(".pl-import-file");
   const buttons = {
     save: $(".pl-save"),
     delete: $(".pl-delete"),
     newPolicy: $(".pl-new-policy"),
     refresh: $(".pl-refresh"),
+    exportBtn: $(".pl-export"),
+    importBtn: $(".pl-import"),
   };
   const actionStatus = $(".pl-action-status");
 
@@ -204,6 +210,7 @@ function setupPoliciesList(host, scope) {
     writeable = r.ok ? !!(r.body && r.body.writeable) : true;
     readonlyBanner.classList.toggle("hidden", writeable);
     buttons.newPolicy.disabled = !writeable;
+    buttons.importBtn.disabled = !writeable;
   }
 
   // loadAvailableAPIs fetches the full list of available APIs from /_api/apis
@@ -458,11 +465,90 @@ function setupPoliciesList(host, scope) {
     await refresh();
   }
 
+  function exportPolicies() {
+    const url = "/_api/policies:export" + (policiesURL().includes("?") ? "&" + policiesURL().split("?")[1] : "");
+    const params = new URLSearchParams();
+    const selectedAPIs = Array.from(apiFilter.selectedOptions).map(o => o.value).filter(v => v);
+    if (selectedAPIs.length > 0) {
+      for (const a of selectedAPIs) params.append("api", a);
+    } else if (scopedAPIs) {
+      for (const a of scopedAPIs) params.append("api", a);
+    }
+    const qs = params.toString();
+    const exportURL = "/_api/policies:export" + (qs ? "?" + qs : "");
+    const a = document.createElement("a");
+    a.href = exportURL;
+    a.download = "policies.yaml";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
+
+  async function importPolicies(file) {
+    const text = await file.text();
+    actionStatus.textContent = "Checking import…";
+    actionStatus.className = "muted";
+
+    const dryResp = await fetch("/_api/policies:import?dry_run=true", {
+      method: "POST",
+      headers: { "content-type": "application/x-yaml" },
+      body: text,
+    });
+    const dryBody = await dryResp.json();
+
+    if (!dryResp.ok) {
+      const errors = (dryBody.errors && dryBody.errors.length > 0)
+        ? dryBody.errors.join("\n")
+        : (dryBody.message || dryBody.error || "Unknown error");
+      alert("Import validation failed:\n\n" + errors);
+      actionStatus.textContent = "Import failed.";
+      actionStatus.className = "muted err";
+      return;
+    }
+
+    const created = dryBody.created || [];
+    const overwritten = dryBody.overwritten || [];
+    let msg = `Import ${created.length + overwritten.length} policies?\n`;
+    if (created.length > 0) msg += `\nNew (${created.length}):\n  ${created.join("\n  ")}`;
+    if (overwritten.length > 0) msg += `\n\nOverwrite (${overwritten.length}):\n  ${overwritten.join("\n  ")}`;
+    if (!confirm(msg)) {
+      actionStatus.textContent = "";
+      return;
+    }
+
+    actionStatus.textContent = "Importing…";
+    const resp = await fetch("/_api/policies:import", {
+      method: "POST",
+      headers: { "content-type": "application/x-yaml" },
+      body: text,
+    });
+    const body = await resp.json();
+    if (!resp.ok) {
+      const errMsg = (body.errors && body.errors.length > 0)
+        ? body.errors.join("\n")
+        : (body.message || body.error || "Unknown error");
+      alert("Import failed:\n\n" + errMsg);
+      actionStatus.textContent = "Import failed.";
+      actionStatus.className = "muted err";
+      return;
+    }
+
+    const total = (body.created || []).length + (body.overwritten || []).length;
+    actionStatus.textContent = `Imported ${total} policies.`;
+    actionStatus.className = "muted ok";
+    await refresh();
+  }
+
   for (const f of Object.values(fields)) f.addEventListener("input", scheduleDryRun);
   buttons.save.addEventListener("click", save);
   buttons.delete.addEventListener("click", deletePolicy);
   buttons.newPolicy.addEventListener("click", startCreate);
   buttons.refresh.addEventListener("click", refresh);
+  buttons.exportBtn.addEventListener("click", exportPolicies);
+  buttons.importBtn.addEventListener("click", () => { importFileInput.value = ""; importFileInput.click(); });
+  importFileInput.addEventListener("change", () => {
+    if (importFileInput.files.length > 0) importPolicies(importFileInput.files[0]);
+  });
   apiFilter.addEventListener("change", refresh);
 
   // Expose refresh() so callers (the service-detail page) can re-

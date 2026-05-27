@@ -244,6 +244,68 @@ func (s *Service) persistAndApply(ctx context.Context, p *models.Policy) error {
 	return nil
 }
 
+// ImportResult summarises what an Import would do (dry-run) or did.
+type ImportResult struct {
+	Created     []string // "api/name" keys for new policies
+	Overwritten []string // "api/name" keys that replace existing ones
+	Errors      []string // per-policy validation failures
+}
+
+// Import validates and upserts a batch of policies. When dryRun is
+// true, no mutations happen — the result reports what *would* change.
+// Validation errors are collected into result.Errors and returned
+// alongside ErrInvalid so callers can surface all problems at once.
+func (s *Service) Import(ctx context.Context, incoming []models.Policy, dryRun bool) (ImportResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.readOnly {
+		return ImportResult{}, ErrReadOnly
+	}
+
+	// Deduplicate: last occurrence per api/name wins.
+	lastIdx := make(map[string]int, len(incoming))
+	for i, p := range incoming {
+		lastIdx[p.API+"/"+p.Name] = i
+	}
+	deduped := make([]models.Policy, 0, len(lastIdx))
+	for i, p := range incoming {
+		if lastIdx[p.API+"/"+p.Name] == i {
+			deduped = append(deduped, p)
+		}
+	}
+
+	var result ImportResult
+	for i, p := range deduped {
+		label := p.API + "/" + p.Name
+		if p.API == "" || p.Name == "" {
+			label = fmt.Sprintf("entry %d", i+1)
+		}
+		if err := s.Validate(&p); err != nil {
+			result.Errors = append(result.Errors, label+": "+err.Error())
+			continue
+		}
+		if _, ok := s.find(p.API, p.Name); ok {
+			result.Overwritten = append(result.Overwritten, p.API+"/"+p.Name)
+		} else {
+			result.Created = append(result.Created, p.API+"/"+p.Name)
+		}
+	}
+
+	if len(result.Errors) > 0 {
+		return result, fmt.Errorf("%w: import has validation errors", ErrInvalid)
+	}
+	if dryRun {
+		return result, nil
+	}
+
+	for i := range deduped {
+		if err := s.persistAndApply(ctx, &deduped[i]); err != nil {
+			return result, fmt.Errorf("persist %s/%s: %w", deduped[i].API, deduped[i].Name, err)
+		}
+	}
+	return result, nil
+}
+
 // basicSchema covers the cheap structural checks the runtime compile
 // path doesn't surface clearly. Empty api/name produce nasty downstream
 // errors (the runtime's lookup fails with "api %q not registered" for

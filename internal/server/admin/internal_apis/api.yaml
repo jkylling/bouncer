@@ -147,6 +147,16 @@ actions:
   method: DELETE
   path: /_api/policies/{api}/{name}
 
+- name: policies_export
+  filter: |
+    request.method == "GET" &&
+    request.path == "/_api/policies:export"
+
+- name: policies_import
+  filter: |
+    request.method == "POST" &&
+    request.path == "/_api/policies:import"
+
 # --- Proposals -------------------------------------------------------
 # Agents create drafts (`proposals_create`), reviewers list / get /
 # update them, admins approve or reject. Subject scoping inside the

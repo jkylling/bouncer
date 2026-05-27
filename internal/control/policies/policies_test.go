@@ -264,3 +264,125 @@ func TestReadOnlyDefaultsToWriteable(t *testing.T) {
 		t.Errorf("Writeable() = false on a fresh Service, want true")
 	}
 }
+
+func TestImportCreatesNewPolicies(t *testing.T) {
+	rt := newRuntime(t, trivialAPI("svc"))
+	svc := New(rt, NewMemoryStore())
+
+	incoming := []models.Policy{
+		goodPolicy("svc", "p1"),
+		goodPolicy("svc", "p2"),
+	}
+	result, err := svc.Import(context.Background(), incoming, false)
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if len(result.Created) != 2 {
+		t.Errorf("created = %v, want 2 entries", result.Created)
+	}
+	if len(result.Overwritten) != 0 {
+		t.Errorf("overwritten = %v, want empty", result.Overwritten)
+	}
+	if got := svc.List(); len(got) != 2 {
+		t.Errorf("list = %d, want 2", len(got))
+	}
+}
+
+func TestImportOverwritesExisting(t *testing.T) {
+	rt := newRuntime(t, trivialAPI("svc"))
+	svc := New(rt, NewMemoryStore())
+
+	seed := goodPolicy("svc", "p1")
+	if err := svc.Create(context.Background(), &seed); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	incoming := []models.Policy{
+		goodPolicy("svc", "p1"), // overwrite
+		goodPolicy("svc", "p2"), // new
+	}
+	result, err := svc.Import(context.Background(), incoming, false)
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if len(result.Created) != 1 || result.Created[0] != "svc/p2" {
+		t.Errorf("created = %v, want [svc/p2]", result.Created)
+	}
+	if len(result.Overwritten) != 1 || result.Overwritten[0] != "svc/p1" {
+		t.Errorf("overwritten = %v, want [svc/p1]", result.Overwritten)
+	}
+}
+
+func TestImportDryRunDoesNotMutate(t *testing.T) {
+	rt := newRuntime(t, trivialAPI("svc"))
+	svc := New(rt, NewMemoryStore())
+
+	incoming := []models.Policy{goodPolicy("svc", "p1")}
+	result, err := svc.Import(context.Background(), incoming, true)
+	if err != nil {
+		t.Fatalf("dry-run: %v", err)
+	}
+	if len(result.Created) != 1 {
+		t.Errorf("created = %v, want 1", result.Created)
+	}
+	if got := svc.List(); len(got) != 0 {
+		t.Errorf("list after dry-run = %d, want 0", len(got))
+	}
+}
+
+func TestImportRejectsInvalidPolicies(t *testing.T) {
+	rt := newRuntime(t, trivialAPI("svc"))
+	svc := New(rt, NewMemoryStore())
+
+	incoming := []models.Policy{
+		goodPolicy("svc", "p1"),
+		{API: "svc", Name: "bad", Action: "true", Condition: "no_such_var", Result: models.Permit},
+	}
+	result, err := svc.Import(context.Background(), incoming, false)
+	if !errors.Is(err, ErrInvalid) {
+		t.Fatalf("err = %v, want ErrInvalid", err)
+	}
+	if len(result.Errors) != 1 {
+		t.Errorf("errors = %v, want 1 entry", result.Errors)
+	}
+	if got := svc.List(); len(got) != 0 {
+		t.Errorf("list after failed import = %d, want 0 (no partial writes)", len(got))
+	}
+}
+
+func TestImportDeduplicatesLastWins(t *testing.T) {
+	rt := newRuntime(t, trivialAPI("svc"))
+	svc := New(rt, NewMemoryStore())
+
+	p1 := goodPolicy("svc", "p1")
+	p1.Condition = "1 == 1"
+	p1dup := goodPolicy("svc", "p1")
+	p1dup.Condition = "2 == 2"
+
+	incoming := []models.Policy{p1, p1dup}
+	result, err := svc.Import(context.Background(), incoming, false)
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if len(result.Created) != 1 {
+		t.Errorf("created = %v, want 1 (deduplicated)", result.Created)
+	}
+	got, err := svc.Get("svc", "p1")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.Condition != "2 == 2" {
+		t.Errorf("condition = %q, want last-wins value", got.Condition)
+	}
+}
+
+func TestImportReadOnlyRejects(t *testing.T) {
+	rt := newRuntime(t, trivialAPI("svc"))
+	svc := New(rt, NewMemoryStore())
+	svc.SetReadOnly(true)
+
+	_, err := svc.Import(context.Background(), []models.Policy{goodPolicy("svc", "p1")}, false)
+	if !errors.Is(err, ErrReadOnly) {
+		t.Errorf("err = %v, want ErrReadOnly", err)
+	}
+}

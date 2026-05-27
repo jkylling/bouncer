@@ -1,11 +1,15 @@
 package admin
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"io"
 	"net/http"
 	"net/url"
 
 	"github.com/go-chi/chi/v5"
+	"gopkg.in/yaml.v3"
 
 	"github.com/jkylling/bouncer/internal/control/policies"
 	"github.com/jkylling/bouncer/internal/runtime/models"
@@ -20,13 +24,18 @@ const (
 	PolicyItemPath           = "/_api/policies/{api}/{name}"
 	PoliciesDryRunPath       = "/_api/policies:dryRun"
 	PoliciesCapabilitiesPath = "/_api/policies:capabilities"
+	PoliciesExportPath       = "/_api/policies:export"
+	PoliciesImportPath       = "/_api/policies:import"
 	PoliciesUIPath           = "/_admin/policies"
 )
 
-// MaxPolicyBodyBytes caps the JSON body the policy endpoints read.
-// One policy is a few hundred bytes; 64 KiB is generous and still
-// shields the proxy from a hostile body that's just trying to OOM.
-const MaxPolicyBodyBytes int64 = 1 << 16
+const (
+	// MaxPolicyBodyBytes caps the JSON body the policy endpoints read.
+	MaxPolicyBodyBytes int64 = 1 << 16 // 64 KiB
+
+	// MaxImportBodyBytes caps the YAML body on the import endpoint.
+	MaxImportBodyBytes int64 = 1 << 20 // 1 MiB
+)
 
 // MountPolicies attaches the policy CRUD endpoints to r, backed by
 // svc. Following the MountTraffic pattern: the parent server
@@ -45,6 +54,8 @@ func MountPolicies(r chi.Router, svc *policies.Service) {
 	r.Post(PoliciesPath, createPolicyHandler(svc))
 	r.Put(PolicyItemPath, replacePolicyHandler(svc))
 	r.Delete(PolicyItemPath, deletePolicyHandler(svc))
+	r.Get(PoliciesExportPath, exportPoliciesHandler(svc))
+	r.Post(PoliciesImportPath, importPoliciesHandler(svc))
 	mountUIPage(r, PoliciesUIPath, "policies")
 }
 
@@ -185,6 +196,118 @@ func dryRunPolicyHandler(svc *policies.Service) http.HandlerFunc {
 type dryRunResponse struct {
 	OK    bool   `json:"ok"`
 	Error string `json:"error,omitempty"`
+}
+
+func exportPoliciesHandler(svc *policies.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		filters := r.URL.Query()["api"]
+		all := svc.List()
+		if len(filters) > 0 {
+			allow := make(map[string]bool, len(filters))
+			for _, f := range filters {
+				allow[f] = true
+			}
+			out := make([]models.Policy, 0, len(all))
+			for _, p := range all {
+				if allow[p.API] {
+					out = append(out, p)
+				}
+			}
+			all = out
+		}
+
+		w.Header().Set("Content-Type", "application/x-yaml")
+		w.Header().Set("Content-Disposition", `attachment; filename="policies.yaml"`)
+		if len(all) == 0 {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		var buf bytes.Buffer
+		enc := yaml.NewEncoder(&buf)
+		enc.SetIndent(2)
+		for i := range all {
+			if err := enc.Encode(all[i]); err != nil {
+				writeJSONError(w, "encode error", http.StatusInternalServerError)
+				return
+			}
+		}
+		if err := enc.Close(); err != nil {
+			writeJSONError(w, "encode error", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(buf.Bytes())
+	}
+}
+
+type importResponse struct {
+	Created     []string `json:"created"`
+	Overwritten []string `json:"overwritten"`
+	Errors      []string `json:"errors,omitempty"`
+}
+
+func importPoliciesHandler(svc *policies.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, MaxImportBodyBytes)
+		defer r.Body.Close()
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			var maxErr *http.MaxBytesError
+			if errors.As(err, &maxErr) {
+				writeJSONError(w, "body too large", http.StatusRequestEntityTooLarge)
+				return
+			}
+			writeJSONError(w, "read body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		parsed, err := decodePoliciesYAML(raw)
+		if err != nil {
+			writeJSONError(w, "invalid YAML: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if len(parsed) == 0 {
+			writeJSONError(w, "no policies found in YAML", http.StatusBadRequest)
+			return
+		}
+
+		dryRun := r.URL.Query().Get("dry_run") == "true"
+		result, err := svc.Import(r.Context(), parsed, dryRun)
+		resp := importResponse{
+			Created:     result.Created,
+			Overwritten: result.Overwritten,
+			Errors:      result.Errors,
+		}
+		if err != nil {
+			if errors.Is(err, policies.ErrInvalid) {
+				writeJSONStatus(w, http.StatusBadRequest, "", resp)
+				return
+			}
+			writePolicyError(r.Context(), w, err)
+			return
+		}
+		writeJSON(w, resp)
+	}
+}
+
+func decodePoliciesYAML(raw []byte) ([]models.Policy, error) {
+	dec := yaml.NewDecoder(bytes.NewReader(raw))
+	dec.KnownFields(true)
+	var out []models.Policy
+	for {
+		var p models.Policy
+		if err := dec.Decode(&p); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, err
+		}
+		if p.API == "" && p.Name == "" {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out, nil
 }
 
 func writePolicyError(ctx context.Context, w http.ResponseWriter, err error) {
