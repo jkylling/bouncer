@@ -2501,6 +2501,7 @@ details.advanced summary {
 [data-tokens-form] .tf-status.ok { color: var(--success); }
 [data-tokens-form] .tf-output {
   background: var(--surface-2);
+  color: var(--text);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 12px 14px;
