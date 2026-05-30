@@ -90,11 +90,16 @@ func TestInternalPolicyMiddleware(t *testing.T) {
 			method: "POST", path: "/_api/issue/tokens",
 			wantStatus: http.StatusOK},
 
-		// demo: every non-admin endpoint is open
+		// demo: JSON / MCP read endpoints are open, dashboard pages
+		// and dangerous primitives still require admin login.
 		{name: "demo/open/anon/policies-list",
 			set: admin.PolicySetDemo, role: auth.RoleAnonymous,
 			method: "GET", path: "/_api/policies",
 			wantStatus: http.StatusOK},
+		{name: "demo/auth/anon/ui-services",
+			set: admin.PolicySetDemo, role: auth.RoleAnonymous,
+			method: "GET", path: "/_admin/services",
+			wantStatus: http.StatusSeeOther},
 		{name: "demo/admin/anon/issue-tokens",
 			set: admin.PolicySetDemo, role: auth.RoleAnonymous,
 			method: "POST", path: "/_api/issue/tokens",

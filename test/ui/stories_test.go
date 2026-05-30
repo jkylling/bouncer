@@ -13,10 +13,10 @@ import (
 // the inline "Wrong password." status, no cookie is set, and a
 // follow-up navigation to /_admin/ bounces back to the login screen.
 func TestLoginRejectsBadPassword(t *testing.T) {
-	// The default policy set (`demo`) permits anonymous on /_admin/,
-	// so the post-bad-password redirect-back-to-login assertion only
-	// holds under the auth-required `simple` set. Story is about the
-	// login gate; pin the mode that has one.
+	// Pin `simple` so the story exercises the user-tier path too;
+	// the default `demo` set also gates /_admin/ behind admin login,
+	// so the redirect-back-to-login assertion would hold there as
+	// well, but `simple` is the more interesting auth model.
 	proc := startBouncerCustom(t, nil, "--internal-policies", "simple")
 	s := newSession(t, proc)
 	// The bad password POST returns 401, which the browser logs as a
@@ -64,11 +64,9 @@ func TestLoginRejectsBadPassword(t *testing.T) {
 // admin cookie is cleared and a navigation to /_admin/ redirects
 // back to login.
 func TestLogoutEndsSession(t *testing.T) {
-	// The post-logout "redirect to login" assertion only holds under
-	// the auth-required `simple` set; the default `demo` permits
-	// anonymous on /_admin/, so a logged-out browser keeps loading
-	// the dashboard. Story is about session termination; pin the
-	// mode that gates on it.
+	// Pin `simple` so the story exercises the user-tier path too;
+	// the default `demo` set also redirects anonymous /_admin/ to
+	// login, so the post-logout assertion would hold there as well.
 	proc := startBouncerCustom(t, nil, "--internal-policies", "simple")
 	s := newSession(t, proc)
 	s.login()

@@ -1,24 +1,20 @@
 # demo.yaml — open mode for live demos / workshops:
-# every endpoint is reachable without a JWT *except* admin endpoints
-# (token issuance, policy CRUD writes, traffic viewer mutations).
+# JSON / MCP read endpoints are reachable without a JWT, but every
+# dashboard page requires admin login. The half-open variant (UI
+# shells anonymous, gated JSON behind admin) rendered pages that
+# couldn't actually do anything; redirecting up front is less
+# confusing.
 #
 # Use case: someone is screen-sharing the bouncer UI and wants
-# zero-friction "click around" without juggling JWTs, but still
-# wants the dangerous primitives gated.
+# zero-friction MCP / scripted access without juggling JWTs, while
+# the dashboard itself is gated behind one admin login.
 ---
 api: bouncer-internal
 name: demo-open
-description: All non-admin internal endpoints are reachable without a JWT.
+description: Non-UI read endpoints and the login page are reachable without a JWT.
 action: |
   action.name in [
-    "ui_index",
-    "ui_tokens",
     "ui_login",
-    "ui_policies",
-    "ui_proposals",
-    "ui_traffic",
-    "ui_settings",
-    "ui_services",
     "login",
     "logout",
     "whoami",
@@ -47,10 +43,17 @@ result: permit
 ---
 api: bouncer-internal
 name: admin-only
-description: Even in demo mode, dangerous primitives still require admin.
+description: Dashboard pages and dangerous primitives require admin.
 principal: '"admin" in principal.scopes'
 action: |
   action.name in [
+    "ui_index",
+    "ui_tokens",
+    "ui_policies",
+    "ui_proposals",
+    "ui_traffic",
+    "ui_settings",
+    "ui_services",
     "tokens_issue",
     "tokens_issue_refresh",
     "tokens_page_issue",

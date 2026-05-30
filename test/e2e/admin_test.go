@@ -97,8 +97,9 @@ func TestAdminLoginRejectsBadPassword(t *testing.T) {
 // /_admin lands at /_admin/login with the `?next=` round-trip
 // parameter. Same redirect is tested for the trailing-slash variant,
 // which chi treats as a distinct route. The default policy set
-// (`demo`) permits anonymous on the UI shell, so this test pins the
-// `simple` set explicitly.
+// (`demo`) also redirects anonymous on UI shells, but `simple` is
+// what this test pins because its auth tiers are the canonical
+// reference for the redirect contract.
 func TestAdminUIRedirectsAnonymous(t *testing.T) {
 	dir := mustInit(t, initOpts{})
 	srv := startServe(t, serveOpts{
