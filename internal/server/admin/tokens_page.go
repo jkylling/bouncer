@@ -259,7 +259,9 @@ func resolveVariant(svc *services.Registry, body *tokensIssueRequest) (bundles.T
 	}
 	for _, f := range v.Fields {
 		if f.Required && strings.TrimSpace(body.Fields[f.Name]) == "" {
-			return bundles.TokenVariant{}, fmt.Errorf("field %q is required", f.Name)
+			// Caller fault: wrapped in ErrInvalidSpec so
+			// respondTokensError maps it to 400, not a logged 500.
+			return bundles.TokenVariant{}, fmt.Errorf("%w: field %q is required", tokens.ErrInvalidSpec, f.Name)
 		}
 	}
 	return v, nil
@@ -296,7 +298,11 @@ func buildAccessCreds(v bundles.TokenVariant, fields map[string]string) (auth.Ac
 		headers = append(headers, auth.Header{Name: name, Value: rendered})
 	}
 	if len(headers) == 0 {
-		return auth.AccessCreds{}, errors.New("no field values supplied")
+		// Caller fault (every optional field left empty) -> 400.
+		// Template render errors above stay unwrapped: a broken
+		// Header/Template pair is bundle-config fault, and a 500 +
+		// error log is the right operator signal.
+		return auth.AccessCreds{}, fmt.Errorf("%w: no field values supplied", tokens.ErrInvalidSpec)
 	}
 	return auth.AccessCreds{Headers: headers}, nil
 }
