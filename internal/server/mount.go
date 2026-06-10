@@ -16,7 +16,7 @@ import (
 // stripped-down deployment doesn't expose stubs that 503.
 func (s *Server) mountControlPlane(r chi.Router) {
 	admin.MountStatic(r)
-	admin.MountOn(r, s.keys)
+	admin.MountOn(r)
 	admin.MountLogin(r, s.keys, s.adminPasswordHash)
 	admin.MountWhoami(r)
 	admin.MountAPIs(r, s.runtime, s.bundleData)

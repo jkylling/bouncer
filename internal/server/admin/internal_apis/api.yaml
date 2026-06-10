@@ -77,17 +77,9 @@ actions:
 
 - name: tokens_issue
   method: POST
-  path: /_api/issue/tokens
-
-- name: tokens_issue_refresh
-  method: POST
-  path: /_api/issue/refresh
-
-- name: tokens_page_issue
-  method: POST
   path: /_api/tokens/issue
 
-- name: tokens_page_issue_refresh
+- name: tokens_issue_refresh
   method: POST
   path: /_api/tokens/issue/refresh
 

@@ -2,8 +2,10 @@ package admin
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"text/template"
@@ -14,11 +16,11 @@ import (
 	"github.com/jkylling/bouncer/internal/auth"
 	"github.com/jkylling/bouncer/internal/control/bundles"
 	"github.com/jkylling/bouncer/internal/control/services"
+	"github.com/jkylling/bouncer/internal/control/tokens"
 )
 
 // Tokens page paths. /_admin/tokens is the form; the issue endpoints
-// at /_api/issue/tokens and /_api/issue/refresh handle submission
-// (those are mounted in admin.go).
+// below handle submission and double as the external HTTP issue API.
 const (
 	TokensUIPath           = "/_admin/tokens"
 	TokensIssuePath        = "/_api/tokens/issue"
@@ -30,9 +32,9 @@ const (
 const defaultAccessTokenTTL = 1 * time.Hour
 
 // MaxTokensIssueBodyBytes caps the JSON body the tokens-issue
-// endpoints accept. The payload is one variant + a small map of
-// per-field values; 32 KiB is generous.
-const MaxTokensIssueBodyBytes int64 = 1 << 15
+// endpoints accept. The payload is one raw spec or one variant + a
+// small map of per-field values; 64 KiB is generous.
+const MaxTokensIssueBodyBytes int64 = 1 << 16
 
 // MountTokensPage wires the tokens UI shell plus the matching issue
 // endpoints. The services Registry resolves variant metadata at
@@ -43,10 +45,11 @@ func MountTokensPage(r chi.Router, keys *auth.ServerKeys, svc *services.Registry
 	r.Post(TokensIssueRefreshPath, tokensIssueRefreshHandler(keys, svc))
 }
 
-// tokensIssueRequest is the body posted to /_api/tokens/issue and
-// /_api/tokens/issue/refresh. Subject is required (rides as the JWT
-// `sub` claim); Service + Variant pick the bundle's TokenVariant;
-// Fields is the per-variant input map keyed by TokenField.Name.
+// tokensIssueRequest is the variant-form body posted to
+// /_api/tokens/issue and /_api/tokens/issue/refresh. Subject is
+// required (rides as the JWT `sub` claim); Service + Variant pick the
+// bundle's TokenVariant; Fields is the per-variant input map keyed by
+// TokenField.Name.
 type tokensIssueRequest struct {
 	Subject string            `json:"subject"`
 	Service string            `json:"service"`
@@ -54,17 +57,62 @@ type tokensIssueRequest struct {
 	Fields  map[string]string `json:"fields"`
 }
 
-// tokensIssueResponse mirrors admin.IssueResponse — kept as its own
-// type so the UI's deserialization is decoupled from the older
-// shape used by the raw /_api/issue/tokens endpoint.
-type tokensIssueResponse struct {
+// IssueResponse is the JSON shape both issue endpoints return.
+// ExpiresAt is a pointer so a non-expiring refresh JWT omits the
+// field rather than carrying a misleading 0001-01-01 timestamp.
+// Exported so external callers (and the integration test living in
+// the parent package) can decode without restating the shape.
+type IssueResponse struct {
 	Token     string     `json:"token"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 }
 
+// isVariantRequest reports whether the body carries the tokens-form
+// shape. `service` is not a field on either raw spec, so its
+// presence is an unambiguous discriminator.
+func isVariantRequest(raw []byte) bool {
+	var probe struct {
+		Service string `json:"service"`
+	}
+	_ = json.Unmarshal(raw, &probe)
+	return probe.Service != ""
+}
+
+// tokensIssueHandler serves POST /_api/tokens/issue — the single
+// access-JWT issue endpoint. Two body shapes land here, dispatched
+// by isVariantRequest:
+//
+//   - the tokens-page form ({subject, service, variant, fields}):
+//     variant metadata resolves server-side into credential headers.
+//   - a raw tokens.Spec: the curl/CLI-parity shape — the same JSON
+//     cmd/issue-token reads from --credentials-file, so a payload
+//     from one source replays cleanly through the other.
+//
+// Admin gating is enforced upstream by InternalPolicyMiddleware
+// against the `tokens_issue` action.
 func tokensIssueHandler(keys *auth.ServerKeys, svc *services.Registry) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		body, err := decodeIssueRequest(w, r)
+		raw, err := readIssueBody(w, r)
+		if err != nil {
+			respondTokensError(w, r, err)
+			return
+		}
+		if !isVariantRequest(raw) {
+			var spec tokens.Spec
+			if err := decodeStrict(raw, &spec); err != nil {
+				respondTokensError(w, r, err)
+				return
+			}
+			res, err := tokens.Issue(r.Context(), keys, &spec)
+			if err != nil {
+				respondTokensError(w, r, err)
+				return
+			}
+			exp := res.ExpiresAt
+			writeJSON(w, IssueResponse{Token: res.Token, ExpiresAt: &exp})
+			return
+		}
+		body, err := decodeIssueRequest(w, r, raw)
 		if err != nil {
 			return
 		}
@@ -89,13 +137,38 @@ func tokensIssueHandler(keys *auth.ServerKeys, svc *services.Registry) http.Hand
 			return
 		}
 		exp := time.Now().Add(ttl)
-		writeJSON(w, tokensIssueResponse{Token: tok, ExpiresAt: &exp})
+		writeJSON(w, IssueResponse{Token: tok, ExpiresAt: &exp})
 	}
 }
 
+// tokensIssueRefreshHandler is the refresh-JWT counterpart — same
+// two-shape dispatch with tokens.RefreshSpec as the raw form.
 func tokensIssueRefreshHandler(keys *auth.ServerKeys, svc *services.Registry) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		body, err := decodeIssueRequest(w, r)
+		raw, err := readIssueBody(w, r)
+		if err != nil {
+			respondTokensError(w, r, err)
+			return
+		}
+		if !isVariantRequest(raw) {
+			var spec tokens.RefreshSpec
+			if err := decodeStrict(raw, &spec); err != nil {
+				respondTokensError(w, r, err)
+				return
+			}
+			res, err := tokens.IssueRefresh(r.Context(), keys, &spec)
+			if err != nil {
+				respondTokensError(w, r, err)
+				return
+			}
+			out := IssueResponse{Token: res.Token}
+			if !res.ExpiresAt.IsZero() {
+				out.ExpiresAt = &res.ExpiresAt
+			}
+			writeJSON(w, out)
+			return
+		}
+		body, err := decodeIssueRequest(w, r, raw)
 		if err != nil {
 			return
 		}
@@ -122,23 +195,49 @@ func tokensIssueRefreshHandler(keys *auth.ServerKeys, svc *services.Registry) ht
 			respondTokensError(w, r, fmt.Errorf("issue: %w", err))
 			return
 		}
-		writeJSON(w, tokensIssueResponse{Token: tok})
+		writeJSON(w, IssueResponse{Token: tok})
 	}
 }
 
-func decodeIssueRequest(w http.ResponseWriter, r *http.Request) (*tokensIssueRequest, error) {
+// readIssueBody slurps the capped request body so the handler can
+// dispatch on shape before the strict decode.
+func readIssueBody(w http.ResponseWriter, r *http.Request) ([]byte, error) {
+	r.Body = http.MaxBytesReader(w, r.Body, MaxTokensIssueBodyBytes)
+	defer r.Body.Close()
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			return nil, errBodyTooLarge
+		}
+		return nil, &decodeError{cause: err}
+	}
+	return raw, nil
+}
+
+// decodeStrict is decodeJSONBody's unknown-field-rejecting decode
+// over already-read bytes.
+func decodeStrict(raw []byte, dst any) error {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(dst); err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		return &decodeError{cause: err}
+	}
+	return nil
+}
+
+func decodeIssueRequest(w http.ResponseWriter, r *http.Request, raw []byte) (*tokensIssueRequest, error) {
 	var body tokensIssueRequest
-	if err := decodeJSONBody(w, r, MaxTokensIssueBodyBytes, &body); err != nil {
+	if err := decodeStrict(raw, &body); err != nil {
 		respondTokensError(w, r, err)
 		return nil, err
 	}
 	if strings.TrimSpace(body.Subject) == "" {
 		writeJSONError(w, "subject is required", http.StatusBadRequest)
 		return nil, errors.New("subject")
-	}
-	if strings.TrimSpace(body.Service) == "" {
-		writeJSONError(w, "service is required", http.StatusBadRequest)
-		return nil, errors.New("service")
 	}
 	if strings.TrimSpace(body.Variant) == "" {
 		writeJSONError(w, "variant is required", http.StatusBadRequest)
@@ -217,5 +316,6 @@ func renderTemplate(body, value string) (string, error) {
 func respondTokensError(w http.ResponseWriter, r *http.Request, err error) {
 	writeMappedError(r.Context(), w, "tokens", err, []errMap{
 		{sentinel: services.ErrUnknown, status: http.StatusNotFound},
+		{sentinel: tokens.ErrInvalidSpec, status: http.StatusBadRequest},
 	})
 }

@@ -247,7 +247,7 @@ func TestWhoamiAnonymousVsAdmin(t *testing.T) {
 	}
 }
 
-// TestIssueAdminOnly pins POST /_api/issue/tokens: anonymous gets
+// TestIssueAdminOnly pins POST /_api/tokens/issue: anonymous gets
 // 401, non-admin (would-be) gets 403, admin gets a fresh JWT.
 // We collapse the two reject cases into a single test because they
 // share the same setup and the assertion is the same shape.
@@ -261,12 +261,12 @@ func TestIssueAdminOnly(t *testing.T) {
 		"ttl_seconds":  60,
 	}
 
-	resp, _ := httpDo(t, c, http.MethodPost, f.srv.BaseURL+"/_api/issue/tokens", body, nil)
+	resp, _ := httpDo(t, c, http.MethodPost, f.srv.BaseURL+"/_api/tokens/issue", body, nil)
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("anon issue: status=%d, want 401", resp.StatusCode)
 	}
 
-	resp, raw := httpDo(t, c, http.MethodPost, f.srv.BaseURL+"/_api/issue/tokens", body, bearer(f.jwt))
+	resp, raw := httpDo(t, c, http.MethodPost, f.srv.BaseURL+"/_api/tokens/issue", body, bearer(f.jwt))
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("admin issue: status=%d body=%s", resp.StatusCode, raw)
 	}
@@ -295,12 +295,12 @@ func TestIssueRefreshAdminOnly(t *testing.T) {
 		// ttl_seconds omitted → non-expiring
 	}
 
-	resp, _ := httpDo(t, c, http.MethodPost, f.srv.BaseURL+"/_api/issue/refresh", body, nil)
+	resp, _ := httpDo(t, c, http.MethodPost, f.srv.BaseURL+"/_api/tokens/issue/refresh", body, nil)
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("anon issue-refresh: status=%d, want 401", resp.StatusCode)
 	}
 
-	resp, raw := httpDo(t, c, http.MethodPost, f.srv.BaseURL+"/_api/issue/refresh", body, bearer(f.jwt))
+	resp, raw := httpDo(t, c, http.MethodPost, f.srv.BaseURL+"/_api/tokens/issue/refresh", body, bearer(f.jwt))
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("admin issue-refresh: status=%d body=%s", resp.StatusCode, raw)
 	}

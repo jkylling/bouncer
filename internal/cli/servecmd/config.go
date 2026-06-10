@@ -170,7 +170,7 @@ per upstream vendor while policies are user-owned and may live
 elsewhere (e.g. mounted in from a control-plane volume). Inbound
 requests must present a proxy JWT in the Authorization header; issue
 one via the bundled UI at /_admin/, the HTTP API at POST
-/_api/issue/tokens, or cmd/issue-token.
+/_api/tokens/issue, or cmd/issue-token.
 
 Examples:
 

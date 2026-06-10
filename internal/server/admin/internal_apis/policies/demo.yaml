@@ -56,8 +56,6 @@ action: |
     "ui_services",
     "tokens_issue",
     "tokens_issue_refresh",
-    "tokens_page_issue",
-    "tokens_page_issue_refresh",
     "policies_create",
     "policies_replace",
     "policies_delete",

@@ -35,8 +35,9 @@ The JWT is issued by one of:
   scripted issuance and CI.
 - `POST /token` — refresh flow. Trade a refresh JWT for a fresh
   access JWT (RFC 6749 §6).
-- `POST /_api/issue/tokens` / `POST /_api/tokens/issue` —
-  admin-only JSON issue endpoints. Same JSON shape as the UI form.
+- `POST /_api/tokens/issue` — admin-only JSON issue endpoint.
+  Accepts the UI form shape ({subject, service, variant, fields}) or
+  a raw spec (the same JSON `bouncer issue-token` reads).
 - `POST /_api/admin/login` — password-based login for the dashboard
   itself. Returns an admin JWT both as a JSON `token` and on the
   HttpOnly `auth_proxy_admin` cookie.

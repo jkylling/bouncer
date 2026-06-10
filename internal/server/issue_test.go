@@ -16,7 +16,7 @@ import (
 )
 
 // TestIssueTokenIsUsableByProxy is the cross-package end-to-end pin:
-// a token issued via /_api/issue/tokens (admin package) authenticates
+// a token issued via /_api/tokens/issue (admin package) authenticates
 // a subsequent proxy call (server package) without any out-of-band
 // issuance step. Catches a regression where the encrypted `enc`
 // claim's wire format diverges between issue and verify on the same
@@ -37,7 +37,7 @@ func TestIssueTokenIsUsableByProxy(t *testing.T) {
 	defer proxy.Close()
 
 	// Bootstrap: issue an admin JWT against the same keys so the
-	// /_api/issue/tokens call below — now admin-tier — is allowed.
+	// /_api/tokens/issue call below — now admin-tier — is allowed.
 	adminJWT, err := auth.IssueAccessToken(keys, "test-admin",
 		auth.AccessCreds{AccessToken: "x"}, time.Hour, true)
 	if err != nil {
@@ -49,7 +49,7 @@ func TestIssueTokenIsUsableByProxy(t *testing.T) {
 		AccessToken: "issued-bearer",
 		TTLSeconds:  60,
 	})
-	issueReq, _ := http.NewRequest(http.MethodPost, proxy.URL+admin.IssuePath, bytes.NewReader(body))
+	issueReq, _ := http.NewRequest(http.MethodPost, proxy.URL+admin.TokensIssuePath, bytes.NewReader(body))
 	issueReq.Header.Set("Content-Type", "application/json")
 	issueReq.Header.Set("Authorization", "Bearer "+adminJWT)
 	resp, err := http.DefaultClient.Do(issueReq)

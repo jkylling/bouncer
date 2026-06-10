@@ -245,7 +245,7 @@ func TestTrafficUIServesHTML(t *testing.T) {
 }
 
 // TestTrafficListNoConflictWithIssue verifies the new `/_api/traffic`
-// routes coexist with the existing `/_api/issue/tokens` route under
+// routes coexist with the existing `/_api/tokens/issue` route under
 // the same `_api` prefix on one chi router. Regression guard for a
 // future route refactor.
 func TestTrafficListNoConflictWithIssue(t *testing.T) {

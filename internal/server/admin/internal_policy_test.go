@@ -79,15 +79,15 @@ func TestInternalPolicyMiddleware(t *testing.T) {
 		// simple: admin-only routes
 		{name: "simple/admin/anon/issue-tokens",
 			set: admin.PolicySetSimple, role: auth.RoleAnonymous,
-			method: "POST", path: "/_api/issue/tokens",
+			method: "POST", path: "/_api/tokens/issue",
 			wantStatus: http.StatusUnauthorized},
 		{name: "simple/admin/user/issue-tokens",
 			set: admin.PolicySetSimple, role: auth.RoleUser,
-			method: "POST", path: "/_api/issue/tokens",
+			method: "POST", path: "/_api/tokens/issue",
 			wantStatus: http.StatusForbidden},
 		{name: "simple/admin/admin/issue-tokens",
 			set: admin.PolicySetSimple, role: auth.RoleAdmin,
-			method: "POST", path: "/_api/issue/tokens",
+			method: "POST", path: "/_api/tokens/issue",
 			wantStatus: http.StatusOK},
 
 		// demo: JSON / MCP read endpoints are open, dashboard pages
@@ -102,11 +102,11 @@ func TestInternalPolicyMiddleware(t *testing.T) {
 			wantStatus: http.StatusSeeOther},
 		{name: "demo/admin/anon/issue-tokens",
 			set: admin.PolicySetDemo, role: auth.RoleAnonymous,
-			method: "POST", path: "/_api/issue/tokens",
+			method: "POST", path: "/_api/tokens/issue",
 			wantStatus: http.StatusUnauthorized},
 		{name: "demo/admin/admin/issue-tokens",
 			set: admin.PolicySetDemo, role: auth.RoleAdmin,
-			method: "POST", path: "/_api/issue/tokens",
+			method: "POST", path: "/_api/tokens/issue",
 			wantStatus: http.StatusOK},
 
 		// production: nearly everything is admin-only

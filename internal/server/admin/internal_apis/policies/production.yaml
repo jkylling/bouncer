@@ -41,8 +41,6 @@ action: |
     "apis_readme",
     "tokens_issue",
     "tokens_issue_refresh",
-    "tokens_page_issue",
-    "tokens_page_issue_refresh",
     "policies_list",
     "policies_get",
     "policies_dryrun",

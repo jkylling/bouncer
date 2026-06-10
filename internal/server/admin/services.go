@@ -10,7 +10,7 @@ import (
 )
 
 // Service-surface paths. Read-only — the tokens screen issues stateless
-// JWTs via /_api/issue/tokens / /_api/issue/refresh; no per-service
+// JWTs via /_api/tokens/issue / /_api/tokens/issue/refresh; no per-service
 // state is kept on the server.
 const (
 	ServicesPath    = "/_api/services"

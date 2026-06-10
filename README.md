@@ -131,7 +131,7 @@ The headline surface:
 Three equivalent paths for ad-hoc access tokens:
 
 - **CLI** — `bouncer issue-token --subject demo --access-token "$ACCESS"`. No running proxy needed.
-- **HTTP API** — `POST /_api/issue/tokens` (admin-only). Same JSON body as the CLI flags.
+- **HTTP API** — `POST /_api/tokens/issue` (admin-only). Same JSON body as the CLI flags.
 - **HTML UI** — `GET /_admin/`, browser form.
 
 For long-lived OAuth2 credentials with transparent refresh, pass

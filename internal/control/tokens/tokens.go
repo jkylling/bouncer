@@ -1,12 +1,12 @@
 // Package tokens contains the in-process token-issue primitives
-// shared by the admin HTTP endpoints (POST /_api/issue/tokens and
-// /_api/issue/refresh) and cmd/issue-token.
+// shared by the admin HTTP endpoints (POST /_api/tokens/issue and
+// /_api/tokens/issue/refresh) and cmd/issue-token.
 //
 // Two flavours:
 //
 //   - `Spec` + `Issue` wrap an upstream access token in a short-lived
 //     access JWT. JSON tags match the file `issue-token --access-token`
-//     reads, so a payload posted to /_api/issue/tokens can also be the
+//     reads, so a payload posted to /_api/tokens/issue can also be the
 //     CLI's input.
 //   - `RefreshSpec` + `IssueRefresh` wrap an upstream refresh token in
 //     a refresh JWT. The CLI's credentials-file mode also writes the
@@ -36,7 +36,7 @@ import (
 var tracerName = observability.PackagePath()
 
 // Spec is the issue-token input shape. JSON tags double as the wire
-// and on-disk format so a payload posted to /_api/issue/tokens can
+// and on-disk format so a payload posted to /_api/tokens/issue can
 // also be the file `issue-token --access-spec` reads.
 //
 // Refresh-token-bearing JWTs are *not* issued here — see the package
@@ -132,7 +132,7 @@ func Issue(ctx context.Context, keys *auth.ServerKeys, spec *Spec) (*Result, err
 }
 
 // RefreshSpec is the refresh-issue input. JSON tags double as the
-// wire shape so an admin POST to /_api/issue/refresh can be mirrored
+// wire shape so an admin POST to /_api/tokens/issue/refresh can be mirrored
 // on disk if a future CLI surface wants to read a freeform spec.
 //
 // TokenURL is the upstream OAuth2 token endpoint (e.g.

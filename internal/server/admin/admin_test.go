@@ -24,7 +24,8 @@ func testServer(t *testing.T) (*httptest.Server, *auth.ServerKeys) {
 	t.Helper()
 	keys := mustKeys(t)
 	r := testRouter(keys)
-	MountOn(r, keys)
+	MountOn(r)
+	MountTokensPage(r, keys, nil)
 	ts := httptest.NewServer(r)
 	t.Cleanup(ts.Close)
 	return ts, keys
@@ -39,8 +40,8 @@ func mustKeys(t *testing.T) *auth.ServerKeys {
 	return keys
 }
 
-// postIssue posts body (a struct or raw bytes) to IssuePath and
-// returns the response. Attaches an admin Bearer because IssuePath
+// postIssue posts body (a struct or raw bytes) to TokensIssuePath and
+// returns the response. Attaches an admin Bearer because TokensIssuePath
 // is admin-tier; tests that exercise the non-admin denial use
 // postIssueRaw.
 func postIssue(t *testing.T, base string, keys *auth.ServerKeys, body any) *http.Response {
@@ -65,7 +66,7 @@ func postIssueRaw(t *testing.T, base string, body any, bearer string) *http.Resp
 			t.Fatalf("marshal: %v", err)
 		}
 	}
-	req, err := http.NewRequest(http.MethodPost, base+IssuePath, bytes.NewReader(raw))
+	req, err := http.NewRequest(http.MethodPost, base+TokensIssuePath, bytes.NewReader(raw))
 	if err != nil {
 		t.Fatalf("new req: %v", err)
 	}
@@ -100,7 +101,10 @@ func TestIssueTokenRoundTrips(t *testing.T) {
 	if out.Token == "" {
 		t.Fatal("token empty")
 	}
-	if d := time.Until(out.ExpiresAt); d < 30*time.Second || d > 2*time.Minute {
+	if out.ExpiresAt == nil {
+		t.Fatal("expires_at missing for an access token")
+	}
+	if d := time.Until(*out.ExpiresAt); d < 30*time.Second || d > 2*time.Minute {
 		t.Errorf("expires_at = %v, want roughly 1 minute out", out.ExpiresAt)
 	}
 	tok, err := auth.VerifyAccessToken(keys, out.Token)
@@ -165,7 +169,7 @@ func TestIssueTokenRejectsMalformedJSON(t *testing.T) {
 // the opaque "invalid JSON" message instead.
 func TestIssueTokenEmptyBodyHitsValidator(t *testing.T) {
 	ts, keys := testServer(t)
-	req, _ := http.NewRequest(http.MethodPost, ts.URL+IssuePath, http.NoBody)
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+TokensIssuePath, http.NoBody)
 	req.Header.Set("Authorization", adminBearer(t, keys))
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -192,7 +196,7 @@ func TestIssueTokenRejectsUnknownField(t *testing.T) {
 }
 
 // postIssueRefresh is the refresh-issue counterpart to postIssue. Same
-// admin-Bearer treatment, posts to IssueRefreshPath with the JSON
+// admin-Bearer treatment, posts to TokensIssueRefreshPath with the JSON
 // body marshalled from `body`.
 func postIssueRefresh(t *testing.T, base string, keys *auth.ServerKeys, body any) *http.Response {
 	t.Helper()
@@ -200,7 +204,7 @@ func postIssueRefresh(t *testing.T, base string, keys *auth.ServerKeys, body any
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	req, err := http.NewRequest(http.MethodPost, base+IssueRefreshPath, bytes.NewReader(raw))
+	req, err := http.NewRequest(http.MethodPost, base+TokensIssueRefreshPath, bytes.NewReader(raw))
 	if err != nil {
 		t.Fatalf("new req: %v", err)
 	}
@@ -227,7 +231,7 @@ func TestIssueRefreshRoundTrips(t *testing.T) {
 		t.Fatalf("status = %d, body = %s", resp.StatusCode, body)
 	}
 
-	var out IssueRefreshResponse
+	var out IssueResponse
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -316,7 +320,7 @@ func TestIssueRefreshRequiresAdmin(t *testing.T) {
 	raw, _ := json.Marshal(tokens.RefreshSpec{
 		Subject: "s", RefreshToken: "rt", TokenURL: "https://x",
 	})
-	req, _ := http.NewRequest(http.MethodPost, ts.URL+IssueRefreshPath, bytes.NewReader(raw))
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+TokensIssueRefreshPath, bytes.NewReader(raw))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
