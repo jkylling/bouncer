@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
+
 	"github.com/jkylling/bouncer/internal/cli/datadir"
 	"github.com/jkylling/bouncer/internal/cli/initcmd"
 )
@@ -369,6 +371,36 @@ func TestLoadConfigInitBootstrapsAndIsIdempotent(t *testing.T) {
 	}
 	if string(first) != string(second) {
 		t.Fatal("second --init rewrote secret.hex; --init must be idempotent on an initialized dir")
+	}
+}
+
+// TestLoadConfigInitAdminPasswordFlag pins the README quickstart
+// contract: `serve --init --admin-password <pw>` bootstraps
+// non-interactively with the given password (no env, no prompt) and
+// the written hash verifies against it.
+func TestLoadConfigInitAdminPasswordFlag(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "data")
+
+	if _, err := loadConfig([]string{"--init", "--data-dir", dir, "--admin-password", "quickstart-pw"}); err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	hash, err := os.ReadFile(filepath.Join(dir, datadir.AdminPasswordFile))
+	if err != nil {
+		t.Fatalf("read admin-password.hash: %v", err)
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(strings.TrimSpace(string(hash))), []byte("quickstart-pw")); err != nil {
+		t.Errorf("hash does not verify against the flag password: %v", err)
+	}
+}
+
+// TestLoadConfigAdminPasswordRequiresInit pins the guard against a
+// silently ignored credential: --admin-password only feeds the --init
+// bootstrap, so passing it to a plain serve is a misconfiguration the
+// operator should hear about, not have swallowed.
+func TestLoadConfigAdminPasswordRequiresInit(t *testing.T) {
+	_, err := loadConfig([]string{"--secret-hex", testSecretHex, "--admin-password", "pw"})
+	if err == nil || !strings.Contains(err.Error(), "--admin-password requires --init") {
+		t.Fatalf("err = %v, want one mentioning --admin-password requires --init", err)
 	}
 }
 

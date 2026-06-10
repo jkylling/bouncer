@@ -223,6 +223,11 @@ type serveOpts struct {
 	Extra []string
 	// Env overlay (e.g. setting BOUNCER_LOG_LEVEL=debug).
 	Env map[string]string
+	// ReadyStatusAny treats any HTTP response from the readiness
+	// probe as "up". Needed when booting with a locked-down
+	// --internal-policies set, where anonymous /_api/whoami is
+	// denied instead of answering 200.
+	ReadyStatusAny bool
 }
 
 // startServe launches `bouncer serve --data-dir <opts.DataDir>`
@@ -270,7 +275,7 @@ func startServe(t *testing.T, opts serveOpts) *serveProc {
 	go func() { s.doneCh <- cmd.Wait() }()
 	t.Cleanup(func() { s.Stop(t) })
 
-	if err := waitReady(s.BaseURL, readyTimeout); err != nil {
+	if err := waitReady(s.BaseURL, readyTimeout, opts.ReadyStatusAny); err != nil {
 		s.Stop(t)
 		t.Fatalf("serve never became ready: %v\nstdout: %s\nstderr: %s",
 			err, s.stdout.String(), s.stderr.String())
@@ -281,8 +286,9 @@ func startServe(t *testing.T, opts serveOpts) *serveProc {
 // waitReady polls /_api/whoami until it returns 200 or timeout
 // elapses. /_api/whoami is the cheapest open endpoint — no auth, no
 // store reads — so a successful poll proves the listener is up
-// without measuring anything else.
-func waitReady(baseURL string, timeout time.Duration) error {
+// without measuring anything else. anyStatus relaxes the 200 check
+// to "any HTTP response" for boots where whoami is auth-gated.
+func waitReady(baseURL string, timeout time.Duration, anyStatus bool) error {
 	deadline := time.Now().Add(timeout)
 	client := &http.Client{Timeout: 500 * time.Millisecond}
 	for time.Now().Before(deadline) {
@@ -290,7 +296,7 @@ func waitReady(baseURL string, timeout time.Duration) error {
 		if err == nil {
 			_, _ = io.Copy(io.Discard, resp.Body)
 			_ = resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
+			if anyStatus || resp.StatusCode == http.StatusOK {
 				return nil
 			}
 		}

@@ -301,3 +301,63 @@ func TestServePoliciesReadOnlyRejectsWrites(t *testing.T) {
 		t.Fatalf("policies POST under readonly: status=%d body=%s, want non-2xx", resp.StatusCode, raw)
 	}
 }
+
+// TestServeInitQuickstart pins the README quickstart shape: from an
+// empty directory, `bouncer serve --init --admin-password <pw>`
+// bootstraps the data dir non-interactively (cwd auto-defaults as
+// the data dir) and the password works at /_api/admin/login. The
+// README's --with-apis flags are omitted — bundle install needs the
+// network and is covered by the apis suite.
+func TestServeInitQuickstart(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "data")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	srv := startServe(t, serveOpts{
+		DataDir:     dir,
+		OmitDataDir: true,
+		Extra:       []string{"--init", "--admin-password", "quickstart-pw"},
+	})
+
+	loginAdmin(t, srv.BaseURL, "quickstart-pw")
+}
+
+// TestServeAdminPasswordRequiresInit pins the guard: --admin-password
+// only feeds the --init bootstrap, so a plain serve refuses it loudly
+// instead of silently ignoring a credential the operator thought they
+// set.
+func TestServeAdminPasswordRequiresInit(t *testing.T) {
+	res := run(t, "serve", "--admin-password", "pw", "--secret-hex", testSecretHex)
+	if res.Err == nil {
+		t.Fatal("serve --admin-password without --init should fail")
+	}
+	if !strings.Contains(res.Stderr, "--admin-password requires --init") {
+		t.Errorf("stderr = %q, want a mention of --admin-password requires --init", res.Stderr)
+	}
+}
+
+// TestServeDemoPolicySetWarnsAtBoot pins the open-by-default
+// trade-off: the `demo` internal-policy set (the default) admits
+// anonymous control-plane reads and proposal writes, so serve must
+// say so on the boot log. The production set boots without the
+// warning.
+func TestServeDemoPolicySetWarnsAtBoot(t *testing.T) {
+	dir := mustInit(t, initOpts{})
+
+	srv := startServe(t, serveOpts{DataDir: dir})
+	if !strings.Contains(srv.Stderr(), "demo") || !strings.Contains(srv.Stderr(), "anonymous") {
+		t.Errorf("boot log missing the demo-policy warning; stderr:\n%s", srv.Stderr())
+	}
+	srv.Stop(t)
+
+	locked := startServe(t, serveOpts{
+		DataDir: dir,
+		Extra:   []string{"--internal-policies", "production"},
+		// Anonymous whoami is denied under production, so the
+		// readiness probe can't insist on 200.
+		ReadyStatusAny: true,
+	})
+	if strings.Contains(locked.Stderr(), "anonymous callers") {
+		t.Errorf("production set should not log the demo warning; stderr:\n%s", locked.Stderr())
+	}
+}

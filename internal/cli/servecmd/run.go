@@ -132,6 +132,7 @@ func runServe(cfg *config) error {
 		return fmt.Errorf("listener handler: %w", err)
 	}
 	httpSrv := newHTTPServer(cfg, handler)
+	warnOpenControlPlane(cfg)
 	slog.Info("listening",
 		"addr", cfg.Addr,
 		"apis", srv.APINames(),
@@ -261,6 +262,21 @@ func caDownloadPath(cfg *config) string {
 		return ""
 	}
 	return cfg.MITMCAPath
+}
+
+// warnOpenControlPlane logs a boot-time warning when the control
+// plane runs the open `demo` policy set (the default). Demo admits
+// anonymous reads of the full policy/service surface and anonymous
+// proposal writes — fine on a laptop, a tampering vector on a shared
+// network. The warning keeps the demo quickstart friction-free while
+// making sure a production operator can't run open by accident.
+func warnOpenControlPlane(cfg *config) {
+	if admin.PolicySet(cfg.InternalPolicies) != admin.PolicySetDemo {
+		return
+	}
+	slog.Warn("control plane is running the open `demo` policy set: "+
+		"anonymous callers can list/export policies, run dry-runs, and write to the proposal queue",
+		"fix", "set --internal-policies=simple or production for anything beyond a local demo")
 }
 
 // listenerMode returns the short label slog uses on the boot line so

@@ -120,6 +120,13 @@ type config struct {
 	// `<data-dir>/admin-password.hash`.
 	AdminPasswordHash string `mapstructure:"admin-password-hash"`
 
+	// AdminPassword is the plaintext admin password `--init` hashes
+	// into `<data-dir>/admin-password.hash` during bootstrap. Only
+	// consumed on the --init path; a running server is configured via
+	// AdminPasswordHash. Empty falls through to the same chain as
+	// `bouncer init`: $BOUNCER_ADMIN_PASSWORD, then a stdin prompt.
+	AdminPassword string `mapstructure:"admin-password"`
+
 	// DataDir, when non-empty, is a directory laid out by
 	// `bouncer init` — secret.hex, admin-password.hash, store.db,
 	// apis/, policies/, optional mitm-ca.{crt,key}. After flag
@@ -144,9 +151,11 @@ type config struct {
 
 	// InternalPolicies picks the embedded policy set that gates the
 	// /_admin and /_api control-plane surface. One of demo / simple /
-	// production; default `simple` mirrors the pre-policy behaviour.
-	// See bouncer/internal/server/admin/internal_apis/policies for
-	// each set's contents.
+	// production; defaults to `demo`, which admits anonymous reads and
+	// proposal writes — runServe logs a warning so an operator can't
+	// run open by accident. See
+	// bouncer/internal/server/admin/internal_apis/policies for each
+	// set's contents.
 	InternalPolicies string `mapstructure:"internal-policies"`
 }
 
@@ -243,6 +252,7 @@ func bindServeFlags(fs *pflag.FlagSet) {
 	fs.String("proposals-db", "", "path to the sqlite DB file when --proposals-store=sqlite (falls back to --store-db)")
 	fs.String("store-db", "", "shared sqlite DB path; any domain set to sqlite without its own --*-db falls back to this so all three can live in one file")
 	fs.String("admin-password-hash", "", "bcrypt hash for the /_api/admin/login flow. Auto-loaded from `<data-dir>/admin-password.hash` when --data-dir is set; otherwise generate via `htpasswd -bnBC 12 \"\" <pw> | tr -d ':\\n'`.")
+	fs.String("admin-password", "", "admin password --init hashes into <data-dir>/admin-password.hash; requires --init. Empty falls back to $BOUNCER_ADMIN_PASSWORD, then a stdin prompt. A running server is configured via --admin-password-hash.")
 	fs.String("data-dir", "", "directory created by `bouncer init`. Defaults to the current working directory when it looks like an initialized data dir (secret.hex + admin-password.hash present), or when --init is set. When set, defaults --secret-hex, --apis-dir, --policies-dir, --admin-password-hash, --store-db, and --mitm-ca-cert/key from the layout files (any explicit flag overrides).")
 	fs.Bool("init", false, "bootstrap --data-dir if it isn't already initialized (equivalent to running `bouncer init <data-dir>` first). Defaults --data-dir to the current working directory when unset. No-op when the dir already has a secret + admin-password hash.")
 	fs.StringSlice("with-apis", nil, "install one or more bundle refs before serving (e.g. github.com/jkylling/bouncer-gws@v0.1.0, or just github.com/jkylling/bouncer-gws to track main). Already-installed refs are skipped; repeat the flag for several bundles.")
@@ -259,6 +269,13 @@ func buildConfig(fs *pflag.FlagSet) (*config, error) {
 	cfg := &config{}
 	if err := cliconfig.Load(fs, cfg); err != nil {
 		return nil, err
+	}
+	// Checked against fs rather than in validate(): only the explicit
+	// flag is an error. $BOUNCER_ADMIN_PASSWORD also lands in
+	// cfg.AdminPassword, and an exported env var without --init is a
+	// normal environment, not a misconfiguration.
+	if fs.Changed("admin-password") && !cfg.Init {
+		return nil, fmt.Errorf("--admin-password requires --init; a running server takes --admin-password-hash")
 	}
 	defaultDataDirFromCwd(cfg)
 	if err := bootstrapIfRequested(cfg); err != nil {
@@ -301,6 +318,7 @@ func bootstrapIfRequested(cfg *config) error {
 		return nil
 	}
 	return initcmd.Run(cfg.DataDir, initcmd.Options{
+		AdminPassword:     cfg.AdminPassword,
 		MITM:              cfg.MITM,
 		SkipIfInitialized: true,
 		Quiet:             true,
@@ -434,9 +452,6 @@ func (c *config) validate() error {
 	}
 	if err := validateStoreDB("proposals", c.ProposalsStore == ProposalsStoreSqlite, c.ProposalsDB, c.StoreDB); err != nil {
 		return err
-	}
-	if err := admin.PolicySet(c.InternalPolicies).Validate(); err != nil {
-		return fmt.Errorf("--internal-policies: %w", err)
 	}
 	if err := admin.PolicySet(c.InternalPolicies).Validate(); err != nil {
 		return fmt.Errorf("--internal-policies: %w", err)
