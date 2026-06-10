@@ -12,6 +12,13 @@ import (
 	"time"
 )
 
+// This suite holds one smoke per admin surface: the per-status-code
+// and per-branch behaviour (bad passwords, anonymous redirects, open
+// docs/favicon tiers, CA 404s, logout cookie attributes) is pinned by
+// the unit tests in internal/server/admin — e2e re-runs only what
+// needs the real binary: cobra wiring, the shipped policy set, real
+// cookies, and the CLI↔server bootstrap.
+
 // adminFixture is the shared bootstrap for admin tests: init, serve,
 // loginAdmin. Returning the proc + JWT in one call keeps every test
 // body two lines of setup and the rest assertions.
@@ -69,149 +76,6 @@ func TestAdminLoginRoundTrip(t *testing.T) {
 	}
 	if found.SameSite != http.SameSiteStrictMode {
 		t.Errorf("admin cookie SameSite = %v, want Strict", found.SameSite)
-	}
-}
-
-// TestAdminLoginRejectsBadPassword pins the 401 path: a wrong
-// password returns 401 with a generic message and no cookie. The
-// generic message + bcrypt-paced response is the authentication
-// rate-limit story.
-func TestAdminLoginRejectsBadPassword(t *testing.T) {
-	dir := mustInit(t, initOpts{Password: "admin"})
-	srv := startServe(t, serveOpts{DataDir: dir})
-
-	resp, raw := httpDo(t, httpClient(), http.MethodPost, srv.BaseURL+"/_api/admin/login",
-		map[string]string{"password": "wrong"}, nil)
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("login: status=%d body=%s, want 401", resp.StatusCode, raw)
-	}
-	for _, c := range resp.Cookies() {
-		if c.Name == "bouncer_admin" && c.Value != "" {
-			t.Error("admin cookie set on failed login")
-		}
-	}
-}
-
-// TestAdminUIRedirectsAnonymous pins the auth-required browser
-// redirect under --internal-policies=simple: an anonymous GET on
-// /_admin lands at /_admin/login with the `?next=` round-trip
-// parameter. Same redirect is tested for the trailing-slash variant,
-// which chi treats as a distinct route. The default policy set
-// (`demo`) also redirects anonymous on UI shells, but `simple` is
-// what this test pins because its auth tiers are the canonical
-// reference for the redirect contract.
-func TestAdminUIRedirectsAnonymous(t *testing.T) {
-	dir := mustInit(t, initOpts{})
-	srv := startServe(t, serveOpts{
-		DataDir: dir,
-		Extra:   []string{"--internal-policies", "simple"},
-	})
-
-	for _, path := range []string{"/_admin", "/_admin/"} {
-		resp, _ := httpDo(t, httpClient(), http.MethodGet, srv.BaseURL+path, nil, nil)
-		if resp.StatusCode != http.StatusSeeOther {
-			t.Errorf("GET %s: status=%d, want 303", path, resp.StatusCode)
-			continue
-		}
-		loc := resp.Header.Get("Location")
-		if !strings.HasPrefix(loc, "/_admin/login") {
-			t.Errorf("GET %s: Location=%q, want /_admin/login...", path, loc)
-		}
-	}
-}
-
-// TestAdminUIServesShellAuthed pins the authed branch: with a valid
-// admin cookie, /_admin 303s to /_admin/services (the default
-// dashboard entry point) and that target serves the embedded HTML
-// shell.
-func TestAdminUIServesShellAuthed(t *testing.T) {
-	f := newAdminFixture(t)
-	c := httpClient()
-
-	req, _ := http.NewRequest(http.MethodGet, f.srv.BaseURL+"/_admin", nil)
-	req.AddCookie(f.cookie)
-	resp, err := c.Do(req)
-	if err != nil {
-		t.Fatalf("GET /_admin: %v", err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusSeeOther {
-		t.Fatalf("GET /_admin: status=%d, want 303", resp.StatusCode)
-	}
-	loc := resp.Header.Get("Location")
-	if loc != "/_admin/services" {
-		t.Fatalf("GET /_admin: Location=%q, want /_admin/services", loc)
-	}
-
-	req2, _ := http.NewRequest(http.MethodGet, f.srv.BaseURL+loc, nil)
-	req2.AddCookie(f.cookie)
-	resp2, err := c.Do(req2)
-	if err != nil {
-		t.Fatalf("GET %s: %v", loc, err)
-	}
-	defer resp2.Body.Close()
-	if resp2.StatusCode != http.StatusOK {
-		t.Errorf("GET %s: status=%d, want 200", loc, resp2.StatusCode)
-	}
-	if ct := resp2.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
-		t.Errorf("GET %s: Content-Type=%q, want text/html", loc, ct)
-	}
-}
-
-// TestAdminLoginUIServesHTML pins the password page itself. Unlike
-// /_admin, /_admin/login is open (the JS would otherwise have
-// nowhere to render) so an anonymous GET gets the HTML directly.
-func TestAdminLoginUIServesHTML(t *testing.T) {
-	dir := mustInit(t, initOpts{})
-	srv := startServe(t, serveOpts{DataDir: dir})
-	resp, raw := httpDo(t, httpClient(), http.MethodGet, srv.BaseURL+"/_admin/login", nil, nil)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("GET /_admin/login: status=%d", resp.StatusCode)
-	}
-	if !strings.Contains(string(raw), "<html") && !strings.Contains(string(raw), "<!doctype") && !strings.Contains(string(raw), "<!DOCTYPE") {
-		t.Errorf("login page does not look like HTML")
-	}
-}
-
-// TestDocsPathsServeAnonymously pins the open-tier doc surface: the
-// orientation page plus the two authoring guides answer 200 with a
-// markdown content-type and a non-empty body, no JWT required. An
-// agent's denial-recovery flow follows the `next_steps.docs_policies`
-// link into this surface — if it ever required auth, the recovery
-// loop would deadlock.
-func TestDocsPathsServeAnonymously(t *testing.T) {
-	dir := mustInit(t, initOpts{})
-	srv := startServe(t, serveOpts{DataDir: dir})
-
-	for _, path := range []string{
-		"/_api/docs",
-		"/_api/docs/policies",
-		"/_api/docs/apis",
-	} {
-		resp, raw := httpDo(t, httpClient(), http.MethodGet, srv.BaseURL+path, nil, nil)
-		if resp.StatusCode != http.StatusOK {
-			t.Errorf("GET %s: status=%d, want 200", path, resp.StatusCode)
-			continue
-		}
-		if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/markdown") {
-			t.Errorf("GET %s: Content-Type=%q, want text/markdown", path, ct)
-		}
-		if len(raw) == 0 {
-			t.Errorf("GET %s: empty body", path)
-		}
-	}
-}
-
-// TestFaviconUnauth pins that the favicon route serves anonymously.
-// A redirect-to-login on this path would mean every browser visit
-// triggers an extra hop and the traffic recorder logs spurious
-// no_match denials.
-func TestFaviconUnauth(t *testing.T) {
-	dir := mustInit(t, initOpts{})
-	srv := startServe(t, serveOpts{DataDir: dir})
-	resp, _ := httpDo(t, httpClient(), http.MethodGet, srv.BaseURL+"/favicon.ico", nil, nil)
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("favicon: status=%d, want 200", resp.StatusCode)
 	}
 }
 
@@ -278,44 +142,6 @@ func TestIssueAdminOnly(t *testing.T) {
 	}
 	if parts := strings.Split(issued.Token, "."); len(parts) != 3 {
 		t.Errorf("issued token = %q, want JWT", issued.Token)
-	}
-}
-
-// TestIssueRefreshAdminOnly mirrors TestIssueAdminOnly for the refresh
-// endpoint: anonymous gets 401, admin gets a JWT, and a non-expiring
-// refresh (ttl_seconds=0) omits expires_at from the response.
-func TestIssueRefreshAdminOnly(t *testing.T) {
-	f := newAdminFixture(t)
-	c := httpClient()
-
-	body := map[string]any{
-		"subject":       "ci",
-		"refresh_token": "1//rt",
-		"token_url":     "https://oauth2.googleapis.com/token",
-		// ttl_seconds omitted → non-expiring
-	}
-
-	resp, _ := httpDo(t, c, http.MethodPost, f.srv.BaseURL+"/_api/tokens/issue/refresh", body, nil)
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Errorf("anon issue-refresh: status=%d, want 401", resp.StatusCode)
-	}
-
-	resp, raw := httpDo(t, c, http.MethodPost, f.srv.BaseURL+"/_api/tokens/issue/refresh", body, bearer(f.jwt))
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("admin issue-refresh: status=%d body=%s", resp.StatusCode, raw)
-	}
-	var issued struct {
-		Token     string `json:"token"`
-		ExpiresAt string `json:"expires_at,omitempty"`
-	}
-	if err := json.Unmarshal(raw, &issued); err != nil {
-		t.Fatalf("parse issue-refresh: %v", err)
-	}
-	if parts := strings.Split(issued.Token, "."); len(parts) != 3 {
-		t.Errorf("issued refresh token = %q, want JWT", issued.Token)
-	}
-	if issued.ExpiresAt != "" {
-		t.Errorf("expires_at = %q, want empty (non-expiring refresh)", issued.ExpiresAt)
 	}
 }
 
@@ -405,37 +231,6 @@ func TestCADownloadServesPEM(t *testing.T) {
 	}
 	if string(raw) != string(onDisk) {
 		t.Errorf("body mismatch with on-disk file")
-	}
-}
-
-// TestCADownload404sWithoutMITM pins the no-MITM deployment shape:
-// the route is mounted but returns 404 so a client checking for it
-// sees an unambiguous "no MITM CA on this deployment".
-func TestCADownload404sWithoutMITM(t *testing.T) {
-	dir := mustInit(t, initOpts{Password: "admin"})
-	srv := startServe(t, serveOpts{DataDir: dir, Extra: []string{"--mitm=false"}})
-
-	resp, _ := httpDo(t, httpClient(), http.MethodGet, srv.BaseURL+"/_api/ca.crt", nil, nil)
-	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("status=%d, want 404 (mitm disabled)", resp.StatusCode)
-	}
-}
-
-// TestLogoutClearsCookie pins POST /_api/admin/logout: the response
-// sets the cookie with MaxAge=-1, which tells the browser to drop
-// it. We don't try to assert the JWT itself is invalidated — the
-// admin docstring is explicit that there's no revocation list, so
-// the flow is "drop the cookie, JWT expires on its own ttl."
-func TestLogoutClearsCookie(t *testing.T) {
-	f := newAdminFixture(t)
-	resp, _ := httpDo(t, httpClient(), http.MethodPost, f.srv.BaseURL+"/_api/admin/logout", nil, nil)
-	if resp.StatusCode != http.StatusNoContent {
-		t.Fatalf("logout: status=%d, want 204", resp.StatusCode)
-	}
-	for _, c := range resp.Cookies() {
-		if c.Name == "bouncer_admin" && c.MaxAge >= 0 {
-			t.Errorf("logout cookie MaxAge=%d, want negative", c.MaxAge)
-		}
 	}
 }
 
