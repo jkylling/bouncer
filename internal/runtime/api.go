@@ -67,6 +67,26 @@ type APIRuntime struct {
 // Returns a map keyed by meta short name, used by compileAPI as the
 // per-meta Type lookup.
 func registerAPITypes(api *models.API, reg *messages.Registry) (map[string]*messages.Type, error) {
+	// Validate every meta before registering any. Register mutates
+	// the shared registry, and a mid-loop failure would strand the
+	// already-registered metas of an API that never lands in pending
+	// — orphan types a later policyEnv would declare as condition
+	// variables that nothing can ever bind.
+	seen := make(map[string]struct{}, len(api.Meta))
+	for i := range api.Meta {
+		m := &api.Meta[i]
+		full := api.Name + "." + m.Name
+		if _, dup := seen[full]; dup {
+			return nil, fmt.Errorf("api %q: duplicate meta %q", api.Name, m.Name)
+		}
+		seen[full] = struct{}{}
+		if _, exists := reg.Get(full); exists {
+			return nil, fmt.Errorf("api %q: meta %q: type %q is already registered", api.Name, m.Name, full)
+		}
+		if err := compiled.ValidateMetaFields(m); err != nil {
+			return nil, fmt.Errorf("api %q: %w", api.Name, err)
+		}
+	}
 	types := make(map[string]*messages.Type, len(api.Meta))
 	for i := range api.Meta {
 		m := &api.Meta[i]
@@ -265,6 +285,13 @@ func (r *APIRuntime) Evaluate(ctx context.Context, resolve compiled.PhysicalAPIR
 	matchedActions, err := r.matchActions(req)
 	if err != nil {
 		return models.Deny, err
+	}
+	// No action matched: nothing can fire, so skip the per-policy
+	// principal predicates. Unmatched requests are the common
+	// probe/noise case on a routed prefix and shouldn't pay one CEL
+	// eval per registered policy on the way to the default Deny.
+	if len(matchedActions) == 0 {
+		return models.Deny, nil
 	}
 
 	// Capture wall-clock once per request so every policy that reads

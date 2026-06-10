@@ -36,10 +36,39 @@ type NamedOutput struct {
 	Prog *CompiledOutput
 }
 
+// ValidateMetaFields rejects duplicate field names within a meta's
+// input or output lists, and any name declared as both. Value.Get
+// consults inputs before outputs, so an overlapping name would
+// silently shadow the output: the completer's upstream value becomes
+// unreadable and a policy gets the bind-time input instead — a
+// confusing way for a YAML typo to surface.
+func ValidateMetaFields(meta *models.Metadata) error {
+	seen := make(map[string]string, len(meta.Input)+len(meta.Output))
+	for _, f := range meta.Input {
+		if _, dup := seen[f.Name]; dup {
+			return fmt.Errorf("meta %q: duplicate input field %q", meta.Name, f.Name)
+		}
+		seen[f.Name] = "input"
+	}
+	for _, o := range meta.Output {
+		switch seen[o.Name] {
+		case "input":
+			return fmt.Errorf("meta %q: field %q declared as both input and output", meta.Name, o.Name)
+		case "output":
+			return fmt.Errorf("meta %q: duplicate output field %q", meta.Name, o.Name)
+		}
+		seen[o.Name] = "output"
+	}
+	return nil
+}
+
 // RegisterMetaType installs the meta's Type in reg and returns it. No
 // programs are compiled in this phase; that happens in CompileMeta once
 // every meta on the API is registered.
 func RegisterMetaType(meta *models.Metadata, apiName string, reg *messages.Registry) (*messages.Type, error) {
+	if err := ValidateMetaFields(meta); err != nil {
+		return nil, err
+	}
 	inputFields := make([]string, len(meta.Input))
 	for i, f := range meta.Input {
 		inputFields[i] = f.Name

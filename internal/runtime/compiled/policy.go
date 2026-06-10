@@ -126,9 +126,14 @@ func (p *Policy) AppliesTo(actionName string, req *pb.Request, match map[string]
 }
 
 // Evaluate installs an upstream-aware completer on each bind value
-// then runs the policy condition. The completer captures `resolve` and
-// `req`, so consecutive evaluations of the same policy each get fresh
-// bind state without sharing memoised upstream results.
+// then runs the policy condition. Bind Values are produced once per
+// request (matchActions) and shared across every policy that
+// evaluates the same matched action, so a completed upstream fetch is
+// memoised on the Value — the deny+permit pair on one action pays for
+// each meta side call once. Fresh state comes from the per-request
+// rebuild, not from this function: SetCompleter is a deliberate no-op
+// once a fetch has completed (see messages.Value), so installing a
+// completer here never resets another policy's already-resolved view.
 //
 // `resolve` maps API name → PhysicalAPI. Each Meta records its own
 // API; the completer asks the resolver for that API so cross-API binds
