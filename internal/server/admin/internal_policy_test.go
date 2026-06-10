@@ -127,6 +127,24 @@ func TestInternalPolicyMiddleware(t *testing.T) {
 			method: "GET", path: "/_api/whoami",
 			wantStatus: http.StatusOK},
 
+		// docs stay anonymous in demo and simple: the agent
+		// denial-recovery flow follows next_steps.docs_policies with
+		// no JWT — gating docs would deadlock it. Production gates
+		// them deliberately (admin-only surface). These rows pin the
+		// tier so a policy-set YAML edit can't silently flip it.
+		{name: "demo/open/anon/docs",
+			set: admin.PolicySetDemo, role: auth.RoleAnonymous,
+			method: "GET", path: "/_api/docs/policies",
+			wantStatus: http.StatusOK},
+		{name: "simple/open/anon/docs",
+			set: admin.PolicySetSimple, role: auth.RoleAnonymous,
+			method: "GET", path: "/_api/docs/policies",
+			wantStatus: http.StatusOK},
+		{name: "production/admin/anon/docs",
+			set: admin.PolicySetProduction, role: auth.RoleAnonymous,
+			method: "GET", path: "/_api/docs/policies",
+			wantStatus: http.StatusUnauthorized},
+
 		// outside the internal prefix → middleware passes through
 		{name: "outside-prefix/anon/oauth-token",
 			set: admin.PolicySetSimple, role: auth.RoleAnonymous,

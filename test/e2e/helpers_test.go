@@ -160,6 +160,28 @@ func freePort(t *testing.T) int {
 	return port
 }
 
+// lockedBuffer is a bytes.Buffer safe for the exec.Cmd pipe-copier
+// goroutine to Write while a test String()s it. Reading mid-run is
+// still only a snapshot — a test that asserts on complete output
+// must Stop() first (cmd.Wait joins the copiers) — but it can never
+// race.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
 // serveProc is the handle returned by startServe. BaseURL is the
 // http://127.0.0.1:PORT origin a test points its client at. Stop()
 // is idempotent — t.Cleanup hooks call it at end-of-test, but a
@@ -171,8 +193,8 @@ type serveProc struct {
 
 	mu       sync.Mutex
 	stopped  bool
-	stdout   *bytes.Buffer
-	stderr   *bytes.Buffer
+	stdout   *lockedBuffer
+	stderr   *lockedBuffer
 	doneCh   chan error
 	cancelFn context.CancelFunc
 }
@@ -201,9 +223,10 @@ func (s *serveProc) Stop(t *testing.T) {
 	}
 }
 
-// Stdout / Stderr return whatever the process has emitted so far. A
-// test that grep's the boot log calls these after a brief sleep or
-// after Stop() flushes the writer.
+// Stdout / Stderr return whatever the process has emitted so far.
+// Mid-run reads are race-free snapshots; a test that asserts on
+// complete output (or on absence) must Stop() first so cmd.Wait has
+// joined the pipe copiers.
 func (s *serveProc) Stdout() string { return s.stdout.String() }
 func (s *serveProc) Stderr() string { return s.stderr.String() }
 
@@ -255,7 +278,7 @@ func startServe(t *testing.T, opts serveOpts) *serveProc {
 		// IsInitialized(".") check picks it up.
 		cmd.Dir = opts.DataDir
 	}
-	var stdout, stderr bytes.Buffer
+	var stdout, stderr lockedBuffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 

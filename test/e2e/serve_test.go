@@ -344,11 +344,14 @@ func TestServeAdminPasswordRequiresInit(t *testing.T) {
 func TestServeDemoPolicySetWarnsAtBoot(t *testing.T) {
 	dir := mustInit(t, initOpts{})
 
+	// Stop before reading: the warn line is written before the
+	// listener comes up, but only Stop (cmd.Wait) joins the pipe
+	// copiers, making the buffered output complete.
 	srv := startServe(t, serveOpts{DataDir: dir})
+	srv.Stop(t)
 	if !strings.Contains(srv.Stderr(), "demo") || !strings.Contains(srv.Stderr(), "anonymous") {
 		t.Errorf("boot log missing the demo-policy warning; stderr:\n%s", srv.Stderr())
 	}
-	srv.Stop(t)
 
 	locked := startServe(t, serveOpts{
 		DataDir: dir,
@@ -357,6 +360,7 @@ func TestServeDemoPolicySetWarnsAtBoot(t *testing.T) {
 		// readiness probe can't insist on 200.
 		ReadyStatusAny: true,
 	})
+	locked.Stop(t)
 	if strings.Contains(locked.Stderr(), "anonymous callers") {
 		t.Errorf("production set should not log the demo warning; stderr:\n%s", locked.Stderr())
 	}
