@@ -170,3 +170,42 @@ func TestForwardStreamOutlivesMetaClientTimeout(t *testing.T) {
 		t.Fatalf("body = %q, want %q", got, want)
 	}
 }
+
+// TestTruncatedStreamIsRecorded pins the observability contract for
+// a stream cut mid-body: the traffic event keeps the upstream 2xx it
+// genuinely got, but carries an error so an operator can tell a
+// truncated response from a clean one.
+func TestTruncatedStreamIsRecorded(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "partial")
+		w.(http.Flusher).Flush()
+		// Abort the connection mid-body: the proxy's io.Copy sees an
+		// unexpected EOF after the 200 + first chunk are on the wire.
+		panic(http.ErrAbortHandler)
+	}))
+	defer upstream.Close()
+
+	rt := loadGmailRuntime(t, upstream.URL)
+	keys := mustKeys(t)
+	rec := newCaptureRecorder()
+	srv := NewServer(Dependencies{Runtime: rt, Keys: keys, HTTPClient: upstream.Client(), APIFactory: gmailFactory, Recorder: rec})
+	proxy := httptest.NewServer(srv.Router())
+	defer proxy.Close()
+
+	req, _ := http.NewRequest("GET", proxy.URL+"/gmail/v1/users/42/messages/abc", nil)
+	req.Header.Set("Authorization", "Bearer "+issueJWT(t, keys, "tok"))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do: %v", err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+
+	ev := rec.wait(t, 1)[0]
+	if ev.UpstreamStatus != http.StatusOK {
+		t.Errorf("upstream_status = %d, want 200 (the upstream did answer)", ev.UpstreamStatus)
+	}
+	if !strings.Contains(ev.Error, "truncated") {
+		t.Errorf("event error = %q, want a truncation marker", ev.Error)
+	}
+}

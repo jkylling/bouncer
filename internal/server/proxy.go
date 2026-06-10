@@ -643,8 +643,10 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, r *http.Req
 	if _, err := io.Copy(newStreamWriter(w, s.streamIdle), resp.Body); err != nil {
 		// Headers + status are already on the wire, so we cannot
 		// surface this to the client — but a stalled or truncated
-		// upstream stream should be visible to operators rather than
-		// silently leaving the client with partial bytes.
+		// stream must be visible to operators: logged, on the span,
+		// and on the traffic event. Without errMsg the event would
+		// show a clean 2xx for a client that got partial bytes.
+		hook.errMsg = fmt.Sprintf("response stream truncated after upstream status %d: %v", resp.StatusCode, err)
 		span.RecordError(err)
 		slog.WarnContext(ctx, "forward copy body",
 			"method", r.Method, "path", r.URL.Path, "err", err)
