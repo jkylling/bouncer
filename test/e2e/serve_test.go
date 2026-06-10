@@ -361,3 +361,34 @@ func TestServeDemoPolicySetWarnsAtBoot(t *testing.T) {
 		t.Errorf("production set should not log the demo warning; stderr:\n%s", locked.Stderr())
 	}
 }
+
+// TestServeDataDirLoadsPolicyFiles pins the documented data-dir UX:
+// a YAML policy dropped into <data-dir>/policies/ is live after boot
+// even though the data-dir layout defaults the policy store to
+// sqlite — the dir loads as a read-only seed layer underneath it.
+func TestServeDataDirLoadsPolicyFiles(t *testing.T) {
+	dir := mustInit(t, initOpts{})
+	mustWriteFile(t, filepath.Join(dir, "apis", "local.yaml"),
+		"name: local\nbase_url: https://local.invalid\npath_prefixes: [/local]\n")
+	mustWriteFile(t, filepath.Join(dir, "policies", "local_policy.yaml"),
+		"api: local\nname: from-file\ncondition: \"true\"\nresult: permit\n")
+
+	srv := startServe(t, serveOpts{DataDir: dir})
+
+	_, raw := httpDo(t, httpClient(), http.MethodGet, srv.BaseURL+"/_api/policies", nil, nil)
+	var body struct {
+		Policies []struct {
+			API  string `json:"api"`
+			Name string `json:"name"`
+		} `json:"policies"`
+	}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatalf("parse policies: %v\nraw: %s", err, raw)
+	}
+	for _, p := range body.Policies {
+		if p.API == "local" && p.Name == "from-file" {
+			return
+		}
+	}
+	t.Fatalf("policy from <data-dir>/policies/ not loaded; got: %s", raw)
+}

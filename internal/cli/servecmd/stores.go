@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/jkylling/bouncer/internal/cli/datadir"
 	"github.com/jkylling/bouncer/internal/control/policies"
 	"github.com/jkylling/bouncer/internal/control/proposals"
 	"github.com/jkylling/bouncer/internal/control/store"
@@ -175,7 +176,24 @@ func buildPolicyStore(cfg *config, cache *backendCache) (policies.Store, error) 
 		if err != nil {
 			return nil, fmt.Errorf("open policies db: %w", err)
 		}
-		return policies.Open(b)
+		s, err := policies.Open(b)
+		if err != nil {
+			return nil, err
+		}
+		// When the policies dir exists alongside a sqlite store
+		// (every data-dir deployment — `bouncer init` creates it and
+		// documents "drop policy YAML specs here"), layer it in as a
+		// read-only seed: files load at boot, control-plane edits
+		// persist to sqlite and win on conflicts. Without this the
+		// documented directory was silently dead weight.
+		if datadir.Exists(cfg.PoliciesDir) {
+			seed, err := policies.NewFileStore(cfg.PoliciesDir)
+			if err != nil {
+				return nil, fmt.Errorf("policies dir seed: %w", err)
+			}
+			return policies.NewLayeredStore(s, seed), nil
+		}
+		return s, nil
 	default:
 		return nil, fmt.Errorf("unhandled policies store %q", cfg.PoliciesStore)
 	}

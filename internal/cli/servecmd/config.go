@@ -246,7 +246,7 @@ func bindServeFlags(fs *pflag.FlagSet) {
 	fs.String("traffic-db", "", "path to the sqlite DB file when --traffic-store=sqlite (falls back to --store-db)")
 	fs.Int("traffic-budget", defaultTrafficBudget, "byte budget for non-pinned traffic events; older rows evict past this")
 	fs.Duration("traffic-max-age", defaultTrafficMaxAge, "max age of traffic events; older rows evict regardless of byte pressure")
-	fs.String("policies-store", "file", "policies storage backend (file|memory|sqlite); file uses --policies-dir")
+	fs.String("policies-store", "file", "policies storage backend (file|memory|sqlite); file uses --policies-dir. With sqlite, YAML in --policies-dir (when the dir exists) still loads at boot as a read-only seed; store edits win on name conflicts.")
 	fs.String("policies-db", "", "path to the sqlite DB file when --policies-store=sqlite (falls back to --store-db)")
 	fs.Bool("policies-readonly", false, "reject every mutating policy endpoint; the policies viewer stays available")
 	fs.String("proposals-store", "memory", "proposals queue backend (memory|sqlite)")

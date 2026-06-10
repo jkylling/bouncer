@@ -347,7 +347,7 @@ This directory was created by `+"`bouncer init`"+`. The layout is:
 - %s : bcrypt hash of the admin password (for /_admin/login).
 - %s/ : sqlite store(s) for traffic and policies (populated on first serve).
 - %s/ : API specs. Top-level *.yaml files are loose specs; immediate subdirs are bundles installed via "bouncer apis add ...".
-- %s/ : drop policy YAML specs here.
+- %s/ : drop policy YAML specs here. Loaded at boot; policies edited via the UI/API persist in the store and override same-named files.
 %s
 Optional bouncer.yaml in this dir constrains which refs apis add
 will install:
