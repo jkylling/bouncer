@@ -84,34 +84,24 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	span.SetAttributes(observability.Subject(subject))
 	hook.subject = subject
 
-	// The body is buffered (and size-capped) only when evaluating the
-	// matched API can actually observe `request.body` — see
-	// APIRuntime.UsesRequestBody. Everything else streams straight
-	// upstream in forward, so uploads to body-blind APIs are neither
-	// size-limited nor held in memory. An unmatched path skips
-	// buffering too: it never reaches forward (no_match 404s below).
-	var bodyBytes []byte
-	bufferBody := matchedAPI != "" && s.runtime.API(matchedAPI).UsesRequestBody()
-	if bufferBody {
-		r.Body = http.MaxBytesReader(w, r.Body, s.maxRequestBody)
-		bodyBytes, err = io.ReadAll(r.Body)
-		if err != nil {
-			// MaxBytesReader marks the connection closed but leaves the
-			// response status to the handler — return 413 explicitly so
-			// the client gets a clear signal. Other read errors get a
-			// generic 500.
-			var maxErr *http.MaxBytesError
-			if errors.As(err, &maxErr) {
-				hook.errMsg = "request body too large"
-				http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
-				return
-			}
-			hook.errMsg = err.Error()
-			failRequest(ctx, w, r, http.StatusInternalServerError, "read body", "read body", err)
+	r.Body = http.MaxBytesReader(w, r.Body, MaxRequestBodyBytes)
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		// MaxBytesReader marks the connection closed but leaves the
+		// response status to the handler — return 413 explicitly so
+		// the client gets a clear signal. Other read errors get a
+		// generic 500.
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			hook.errMsg = "request body too large"
+			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
 			return
 		}
-		_ = r.Body.Close()
+		hook.errMsg = err.Error()
+		failRequest(ctx, w, r, http.StatusInternalServerError, "read body", "read body", err)
+		return
 	}
+	_ = r.Body.Close()
 
 	policyReq, err := buildPolicyRequest(r, bodyBytes)
 	if err != nil {
@@ -171,14 +161,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		failRequest(ctx, w, r, http.StatusInternalServerError, "server error", "upstream lookup", err)
 		return
 	}
-	// Buffered bodies forward from memory; un-buffered ones stream
-	// r.Body straight through with the inbound length signal intact.
-	var fwdBody io.Reader = bytes.NewReader(bodyBytes)
-	fwdLen := int64(len(bodyBytes))
-	if !bufferBody {
-		fwdBody, fwdLen = r.Body, r.ContentLength
-	}
-	if err := s.forward(ctx, w, r, fwdBody, fwdLen, creds, upstream, apiName, hook); err != nil {
+	if err := s.forward(ctx, w, r, bodyBytes, creds, upstream, apiName, hook); err != nil {
 		hook.errMsg = err.Error()
 		failRequest(ctx, w, r, http.StatusBadGateway, "bad gateway", "upstream", err)
 	}
@@ -488,8 +471,8 @@ func parseJSONBody(body []byte) (*structpb.Value, error) {
 // `filename` on the `Content-Disposition`) project to strings (or
 // lists on repeat); file parts project to a small metadata object
 // `{filename, content_type, size}` — the bytes are deliberately
-// dropped because the proxy caps buffered bodies (Server.
-// maxRequestBody) and policies have no use for raw file content.
+// dropped because the proxy already enforces MaxRequestBodyBytes
+// and policies have no use for raw file content.
 //
 // Empty boundary fails loud: a multipart Content-Type without a
 // boundary param is malformed by RFC 2046, and silently parsing
@@ -588,7 +571,7 @@ func parseFormBody(body []byte) (*structpb.Value, error) {
 	return pv, nil
 }
 
-func (s *Server) forward(ctx context.Context, w http.ResponseWriter, r *http.Request, body io.Reader, contentLength int64, creds auth.AccessCreds, baseURL *url.URL, apiName string, hook *recorderHook) error {
+func (s *Server) forward(ctx context.Context, w http.ResponseWriter, r *http.Request, body []byte, creds auth.AccessCreds, baseURL *url.URL, apiName string, hook *recorderHook) error {
 	ctx, span := otel.Tracer(tracerName).Start(ctx, "proxy.forward")
 	defer span.End()
 
@@ -598,16 +581,9 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, r *http.Req
 	}
 	target.RawQuery = r.URL.RawQuery
 
-	out, err := http.NewRequestWithContext(ctx, r.Method, target.String(), body)
+	out, err := http.NewRequestWithContext(ctx, r.Method, target.String(), bytes.NewReader(body))
 	if err != nil {
 		return err
-	}
-	// NewRequestWithContext derives ContentLength for *bytes.Reader
-	// bodies; a streamed r.Body needs it set explicitly or the
-	// upstream call falls back to chunked encoding even when the
-	// client declared a length.
-	if _, buffered := body.(*bytes.Reader); !buffered {
-		out.ContentLength = contentLength
 	}
 	for name, values := range r.Header {
 		if shouldStripForwarded(name) {

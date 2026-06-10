@@ -18,7 +18,6 @@ import (
 	"github.com/jkylling/bouncer/internal/cli/initcmd"
 	"github.com/jkylling/bouncer/internal/control/bundles"
 	"github.com/jkylling/bouncer/internal/observability"
-	"github.com/jkylling/bouncer/internal/server"
 	"github.com/jkylling/bouncer/internal/server/admin"
 )
 
@@ -56,11 +55,6 @@ type config struct {
 	InboundIdleTimeout       time.Duration `mapstructure:"inbound-idle-timeout"`
 	UpstreamCallTimeout      time.Duration `mapstructure:"upstream-call-timeout"`
 	RefreshTTL               time.Duration `mapstructure:"refresh-ttl"`
-
-	// MaxRequestBody caps inbound bodies the data plane buffers for
-	// policy evaluation. Only APIs whose policy surface reads
-	// request.body buffer at all; everything else streams upstream.
-	MaxRequestBody int64 `mapstructure:"max-request-body"`
 
 	// Observability knobs. LogLevel/LogFormat shape the slog output;
 	// OTelExporter selects how spans leave the process (default
@@ -238,7 +232,6 @@ func bindServeFlags(fs *pflag.FlagSet) {
 	fs.Duration("inbound-write-timeout", defaultInboundWriteTimeout, "max time spent writing the inbound response; streamed proxy responses extend it per chunk, so it bounds stalls rather than total stream duration")
 	fs.Duration("inbound-idle-timeout", defaultInboundIdleTimeout, "keep-alive idle window between inbound requests")
 	fs.Duration("upstream-call-timeout", defaultUpstreamCallTimeout, "per-call timeout for upstream HTTP requests; on the proxy forward path it caps time-to-response-headers so streaming bodies aren't cut")
-	fs.Int64("max-request-body", server.MaxRequestBodyBytes, "byte cap on inbound bodies buffered for policy evaluation; applies only to APIs whose policies read request.body — others stream upstream unbuffered")
 	fs.Duration("refresh-ttl", 0, "exp claim on refresh JWTs issued by /token rotation; 0 = no expiry")
 	fs.String("log-level", "info", "log level (debug|info|warn|error)")
 	fs.String("log-format", "text", "log format (text|json)")

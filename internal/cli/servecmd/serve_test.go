@@ -13,7 +13,6 @@ import (
 
 	"github.com/jkylling/bouncer/internal/cli/datadir"
 	"github.com/jkylling/bouncer/internal/cli/initcmd"
-	"github.com/jkylling/bouncer/internal/server"
 )
 
 // testSecretHex is a 64-char hex string every loadConfig test reuses
@@ -125,21 +124,6 @@ func TestLoadConfigDefaults(t *testing.T) {
 	}
 	if cfg.UpstreamCallTimeout != defaultUpstreamCallTimeout {
 		t.Errorf("UpstreamCallTimeout = %v, want %v", cfg.UpstreamCallTimeout, defaultUpstreamCallTimeout)
-	}
-	if cfg.MaxRequestBody != server.MaxRequestBodyBytes {
-		t.Errorf("MaxRequestBody = %d, want %d", cfg.MaxRequestBody, server.MaxRequestBodyBytes)
-	}
-}
-
-// TestLoadConfigMaxRequestBodyOverride pins the flag → config wiring
-// for the buffered-body cap.
-func TestLoadConfigMaxRequestBodyOverride(t *testing.T) {
-	cfg, err := loadConfig([]string{"--secret-hex", testSecretHex, "--max-request-body", "4096"})
-	if err != nil {
-		t.Fatalf("loadConfig: %v", err)
-	}
-	if cfg.MaxRequestBody != 4096 {
-		t.Errorf("MaxRequestBody = %d, want 4096", cfg.MaxRequestBody)
 	}
 }
 

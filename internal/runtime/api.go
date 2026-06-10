@@ -50,13 +50,6 @@ type APIRuntime struct {
 	// cheaper than a map.
 	actions []*compiled.Action
 	store   *policyStore
-	// staticUsesBody is the build-time part of UsesRequestBody:
-	// whether any action expression (filter, bind) or any meta output
-	// in the shared registry can observe the inbound request body.
-	// Metas are included globally — a policy on this API can construct
-	// any registry meta via cross-API binds or inline `Type{...}`
-	// literals, so the conservative scope is the whole registry.
-	staticUsesBody bool
 	// now returns the wall-clock value injected as the `now` CEL
 	// variable on every policy evaluation. Captured once per
 	// `Evaluate` call so all predicates and conditions on the same
@@ -138,26 +131,8 @@ func compileAPIActions(api *models.API, reg *messages.Registry, allMetas map[str
 		metas:              allMetas,
 		actions:            actions,
 		store:              newPolicyStore(),
-		staticUsesBody:     staticUsesRequestBody(actions, allMetas),
 		now:                time.Now,
 	}, nil
-}
-
-// staticUsesRequestBody computes the frozen (post-Build) part of
-// UsesRequestBody: any action filter/bind, or any meta output in the
-// shared registry, that can observe the inbound request body.
-func staticUsesRequestBody(actions []*compiled.Action, metas map[string]*compiled.Meta) bool {
-	for _, a := range actions {
-		if a.UsesRequestBody() {
-			return true
-		}
-	}
-	for _, m := range metas {
-		if m.UsesRequestBody() {
-			return true
-		}
-	}
-	return false
 }
 
 // validateAccessDeniedStatus rejects an obviously-wrong override: a
@@ -261,16 +236,6 @@ func (r *APIRuntime) AccessDeniedStatus() int { return r.accessDeniedStatus }
 // 401 gate for an inbound request matched to this API. See
 // models.API.Auth.
 func (r *APIRuntime) AuthOptional() bool { return r.authOptional }
-
-// UsesRequestBody reports whether evaluating this API can observe the
-// inbound request's body — through an action filter or bind, a meta
-// output, or any currently registered policy. The data plane uses
-// this to decide between buffering the body for evaluation (capped)
-// and streaming it straight upstream. The answer tracks policy
-// hot-reload: adding a body-reading policy flips it true.
-func (r *APIRuntime) UsesRequestBody() bool {
-	return r.staticUsesBody || r.store.usesRequestBody()
-}
 
 // Evaluate selects the matching actions for the request, then walks
 // the candidate policies (deny-first, permit-second). For each policy,
@@ -442,25 +407,6 @@ func (s *policyStore) remove(name string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.removeLocked(name)
-}
-
-// usesRequestBody reports whether any registered policy can observe
-// the inbound request's body. Called per request on the data-plane
-// hot path: a bool check per policy under the read lock.
-func (s *policyStore) usesRequestBody() bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	for _, p := range s.deny {
-		if p.UsesRequestBody() {
-			return true
-		}
-	}
-	for _, p := range s.permit {
-		if p.UsesRequestBody() {
-			return true
-		}
-	}
-	return false
 }
 
 // list returns a fresh slice of the policies' source models in

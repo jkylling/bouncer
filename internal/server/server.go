@@ -48,24 +48,20 @@ var tracerName = observability.PackagePath()
 // outer forwarded request.
 type PhysicalAPIFactory func(apiName string, creds auth.AccessCreds) (compiled.PhysicalAPI, error)
 
-// MaxRequestBodyBytes is the default cap on inbound request bodies
-// the proxy buffers for policy evaluation. It applies only to APIs
-// whose policy surface reads `request.body` (see
-// APIRuntime.UsesRequestBody) — other requests stream upstream
-// unbuffered. Override via Dependencies.MaxRequestBody / the
-// --max-request-body flag.
+// MaxRequestBodyBytes caps the inbound request body the proxy will
+// buffer before forwarding. JSON control-plane traffic is small; the
+// limit prevents a single hostile POST from OOMing the proxy.
 const MaxRequestBodyBytes int64 = 1 << 20 // 1 MiB
 
 // Server is the HTTP handler. Use `NewServer` to construct one.
 type Server struct {
-	runtime        *runtime.Runtime
-	keys           *auth.ServerKeys
-	httpClient     *http.Client
-	forwardClient  *http.Client
-	streamIdle     time.Duration
-	maxRequestBody int64
-	apiFactory     PhysicalAPIFactory
-	oauthHandler   *oauth.Handler
+	runtime       *runtime.Runtime
+	keys          *auth.ServerKeys
+	httpClient    *http.Client
+	forwardClient *http.Client
+	streamIdle    time.Duration
+	apiFactory    PhysicalAPIFactory
+	oauthHandler  *oauth.Handler
 
 	recorder          Recorder
 	trafficStore      traffic.Store
@@ -105,11 +101,6 @@ type Dependencies struct {
 	// leaves the absolute deadline in place.
 	StreamIdleTimeout time.Duration
 
-	// MaxRequestBody caps the inbound bodies the data plane buffers
-	// for policy evaluation (APIs that read request.body). Zero means
-	// the MaxRequestBodyBytes default.
-	MaxRequestBody int64
-
 	Recorder          Recorder
 	TrafficStore      traffic.Store
 	PolicyService     *policies.Service
@@ -133,17 +124,12 @@ func NewServer(deps Dependencies) *Server {
 	if forwardClient == nil {
 		forwardClient = httpClient
 	}
-	maxRequestBody := deps.MaxRequestBody
-	if maxRequestBody == 0 {
-		maxRequestBody = MaxRequestBodyBytes
-	}
 	return &Server{
 		runtime:           deps.Runtime,
 		keys:              deps.Keys,
 		httpClient:        httpClient,
 		forwardClient:     forwardClient,
 		streamIdle:        deps.StreamIdleTimeout,
-		maxRequestBody:    maxRequestBody,
 		apiFactory:        deps.APIFactory,
 		oauthHandler:      oauth.New(deps.Keys, httpClient, deps.RefreshTTL),
 		recorder:          deps.Recorder,

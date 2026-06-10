@@ -116,7 +116,6 @@ func runServe(cfg *config) error {
 		// progress budget on streamed responses: each forwarded
 		// chunk pushes the write deadline out by this much.
 		StreamIdleTimeout: cfg.InboundWriteTimeout,
-		MaxRequestBody:    cfg.MaxRequestBody,
 		RefreshTTL:        cfg.RefreshTTL,
 		AdminPasswordHash: cfg.AdminPasswordHash,
 		// Populated only when --mitm is on; otherwise empty and the

@@ -4,7 +4,6 @@ package e2e
 
 import (
 	"encoding/json"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -360,42 +359,5 @@ func TestServeDemoPolicySetWarnsAtBoot(t *testing.T) {
 	})
 	if strings.Contains(locked.Stderr(), "anonymous callers") {
 		t.Errorf("production set should not log the demo warning; stderr:\n%s", locked.Stderr())
-	}
-}
-
-// TestServeMaxRequestBodyCapsBufferedBodies pins the --max-request-body
-// flag end to end: the bundled gmail spec reads request.body (a draft
-// bind), so its requests take the buffered path and a body over the
-// cap is rejected with 413 before reaching any upstream.
-func TestServeMaxRequestBodyCapsBufferedBodies(t *testing.T) {
-	dir := mustInit(t, initOpts{})
-	copyBundledAPI(t, dir, "gmail.yaml")
-	srv := startServe(t, serveOpts{
-		DataDir: dir,
-		Extra:   []string{"--max-request-body", "64"},
-	})
-
-	secret := strings.TrimSpace(string(mustReadFile(t, filepath.Join(dir, "secret.hex"))))
-	res := run(t, "issue-token", "--secret-hex", secret, "--subject", "e2e", "--access-token", "tok")
-	if res.Err != nil {
-		t.Fatalf("issue-token: %v\nstderr: %s", res.Err, res.Stderr)
-	}
-	jwt := strings.TrimSpace(res.Stdout)
-
-	body := strings.Repeat("x", 1024)
-	req, err := http.NewRequest(http.MethodPost, srv.BaseURL+"/gmail/v1/users/me/drafts", strings.NewReader(body))
-	if err != nil {
-		t.Fatalf("new request: %v", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+jwt)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := httpClient().Do(req)
-	if err != nil {
-		t.Fatalf("post: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusRequestEntityTooLarge {
-		raw, _ := io.ReadAll(resp.Body)
-		t.Fatalf("status = %d, want 413; body = %s", resp.StatusCode, raw)
 	}
 }

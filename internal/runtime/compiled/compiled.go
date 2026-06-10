@@ -34,7 +34,7 @@ type CompiledRequest struct {
 // NewRequest compiles the source against env. The expression must
 // return bouncer.MetaRequest (the type the HTTP helpers produce).
 func NewRequest(env *cel.Env, source string) (*CompiledRequest, error) {
-	prg, _, err := compileChecked(env, source, cel.ObjectType(metaRequestTypeName))
+	prg, err := compileChecked(env, source, cel.ObjectType(metaRequestTypeName))
 	if err != nil {
 		return nil, fmt.Errorf("compile request: %w", err)
 	}
@@ -63,13 +63,8 @@ func (c *CompiledRequest) Eval(input *messages.Value) (*pb.MetaRequest, error) {
 // a *messages.Value (for `Type{...}` literals — the recursion case), or
 // any other ref.Val.
 type CompiledOutput struct {
-	program         cel.Program
-	usesRequestBody bool
+	program cel.Program
 }
-
-// UsesRequestBody reports whether the output expression can observe
-// the inbound request's body.
-func (c *CompiledOutput) UsesRequestBody() bool { return c.usesRequestBody }
 
 // NewOutput compiles source against env. Output expressions are not
 // type-checked: an output field can be a primitive, a `Type{...}`
@@ -85,7 +80,7 @@ func NewOutput(env *cel.Env, source string) (*CompiledOutput, error) {
 	if err != nil {
 		return nil, fmt.Errorf("compile output: %w", err)
 	}
-	return &CompiledOutput{program: prg, usesRequestBody: astUsesRequestBody(ast)}, nil
+	return &CompiledOutput{program: prg}, nil
 }
 
 // Eval runs the output expression with the meta's input plus the
@@ -108,21 +103,16 @@ func (c *CompiledOutput) Eval(input *messages.Value, req *pb.Request, resp *pb.R
 
 // CompiledFilter is an action's filter predicate.
 type CompiledFilter struct {
-	program         cel.Program
-	usesRequestBody bool
+	program cel.Program
 }
-
-// UsesRequestBody reports whether the filter can observe the inbound
-// request's body.
-func (c *CompiledFilter) UsesRequestBody() bool { return c.usesRequestBody }
 
 // NewFilter compiles a bool-returning filter expression.
 func NewFilter(env *cel.Env, source string) (*CompiledFilter, error) {
-	prg, ast, err := compileChecked(env, source, cel.BoolType)
+	prg, err := compileChecked(env, source, cel.BoolType)
 	if err != nil {
 		return nil, fmt.Errorf("compile filter: %w", err)
 	}
-	return &CompiledFilter{program: prg, usesRequestBody: astUsesRequestBody(ast)}, nil
+	return &CompiledFilter{program: prg}, nil
 }
 
 // Eval runs the filter against the request and the path-template
@@ -158,13 +148,8 @@ func (c *CompiledFilter) Eval(req *pb.Request, match map[string]string) (bool, e
 // action: the YAML-level shorthand for "this policy applies to any
 // action this API matches."
 type CompiledActionPredicate struct {
-	program         cel.Program
-	usesRequestBody bool
+	program cel.Program
 }
-
-// UsesRequestBody reports whether the predicate can observe the
-// inbound request's body.
-func (c *CompiledActionPredicate) UsesRequestBody() bool { return c.usesRequestBody }
 
 // NewActionPredicate compiles source against env. Source must evaluate
 // to bool. The empty source is interpreted as the constant `true` —
@@ -173,11 +158,11 @@ func NewActionPredicate(env *cel.Env, source string) (*CompiledActionPredicate, 
 	if source == "" {
 		source = "true"
 	}
-	prg, ast, err := compileChecked(env, source, cel.BoolType)
+	prg, err := compileChecked(env, source, cel.BoolType)
 	if err != nil {
 		return nil, fmt.Errorf("compile action predicate: %w", err)
 	}
-	return &CompiledActionPredicate{program: prg, usesRequestBody: astUsesRequestBody(ast)}, nil
+	return &CompiledActionPredicate{program: prg}, nil
 }
 
 // Eval runs the predicate against the named action, request, the
@@ -227,13 +212,8 @@ func (c *CompiledActionPredicate) Eval(actionName string, req *pb.Request, match
 // caller". Same convention as CompiledActionPredicate so authors don't
 // have to remember which fields default which way.
 type CompiledPrincipalPredicate struct {
-	program         cel.Program
-	usesRequestBody bool
+	program cel.Program
 }
-
-// UsesRequestBody reports whether the predicate can observe the
-// inbound request's body.
-func (c *CompiledPrincipalPredicate) UsesRequestBody() bool { return c.usesRequestBody }
 
 // NewPrincipalPredicate compiles source against env. Source must
 // evaluate to bool. The empty source is interpreted as the constant
@@ -242,11 +222,11 @@ func NewPrincipalPredicate(env *cel.Env, source string) (*CompiledPrincipalPredi
 	if source == "" {
 		source = "true"
 	}
-	prg, ast, err := compileChecked(env, source, cel.BoolType)
+	prg, err := compileChecked(env, source, cel.BoolType)
 	if err != nil {
 		return nil, fmt.Errorf("compile principal predicate: %w", err)
 	}
-	return &CompiledPrincipalPredicate{program: prg, usesRequestBody: astUsesRequestBody(ast)}, nil
+	return &CompiledPrincipalPredicate{program: prg}, nil
 }
 
 // Eval runs the predicate against the request and the principal. The
@@ -280,14 +260,9 @@ func (c *CompiledPrincipalPredicate) Eval(req *pb.Request, principal *pb.Princip
 // initial messages.Value that the policy will close over (typically a
 // `Type{...}` literal).
 type CompiledBind struct {
-	program         cel.Program
-	outputType      *cel.Type
-	usesRequestBody bool
+	program    cel.Program
+	outputType *cel.Type
 }
-
-// UsesRequestBody reports whether the bind expression can observe the
-// inbound request's body.
-func (c *CompiledBind) UsesRequestBody() bool { return c.usesRequestBody }
 
 // NewBind compiles a bind expression. The result must be a
 // *messages.Value at runtime; this is checked at Eval time rather than
@@ -301,7 +276,7 @@ func NewBind(env *cel.Env, source string) (*CompiledBind, error) {
 	if err != nil {
 		return nil, fmt.Errorf("compile bind: %w", err)
 	}
-	return &CompiledBind{program: prg, outputType: ast.OutputType(), usesRequestBody: astUsesRequestBody(ast)}, nil
+	return &CompiledBind{program: prg, outputType: ast.OutputType()}, nil
 }
 
 // OutputType returns the static type the bind's expression evaluates
@@ -344,13 +319,8 @@ func (c *CompiledBind) Eval(req *pb.Request, match map[string]string) (*messages
 // installCompleterDecorator picks it up — no per-call rebuild and no
 // shared mutable state.
 type CompiledCondition struct {
-	program         cel.Program
-	usesRequestBody bool
+	program cel.Program
 }
-
-// UsesRequestBody reports whether the condition can observe the
-// inbound request's body.
-func (c *CompiledCondition) UsesRequestBody() bool { return c.usesRequestBody }
 
 // NewCondition compiles a bool-returning policy condition against env.
 // A custom decorator is wired in so that, at Eval time, any
@@ -365,7 +335,7 @@ func NewCondition(env *cel.Env, source string) (*CompiledCondition, error) {
 	if err != nil {
 		return nil, fmt.Errorf("compile condition: %w", err)
 	}
-	return &CompiledCondition{program: prg, usesRequestBody: astUsesRequestBody(ast)}, nil
+	return &CompiledCondition{program: prg}, nil
 }
 
 // Eval runs the condition with the request and the action's bind
@@ -430,17 +400,10 @@ func checkAst(env *cel.Env, source string, want *cel.Type) (*cel.Ast, error) {
 	return ast, nil
 }
 
-// compileChecked compiles + type-checks source and returns the program
-// alongside its AST, so constructors can derive static facts (e.g.
-// astUsesRequestBody) without re-parsing.
-func compileChecked(env *cel.Env, source string, want *cel.Type) (cel.Program, *cel.Ast, error) {
+func compileChecked(env *cel.Env, source string, want *cel.Type) (cel.Program, error) {
 	ast, err := checkAst(env, source, want)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	prg, err := env.Program(ast)
-	if err != nil {
-		return nil, nil, err
-	}
-	return prg, ast, nil
+	return env.Program(ast)
 }

@@ -63,11 +63,6 @@ type Config struct {
 	// wires it to the listener's WriteTimeout.
 	StreamIdleTimeout time.Duration
 
-	// MaxRequestBody caps inbound bodies buffered for policy
-	// evaluation; see Dependencies.MaxRequestBody. Zero means the
-	// MaxRequestBodyBytes default.
-	MaxRequestBody int64
-
 	// RefreshTTL is the `exp` claim applied to refresh JWTs the
 	// /token handler issues when the upstream rotates the refresh
 	// token. Zero means "no exp", matching the default issue-token
@@ -226,7 +221,6 @@ func Load(cfg *Config, keys *auth.ServerKeys) (*Server, error) {
 		HTTPClient:        httpClient,
 		ForwardClient:     forwardClient,
 		StreamIdleTimeout: cfg.StreamIdleTimeout,
-		MaxRequestBody:    cfg.MaxRequestBody,
 		APIFactory:        factory,
 		RefreshTTL:        cfg.RefreshTTL,
 		Recorder:          cfg.Recorder,
