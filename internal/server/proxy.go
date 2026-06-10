@@ -404,9 +404,10 @@ func buildPrincipal(subject string, anonymous bool) *pb.Principal {
 // buildPolicyRequest assembles the pb.Request policies evaluate
 // against. pathSegs carries the per-segment-decoded path (see
 // compiled.SplitEscapedPath) so templates and `path_segments` are
-// %2F-safe; the flat `path` field stays the fully decoded string —
-// fine for prefix checks, but slash-in-segment matching belongs on
-// the segments.
+// %2F-safe — and the flat `path` field is rendered from those same
+// segments (compiled.JoinSegments), so an encoded slash stays
+// visible as %2F there too. String-gating policies and segment
+// matching can never disagree about where the separators are.
 func buildPolicyRequest(r *http.Request, pathSegs []string, body []byte) (*pb.Request, error) {
 	values := r.URL.Query()
 	keys := make([]string, 0, len(values))
@@ -426,7 +427,7 @@ func buildPolicyRequest(r *http.Request, pathSegs []string, body []byte) (*pb.Re
 	}
 	return &pb.Request{
 		Method:       strings.ToUpper(r.Method),
-		Path:         r.URL.Path,
+		Path:         compiled.JoinSegments(pathSegs),
 		PathSegments: pathSegs,
 		Query:        q,
 		Body:         pbBody,

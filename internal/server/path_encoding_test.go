@@ -79,6 +79,37 @@ func TestEncodedSlashStaysInSegment(t *testing.T) {
 	}
 }
 
+// TestRequestPathStringGatingIsSlashSafe pins the CEL `request.path`
+// view: it renders from the decoded segments with %2F kept visible,
+// so a policy gating on the string form sees "/files/abc%2Fdef" —
+// never a forged "/files/abc/def" — and agrees with path_segments.
+func TestRequestPathStringGatingIsSlashSafe(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("upstream must not be reached")
+	}))
+	defer upstream.Close()
+
+	// The predicate permits the forged-separator string. If
+	// request.path ever collapses %2F again, this permits and the
+	// upstream above fails the test.
+	rt := buildFilesRuntime(t, upstream.URL, `request.path == "/files/abc/def"`)
+	keys := mustKeys(t)
+	srv := NewServer(Dependencies{Runtime: rt, Keys: keys, HTTPClient: upstream.Client(), APIFactory: gmailFactory})
+	proxy := httptest.NewServer(srv.Router())
+	defer proxy.Close()
+
+	req, _ := http.NewRequest("GET", proxy.URL+"/files/abc%2Fdef", nil)
+	req.Header.Set("Authorization", "Bearer "+issueJWT(t, keys, "tok"))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403: request.path must read %%2F, not a separator", resp.StatusCode)
+	}
+}
+
 // TestEncodedSlashCannotForgeSegments pins the negatives: an encoded
 // slash must not create segment boundaries, neither to slip extra
 // segments past a one-param template nor to fake a route prefix.

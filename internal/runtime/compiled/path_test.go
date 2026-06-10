@@ -191,3 +191,43 @@ func TestSplitEscapedPathRejectsBadEscape(t *testing.T) {
 		t.Fatal("expected error for malformed escape")
 	}
 }
+
+// TestJoinSegments pins the request.path rendering contract: decoded
+// segments re-join with in-segment slashes and percents re-escaped,
+// so the string view agrees with path_segments about separators.
+func TestJoinSegments(t *testing.T) {
+	cases := []struct {
+		segs []string
+		want string
+	}{
+		{nil, "/"},
+		{[]string{"users", "me"}, "/users/me"},
+		{[]string{"users", "al/ice"}, "/users/al%2Fice"},
+		{[]string{"sp ace"}, "/sp ace"},
+		{[]string{"100%"}, "/100%25"},
+		{[]string{"users", "", "me"}, "/users//me"},
+	}
+	for _, tc := range cases {
+		if got := JoinSegments(tc.segs); got != tc.want {
+			t.Errorf("JoinSegments(%v) = %q, want %q", tc.segs, got, tc.want)
+		}
+	}
+}
+
+// TestJoinSegmentsRoundTripsSplitEscapedPath pins the pairing: the
+// rendered path re-splits to the same segments.
+func TestJoinSegmentsRoundTripsSplitEscapedPath(t *testing.T) {
+	for _, escaped := range []string{"/users/al%2Fice", "/a%2520b", "/x/100%25/y", "/users//me"} {
+		segs, err := SplitEscapedPath(escaped)
+		if err != nil {
+			t.Fatalf("split %q: %v", escaped, err)
+		}
+		back, err := SplitEscapedPath(JoinSegments(segs))
+		if err != nil {
+			t.Fatalf("re-split %q: %v", JoinSegments(segs), err)
+		}
+		if !reflect.DeepEqual(segs, back) {
+			t.Errorf("%q: segments %v re-split to %v", escaped, segs, back)
+		}
+	}
+}

@@ -142,6 +142,28 @@ func SplitEscapedPath(escaped string) ([]string, error) {
 	return segs, nil
 }
 
+// JoinSegments renders decoded path segments (from SplitEscapedPath)
+// back into the single string the server exposes as `request.path`.
+// Two characters are re-escaped per segment so the rendering is
+// unambiguous and agrees with `path_segments`: an in-segment "/" (a
+// decoded %2F) stays visible as %2F instead of reading as a
+// separator, and a literal "%" becomes %25 so it can't fake an
+// escape. For paths with no encoded slash or percent the result is
+// simply the decoded path. A string-gating policy
+// (`request.path == "/files/a/b"`) therefore cannot be fooled by a
+// request for /files/a%2Fb, which renders as "/files/a%2Fb".
+func JoinSegments(segs []string) string {
+	if len(segs) == 0 {
+		return "/"
+	}
+	out := make([]string, len(segs))
+	for i, s := range segs {
+		s = strings.ReplaceAll(s, "%", "%25")
+		out[i] = strings.ReplaceAll(s, "/", "%2F")
+	}
+	return "/" + strings.Join(out, "/")
+}
+
 // SplitPath splits a URL path on `/` after stripping a single leading
 // `/`, preserving empty segments. Used for path-template parsing and
 // route-prefix parsing (config-side strings, never percent-encoded).

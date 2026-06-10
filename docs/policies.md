@@ -141,7 +141,7 @@ condition: |
 ```protobuf
 message Request {
   string method = 1;        // "GET", "POST", ...
-  string path = 3;          // raw URL path
+  string path = 3;          // decoded path; in-segment %2F / %25 stay escaped
   repeated string path_segments = 4;
   repeated KeyValue query = 5;  // [{key, value}, ...]
   google.protobuf.Value body = 6;  // dyn — JSON object/array/scalar
@@ -161,6 +161,11 @@ Idioms:
   in `?` (see *optionals* below).
 - **Path captures** live on `match`, not `request.path` — let the
   action template do the parsing.
+- **`request.path` is slash-safe**: it is rendered from the decoded
+  segments, with an encoded slash kept visible as `%2F` (and a
+  literal `%` as `%25`). `/files/a%2Fb` reads as `"/files/a%2Fb"`,
+  never `"/files/a/b"`, so string comparisons agree with
+  `path_segments` about where the separators are.
 
 ### The principal shape
 
