@@ -99,6 +99,11 @@ fmt-check:
 vet:
 	go vet ./...
 
+# Fail (without mutating go.mod/go.sum) if `go mod tidy` would change
+# them — keeps a contributor's tidy run from churning the files.
+tidy-check:
+	go mod tidy -diff
+
 # staticcheck via the module's `tool` directive so the version is
 # pinned in go.mod / go.sum. `go tool` resolves the named tool
 # without a global `go install` step on the developer or CI host.
@@ -107,7 +112,7 @@ staticcheck:
 
 # CI aggregator. Mirrors what .github/workflows/ci.yml runs so a
 # green local `make ci` is a green workflow.
-ci: fmt-check vet staticcheck test e2e
+ci: fmt-check tidy-check vet staticcheck test e2e
 
 # release fans out over CMDS × TARGETS. Each call to `go build`
 # drops a single binary into dist/ named so it's unambiguous when

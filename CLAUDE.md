@@ -10,7 +10,7 @@ CI. The full list lives in the `Makefile`; the ones worth knowing:
 
 | Target          | What it does                                                                            |
 |-----------------|-----------------------------------------------------------------------------------------|
-| `make ci`       | `fmt-check` + `vet` + `staticcheck` + `test` + `e2e`. Mirrors `.github/workflows/ci.yml`. |
+| `make ci`       | `fmt-check` + `tidy-check` + `vet` + `staticcheck` + `test` + `e2e`. Mirrors `.github/workflows/ci.yml`. |
 | `make test`     | Unit tests only. Excludes the `e2e` build tag.                                          |
 | `make e2e`      | Black-box binary tests under `test/e2e/`. Builds the binary once, drives it as a subprocess. |
 | `make fmt`      | `gofmt -w .`                                                                            |

@@ -276,9 +276,9 @@ Integration tests live behind a build tag and require credentials in
 go test -tags=integration ./internal/integration/...
 ```
 
-`make ci` chains `fmt-check`, `vet`, `test`, and `e2e` — the same
-sequence the GitHub Actions workflow runs, so a green local
-`make ci` is a green PR.
+`make ci` chains `fmt-check`, `tidy-check`, `vet`, `staticcheck`,
+`test`, and `e2e` — the same sequence the GitHub Actions workflow
+runs, so a green local `make ci` is a green PR.
 
 ### Repo layout
 
