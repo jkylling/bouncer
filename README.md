@@ -308,7 +308,7 @@ runs, so a green local `make ci` is a green PR.
 
 Releases are tag-driven. Pushing a tag matching `v*` runs
 `.github/workflows/release.yml`, which calls `make release` and
-attaches every `dist/<cmd>-<version>-<os>-<arch>` binary plus a
+attaches every `dist/<cmd>-<os>-<arch>` binary plus a
 `SHA256SUMS` file to a new GitHub Release page. Notes are
 auto-generated from PRs merged since the previous tag, bucketed by
 the categories in `.github/release.yml`.

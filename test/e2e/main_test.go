@@ -6,7 +6,7 @@
 // imports internal/* — the surface under test is what an operator
 // would actually run.
 //
-// Run with `make e2e` (or `go test -tags=e2e ./e2e/...`). The build
+// Run with `make e2e` (or `go test -tags=e2e ./test/e2e/...`). The build
 // tag keeps this suite out of the default `go test ./...` so the
 // per-package go-build cost (~5s) is paid only when explicitly
 // requested.
