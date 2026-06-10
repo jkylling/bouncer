@@ -38,8 +38,8 @@ func Open(b store.Backend, opts Options) (Store, error) {
 
 // NewMemoryStore returns an ephemeral in-process Store. The
 // implementation is a bounded ring buffer with eviction tuned to
-// match the sqlite store's pinned + byte/age budget semantics; tests
-// and the `--traffic-store=memory` deployment path both land here.
+// match the sqlite store's byte/age budget semantics; tests and the
+// `--traffic-store=memory` deployment path both land here.
 func NewMemoryStore(opts Options) Store {
 	return newMemoryStore(opts)
 }

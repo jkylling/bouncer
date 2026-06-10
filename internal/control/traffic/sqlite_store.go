@@ -45,6 +45,14 @@ var trafficMigrations = []string{
 	CREATE INDEX IF NOT EXISTS events_api_ts ON events(api, ts DESC);
 	CREATE INDEX IF NOT EXISTS events_subject_ts ON events(subject, ts DESC);
 	CREATE INDEX IF NOT EXISTS events_pinned_ts ON events(pinned, ts ASC);`,
+
+	// v2: drop the pinned column + index. They shipped ahead of any
+	// Pin API — nothing ever wrote the column and eviction never
+	// consulted it, while the --traffic-budget help promised a
+	// pin-aware retention guarantee that didn't exist. Reintroduce
+	// alongside a real Pin feature if one lands.
+	`DROP INDEX IF EXISTS events_pinned_ts;
+	ALTER TABLE events DROP COLUMN pinned;`,
 }
 
 // sqliteStore is the SQLite-backed traffic store. It does not own
@@ -80,8 +88,7 @@ func newSQLiteStore(b store.SQLBackend, opts Options) (*sqliteStore, error) {
 // Close is a no-op — the *sql.DB is owned by the store.SQLBackend.
 func (s *sqliteStore) Close() error { return nil }
 
-// Insert writes ev and runs eviction in one transaction. Pin status
-// is preserved on duplicate IDs.
+// Insert writes ev and runs eviction in one transaction.
 func (s *sqliteStore) Insert(ctx context.Context, ev Event) error {
 	payload, err := json.Marshal(ev)
 	if err != nil {

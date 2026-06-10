@@ -11,6 +11,7 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"sort"
 	"strings"
@@ -608,8 +609,9 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, r *http.Req
 	if err != nil {
 		return err
 	}
+	reqHopByHop := connectionNamedHeaders(r.Header)
 	for name, values := range r.Header {
-		if shouldStripForwarded(name) {
+		if shouldStripForwarded(name) || reqHopByHop[name] {
 			continue
 		}
 		for _, v := range values {
@@ -627,8 +629,9 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, r *http.Req
 	hook.forwarded = true
 	hook.forwardedStatus = resp.StatusCode
 
+	respHopByHop := connectionNamedHeaders(resp.Header)
 	for name, values := range resp.Header {
-		if shouldStripForwarded(name) {
+		if shouldStripForwarded(name) || respHopByHop[name] {
 			continue
 		}
 		for _, v := range values {
@@ -688,6 +691,28 @@ func applyCredentials(req *http.Request, creds auth.AccessCreds) {
 // `X-Forwarded-For: 10.0.0.1` flows through to upstream services
 // that trust those headers (cloud metadata endpoints, internal
 // admin tools), allowing an outside caller to forge the chain.
+// connectionNamedHeaders returns the canonicalised header names the
+// Connection header declares hop-by-hop (RFC 7230 §6.1: `Connection:
+// X-Foo` marks X-Foo as connection-scoped). shouldStripForwarded
+// covers the well-known set; this covers the by-declaration ones, in
+// both forward directions, matching net/http's own reverse proxy.
+func connectionNamedHeaders(h http.Header) map[string]bool {
+	var out map[string]bool
+	for _, v := range h.Values("Connection") {
+		for _, name := range strings.Split(v, ",") {
+			name = textproto.CanonicalMIMEHeaderKey(strings.TrimSpace(name))
+			if name == "" {
+				continue
+			}
+			if out == nil {
+				out = map[string]bool{}
+			}
+			out[name] = true
+		}
+	}
+	return out
+}
+
 func shouldStripForwarded(name string) bool {
 	switch strings.ToLower(name) {
 	case "host", "authorization", "content-length",

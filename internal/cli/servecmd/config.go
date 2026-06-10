@@ -244,7 +244,7 @@ func bindServeFlags(fs *pflag.FlagSet) {
 	fs.String("mitm-ca-key", "", "path to the PEM-encoded MITM CA private key")
 	fs.String("traffic-store", "none", "traffic-viewer storage backend (none|memory|sqlite); none disables capture and the query API")
 	fs.String("traffic-db", "", "path to the sqlite DB file when --traffic-store=sqlite (falls back to --store-db)")
-	fs.Int("traffic-budget", defaultTrafficBudget, "byte budget for non-pinned traffic events; older rows evict past this")
+	fs.Int("traffic-budget", defaultTrafficBudget, "byte budget for traffic events; older rows evict past this")
 	fs.Duration("traffic-max-age", defaultTrafficMaxAge, "max age of traffic events; older rows evict regardless of byte pressure")
 	fs.String("policies-store", "file", "policies storage backend (file|memory|sqlite); file uses --policies-dir. With sqlite, YAML in --policies-dir (when the dir exists) still loads at boot as a read-only seed; store edits win on name conflicts.")
 	fs.String("policies-db", "", "path to the sqlite DB file when --policies-store=sqlite (falls back to --store-db)")

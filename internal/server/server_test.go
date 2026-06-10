@@ -1234,3 +1234,50 @@ func TestAuthRequiredStill401sWithoutBearer(t *testing.T) {
 		t.Errorf("status = %d, want 401", resp.StatusCode)
 	}
 }
+
+// TestConnectionNamedHeadersAreStripped pins RFC 7230 §6.1 in both
+// directions: a header the Connection header declares hop-by-hop must
+// not cross the proxy, even though it isn't in the well-known strip
+// set.
+func TestConnectionNamedHeadersAreStripped(t *testing.T) {
+	var gotHop, gotKept string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHop = r.Header.Get("X-Hop")
+		gotKept = r.Header.Get("X-Kept")
+		w.Header().Set("Connection", "X-Resp-Hop")
+		w.Header().Set("X-Resp-Hop", "secret")
+		w.Header().Set("X-Resp-Kept", "ok")
+		_, _ = io.WriteString(w, "ok")
+	}))
+	defer upstream.Close()
+
+	rt := loadGmailRuntime(t, upstream.URL)
+	keys := mustKeys(t)
+	srv := NewServer(Dependencies{Runtime: rt, Keys: keys, HTTPClient: upstream.Client(), APIFactory: gmailFactory})
+	proxy := httptest.NewServer(srv.Router())
+	defer proxy.Close()
+
+	req, _ := http.NewRequest("GET", proxy.URL+"/gmail/v1/users/42/messages/abc", nil)
+	req.Header.Set("Authorization", "Bearer "+issueJWT(t, keys, "tok"))
+	req.Header.Set("Connection", "X-Hop")
+	req.Header.Set("X-Hop", "secret")
+	req.Header.Set("X-Kept", "ok")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if gotHop != "" {
+		t.Errorf("upstream received Connection-named header X-Hop = %q, want stripped", gotHop)
+	}
+	if gotKept != "ok" {
+		t.Errorf("upstream X-Kept = %q, want ok (ordinary headers must pass)", gotKept)
+	}
+	if v := resp.Header.Get("X-Resp-Hop"); v != "" {
+		t.Errorf("client received Connection-named response header X-Resp-Hop = %q, want stripped", v)
+	}
+	if v := resp.Header.Get("X-Resp-Kept"); v != "ok" {
+		t.Errorf("client X-Resp-Kept = %q, want ok", v)
+	}
+}
