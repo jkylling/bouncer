@@ -30,6 +30,18 @@ type Meta struct {
 	Outputs []NamedOutput
 }
 
+// UsesRequestBody reports whether any output expression can observe
+// the inbound request's body. The request expression sees only
+// `input`, so outputs are the meta's only window onto the request.
+func (m *Meta) UsesRequestBody() bool {
+	for _, o := range m.Outputs {
+		if o.Prog.UsesRequestBody() {
+			return true
+		}
+	}
+	return false
+}
+
 // NamedOutput is one output-field expression on a meta.
 type NamedOutput struct {
 	Name string

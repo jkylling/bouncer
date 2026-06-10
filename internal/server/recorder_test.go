@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jkylling/bouncer/internal/control/traffic"
 )
@@ -35,6 +36,25 @@ func (c *captureRecorder) snapshot() []traffic.Event {
 	return out
 }
 
+// waitForEvents polls until want events have been recorded or a
+// deadline passes. The proxy flushes the response to the client
+// before the deferred recorder commit runs, so request-completion
+// does not imply the event has been recorded yet.
+func (c *captureRecorder) waitForEvents(t *testing.T, want int) []traffic.Event {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		evs := c.snapshot()
+		if len(evs) == want {
+			return evs
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("captured %d events, want %d (gave up after 5s)", len(evs), want)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
 func TestRecorderCapturesPermitForwardedRequest(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusTeapot) // distinctive status
@@ -58,10 +78,7 @@ func TestRecorderCapturesPermitForwardedRequest(t *testing.T) {
 	}
 	resp.Body.Close()
 
-	events := rec.snapshot()
-	if len(events) != 1 {
-		t.Fatalf("captured %d events, want 1", len(events))
-	}
+	events := rec.waitForEvents(t, 1)
 	ev := events[0]
 	if ev.Method != "GET" || ev.API != "google.gmail" {
 		t.Errorf("event = %+v, want method GET / api gmail", ev)
@@ -100,10 +117,7 @@ func TestRecorderCapturesUnauthorized(t *testing.T) {
 	}
 	resp.Body.Close()
 
-	events := rec.snapshot()
-	if len(events) != 1 {
-		t.Fatalf("captured %d events, want 1", len(events))
-	}
+	events := rec.waitForEvents(t, 1)
 	ev := events[0]
 	if ev.Decision != traffic.DecisionError {
 		t.Errorf("decision = %q, want %q", ev.Decision, traffic.DecisionError)
@@ -147,10 +161,7 @@ func TestRecorderCapturesPolicyEvaluations(t *testing.T) {
 	}
 	resp.Body.Close()
 
-	events := rec.snapshot()
-	if len(events) != 1 {
-		t.Fatalf("captured %d events, want 1", len(events))
-	}
+	events := rec.waitForEvents(t, 1)
 	ev := events[0]
 	if ev.Decision != traffic.DecisionPermit {
 		t.Fatalf("decision = %q, want permit", ev.Decision)

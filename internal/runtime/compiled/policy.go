@@ -43,6 +43,15 @@ type Policy struct {
 // their YAML-shaped form.
 func (p *Policy) Source() models.Policy { return p.source }
 
+// UsesRequestBody reports whether any of the policy's expressions
+// (principal predicate, action predicate, condition) can observe the
+// inbound request's body.
+func (p *Policy) UsesRequestBody() bool {
+	return p.principalPred.UsesRequestBody() ||
+		p.predicate.UsesRequestBody() ||
+		p.condition.UsesRequestBody()
+}
+
 // NewPolicy compiles a policy's action predicate and condition. The
 // result field is validated first so a config typo (e.g. `result:
 // dney`) fails loudly rather than silently routing the policy to the

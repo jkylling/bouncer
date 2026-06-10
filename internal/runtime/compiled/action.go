@@ -26,6 +26,22 @@ type Action struct {
 	Binds    []BoundVariable
 }
 
+// UsesRequestBody reports whether any of the action's expressions
+// (filter or binds) can observe the inbound request's body. Folded
+// into APIRuntime.UsesRequestBody so the data plane knows whether the
+// body must be buffered for evaluation.
+func (a *Action) UsesRequestBody() bool {
+	if a.Filter != nil && a.Filter.UsesRequestBody() {
+		return true
+	}
+	for _, b := range a.Binds {
+		if b.Bind.UsesRequestBody() {
+			return true
+		}
+	}
+	return false
+}
+
 // BoundVariable carries one bind expression plus the meta it produces.
 type BoundVariable struct {
 	MetaName string // meta full name, e.g. "gmail.message"
