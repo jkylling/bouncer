@@ -112,8 +112,12 @@ func runServe(cfg *config) error {
 		PolicyStoreReadOnly: cfg.PoliciesReadOnly,
 		ProposalStore:       proposalStore,
 		UpstreamCallTimeout: cfg.UpstreamCallTimeout,
-		RefreshTTL:          cfg.RefreshTTL,
-		AdminPasswordHash:   cfg.AdminPasswordHash,
+		// The listener's WriteTimeout doubles as the per-chunk
+		// progress budget on streamed responses: each forwarded
+		// chunk pushes the write deadline out by this much.
+		StreamIdleTimeout: cfg.InboundWriteTimeout,
+		RefreshTTL:        cfg.RefreshTTL,
+		AdminPasswordHash: cfg.AdminPasswordHash,
 		// Populated only when --mitm is on; otherwise empty and the
 		// /_api/ca.crt endpoint serves 404.
 		MITMCAPath:       caDownloadPath(cfg),

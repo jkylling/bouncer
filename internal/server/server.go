@@ -55,11 +55,13 @@ const MaxRequestBodyBytes int64 = 1 << 20 // 1 MiB
 
 // Server is the HTTP handler. Use `NewServer` to construct one.
 type Server struct {
-	runtime      *runtime.Runtime
-	keys         *auth.ServerKeys
-	httpClient   *http.Client
-	apiFactory   PhysicalAPIFactory
-	oauthHandler *oauth.Handler
+	runtime       *runtime.Runtime
+	keys          *auth.ServerKeys
+	httpClient    *http.Client
+	forwardClient *http.Client
+	streamIdle    time.Duration
+	apiFactory    PhysicalAPIFactory
+	oauthHandler  *oauth.Handler
 
 	recorder          Recorder
 	trafficStore      traffic.Store
@@ -84,6 +86,21 @@ type Dependencies struct {
 	APIFactory PhysicalAPIFactory
 	RefreshTTL time.Duration
 
+	// ForwardClient services the data-plane forward path. Unlike
+	// HTTPClient (meta side calls + OAuth refresh, whose bodies are
+	// small and read in full) it must not carry a whole-exchange
+	// Client.Timeout — an upstream SSE/LLM stream legitimately
+	// outlives any per-call budget. nil falls back to HTTPClient.
+	ForwardClient *http.Client
+
+	// StreamIdleTimeout bounds the gap between successive response
+	// writes on the forward path: each streamed chunk pushes the
+	// connection's write deadline out by this much, letting an active
+	// stream outlive the listener's absolute WriteTimeout. Production
+	// wires it to the same value as the listener's WriteTimeout; zero
+	// leaves the absolute deadline in place.
+	StreamIdleTimeout time.Duration
+
 	Recorder          Recorder
 	TrafficStore      traffic.Store
 	PolicyService     *policies.Service
@@ -103,10 +120,16 @@ func NewServer(deps Dependencies) *Server {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
+	forwardClient := deps.ForwardClient
+	if forwardClient == nil {
+		forwardClient = httpClient
+	}
 	return &Server{
 		runtime:           deps.Runtime,
 		keys:              deps.Keys,
 		httpClient:        httpClient,
+		forwardClient:     forwardClient,
+		streamIdle:        deps.StreamIdleTimeout,
 		apiFactory:        deps.APIFactory,
 		oauthHandler:      oauth.New(deps.Keys, httpClient, deps.RefreshTTL),
 		recorder:          deps.Recorder,

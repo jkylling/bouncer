@@ -595,7 +595,7 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, r *http.Req
 	}
 	applyCredentials(out, creds)
 
-	resp, err := s.httpClient.Do(out)
+	resp, err := s.forwardClient.Do(out)
 	if err != nil {
 		return err
 	}
@@ -613,7 +613,7 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, r *http.Req
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
-	if _, err := io.Copy(w, resp.Body); err != nil {
+	if _, err := io.Copy(newStreamWriter(w, s.streamIdle), resp.Body); err != nil {
 		// Headers + status are already on the wire, so we cannot
 		// surface this to the client — but a stalled or truncated
 		// upstream stream should be visible to operators rather than

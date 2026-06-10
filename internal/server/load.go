@@ -50,10 +50,18 @@ type Config struct {
 	// drafts queue. Required.
 	ProposalStore proposals.Store
 
-	// UpstreamCallTimeout caps every upstream HTTP call (forward path
-	// and meta side calls share one client). Zero means "no timeout"
-	// — production wiring should always set this.
+	// UpstreamCallTimeout caps every upstream HTTP call. On the meta
+	// side-call client it bounds the whole exchange; on the forward
+	// client it bounds time-to-response-headers only, so a streaming
+	// response body (SSE, LLM token streams) is never cut mid-flight.
+	// Zero means "no timeout" — production wiring should always set
+	// this.
 	UpstreamCallTimeout time.Duration
+
+	// StreamIdleTimeout is the per-chunk write-progress budget on the
+	// forward path; see Dependencies.StreamIdleTimeout. Production
+	// wires it to the listener's WriteTimeout.
+	StreamIdleTimeout time.Duration
 
 	// RefreshTTL is the `exp` claim applied to refresh JWTs the
 	// /token handler issues when the upstream rotates the refresh
@@ -149,20 +157,37 @@ func Load(cfg *Config, keys *auth.ServerKeys) (*Server, error) {
 	// it. The spans pick up trace propagation headers automatically,
 	// so an operator who fronts bouncer with another otel-aware
 	// service sees one continuous trace.
+	//
+	// ResponseHeaderTimeout (rather than Client.Timeout) is what caps
+	// a hung upstream on the forward path: Client.Timeout covers
+	// reading the whole response body, which would cut every stream
+	// that outlives the per-call budget.
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ResponseHeaderTimeout = cfg.UpstreamCallTimeout
+	instrumented := otelhttp.NewTransport(transport)
+	// Refuse to follow redirects: a 3xx from a compromised or
+	// misconfigured upstream would otherwise drag the upstream
+	// access token (forward path) or the proxy's internal
+	// network identity (meta side calls) to whatever Location
+	// the upstream chose. Both consumers (server.forward and
+	// apiclient.HTTPAPI.Call) already surface a non-2xx response
+	// as an UpstreamError, so the only behavioural change here
+	// is that 3xx is now opaque rather than chased internally.
+	noRedirect := func(_ *http.Request, _ []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	// Meta side calls + OAuth refresh: bodies are small and read in
+	// full, so the whole exchange is bounded.
 	httpClient := &http.Client{
-		Timeout:   cfg.UpstreamCallTimeout,
-		Transport: otelhttp.NewTransport(http.DefaultTransport),
-		// Refuse to follow redirects: a 3xx from a compromised or
-		// misconfigured upstream would otherwise drag the upstream
-		// access token (forward path) or the proxy's internal
-		// network identity (meta side calls) to whatever Location
-		// the upstream chose. Both consumers (server.forward and
-		// apiclient.HTTPAPI.Call) already surface a non-2xx response
-		// as an UpstreamError, so the only behavioural change here
-		// is that 3xx is now opaque rather than chased internally.
-		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
+		Timeout:       cfg.UpstreamCallTimeout,
+		Transport:     instrumented,
+		CheckRedirect: noRedirect,
+	}
+	// Forward path: headers are bounded via the transport; the body
+	// may stream for as long as the client keeps reading.
+	forwardClient := &http.Client{
+		Transport:     instrumented,
+		CheckRedirect: noRedirect,
 	}
 	factory := func(apiName string, creds auth.AccessCreds) (compiled.PhysicalAPI, error) {
 		api := rt.API(apiName)
@@ -194,6 +219,8 @@ func Load(cfg *Config, keys *auth.ServerKeys) (*Server, error) {
 		Runtime:           rt,
 		Keys:              keys,
 		HTTPClient:        httpClient,
+		ForwardClient:     forwardClient,
+		StreamIdleTimeout: cfg.StreamIdleTimeout,
 		APIFactory:        factory,
 		RefreshTTL:        cfg.RefreshTTL,
 		Recorder:          cfg.Recorder,
