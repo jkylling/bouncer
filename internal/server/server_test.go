@@ -501,7 +501,8 @@ func TestForwardWorksWithoutAccessToken(t *testing.T) {
 // to the client (so the client knows to refresh its embedded
 // upstream credential), 503 surfaces as 502 (bad gateway from the
 // proxy's perspective), and a non-upstream eval bug surfaces as a
-// structured 403 denial with the eval detail.
+// structured 403 denial whose body stays generic — the raw CEL
+// error (meta/policy names, JSON offsets) is log-only.
 func TestUpstreamMetaErrorMaps(t *testing.T) {
 	cases := []struct {
 		name           string
@@ -556,6 +557,9 @@ func TestUpstreamMetaErrorMaps(t *testing.T) {
 				t.Fatalf("status = %d, want %d, body = %s", resp.StatusCode, tc.wantStatus, body)
 			}
 			body, _ := io.ReadAll(resp.Body)
+			if strings.Contains(string(body), "CEL exploded") {
+				t.Errorf("body = %q leaks the internal eval error; detail must stay in the logs", body)
+			}
 			if !strings.Contains(string(body), tc.wantBodyPrefix) {
 				t.Errorf("body = %q, want prefix %q", body, tc.wantBodyPrefix)
 			}

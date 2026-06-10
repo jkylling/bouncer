@@ -200,11 +200,10 @@ func (s *Server) evaluate(ctx context.Context, creds auth.AccessCreds, req *pb.R
 // handleEvalError surfaces a runtime.Evaluate failure as a structured
 // denial. Eval failures are policy-side: the request reached us,
 // matched a route, fired a policy, and the policy itself errored.
-// From the caller's view that's "denied, here's why" not "the proxy
-// crashed", so we fail closed with the API's natural denial status
-// (overridable via access_denied_status) and put the eval detail in
-// the body so a policy author can fix the broken expression.
-// Operators still get the full error logged for triage.
+// From the caller's view that's "denied" not "the proxy crashed", so
+// we fail closed with the API's natural denial status (overridable
+// via access_denied_status). The eval detail goes to the log only —
+// see classifyEvalError for why the body stays generic.
 func (s *Server) handleEvalError(ctx context.Context, w http.ResponseWriter, r *http.Request, apiName string, err error) {
 	span := trace.SpanFromContext(ctx)
 	span.RecordError(err)
@@ -224,12 +223,15 @@ func (s *Server) handleEvalError(ctx context.Context, w http.ResponseWriter, r *
 // broken — and surfaces with a status that lets the client tell
 // these apart. Anything else is a CEL eval / binding error: the
 // policy itself broke. From the caller's view that's a denial
-// (request never reached upstream), not a 500 — fail closed with
-// the eval detail so the policy author can fix the expression.
+// (request never reached upstream), not a 500 — fail closed. The
+// eval detail stays server-side (handleEvalError logs it in full):
+// CEL error strings reveal meta names, policy names, and JSON
+// offsets, which is failRequest's threat model too. A policy author
+// debugging a broken expression reads the logs or `:dryRun`.
 func classifyEvalError(err error) (int, string) {
 	var upstream *apiclient.UpstreamError
 	if !errors.As(err, &upstream) {
-		return http.StatusForbidden, fmt.Sprintf("policy evaluation error: %v", err)
+		return http.StatusForbidden, "policy evaluation error — an operator can find the full error in the server logs, or validate the policy via :dryRun"
 	}
 	switch {
 	case upstream.Status == http.StatusUnauthorized:
