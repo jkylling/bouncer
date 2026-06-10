@@ -31,6 +31,10 @@ func TestInitWritesLayout(t *testing.T) {
 	if got := len(mustReadFile(t, filepath.Join(dir, "secret.hex"))); got != 65 {
 		t.Errorf("secret.hex length = %d, want 65", got)
 	}
+	// store/ holds recorded bodies + the policy set — credential tier.
+	if got := fileMode(t, filepath.Join(dir, "store")); got != 0o700 {
+		t.Errorf("store/ mode = %o, want 0700", got)
+	}
 }
 
 // TestInitRefusesDoubleInit pins the no-clobber guard. An operator

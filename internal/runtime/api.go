@@ -389,13 +389,23 @@ func (s *policyStore) add(p *compiled.Policy) {
 }
 
 // replace upserts p by name. Returns true if a previous policy with
-// the same name was swapped out. The result-bucket may change between
-// the old and new policy (deny ↔ permit) — handled by removing from
-// whichever bucket the existing entry sits in and re-appending to the
-// new policy's bucket.
+// the same name was swapped out. A same-bucket replace swaps the slice
+// element in place: evaluation order is outcome-relevant (eval aborts
+// on the first erroring policy) and ListPolicies promises stable order
+// to diff-based clients, so editing a policy must not move it. Only a
+// result flip (deny ↔ permit) relocates the policy — removed from its
+// old bucket, appended to the new one.
 func (s *policyStore) replace(p *compiled.Policy) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	bucket := &s.permit
+	if p.Result == models.Deny {
+		bucket = &s.deny
+	}
+	if i := indexByName(*bucket, p.Name); i >= 0 {
+		(*bucket)[i] = p
+		return true
+	}
 	existed := s.removeLocked(p.Name)
 	s.appendLocked(p)
 	return existed

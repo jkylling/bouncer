@@ -337,6 +337,28 @@ func TestRuntimeFlagsPrefixOfPrefix(t *testing.T) {
 	}
 }
 
+// TestRuntimeRejectsTrailingSlashPrefix pins the load-time guard: a
+// trailing slash splits into an empty final segment, which no real
+// request path can match — the API would be silently unroutable.
+// The natural typo ("/drive/" for "/drive") must fail loud at Build.
+func TestRuntimeRejectsTrailingSlashPrefix(t *testing.T) {
+	for _, prefix := range []string{"/drive/", "/"} {
+		t.Run(prefix, func(t *testing.T) {
+			b := NewBuilder()
+			if err := b.AddAPI(&models.API{
+				Name:         "drive",
+				BaseURL:      "https://drive",
+				PathPrefixes: []string{prefix},
+			}); err != nil {
+				t.Fatalf("add api: %v", err)
+			}
+			if _, err := b.Build(); err == nil {
+				t.Fatalf("expected build error for trailing-slash prefix %q", prefix)
+			}
+		})
+	}
+}
+
 // TestRuntimeAddApiOrderIndependence verifies that an API whose
 // expressions reference another API's meta types compiles even when it
 // is added *before* the API it depends on. This is the entire reason
@@ -460,7 +482,7 @@ func TestRuntimeRejectsDuplicateAPI(t *testing.T) {
 // the same shadowing risk applies to `request`, `action`, `match`,
 // `input`, and `response`.
 func TestRuntimeRejectsReservedMetaName(t *testing.T) {
-	for _, name := range []string{"principal", "request", "action", "match", "input", "response"} {
+	for _, name := range []string{"principal", "request", "action", "match", "input", "response", "now"} {
 		t.Run(name, func(t *testing.T) {
 			b := NewBuilder()
 			api := &models.API{
@@ -480,7 +502,7 @@ func TestRuntimeRejectsReservedMetaName(t *testing.T) {
 // API register under that prefix and turns bare-name resolution
 // into a container-search-dependent precedence question.
 func TestRuntimeRejectsReservedAPIName(t *testing.T) {
-	for _, name := range []string{"principal", "request", "action", "match", "input", "response"} {
+	for _, name := range []string{"principal", "request", "action", "match", "input", "response", "now"} {
 		t.Run(name, func(t *testing.T) {
 			b := NewBuilder()
 			if err := b.AddAPI(&models.API{Name: name}); err == nil {

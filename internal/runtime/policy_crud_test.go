@@ -130,6 +130,44 @@ func TestRuntimeListPoliciesIsDenyFirst(t *testing.T) {
 	}
 }
 
+// TestRuntimeReplacePolicyKeepsPosition pins the in-place swap:
+// editing a policy must not move it within its bucket. Eval aborts on
+// the first erroring policy, so a same-bucket edit that reordered
+// evaluation could flip an unrelated request's outcome — and
+// ListPolicies promises diff-based clients a stable order.
+func TestRuntimeReplacePolicyKeepsPosition(t *testing.T) {
+	r := newRuntime(t, trivialAPI("svc"))
+	for _, name := range []string{"a", "b", "c"} {
+		if _, err := r.ReplacePolicy(ptr(policy("svc", name, models.Permit, "true"))); err != nil {
+			t.Fatalf("seed %q: %v", name, err)
+		}
+	}
+
+	if _, err := r.ReplacePolicy(ptr(policy("svc", "b", models.Permit, "false"))); err != nil {
+		t.Fatalf("edit b: %v", err)
+	}
+	var got []string
+	for _, p := range r.ListPolicies() {
+		got = append(got, p.Name)
+	}
+	if want := []string{"a", "b", "c"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("order after same-bucket edit = %v, want %v", got, want)
+	}
+
+	// A result flip is the one case that relocates: b leaves the
+	// permit bucket and lands in deny (which lists first).
+	if _, err := r.ReplacePolicy(ptr(policy("svc", "b", models.Deny, "true"))); err != nil {
+		t.Fatalf("flip b: %v", err)
+	}
+	got = nil
+	for _, p := range r.ListPolicies() {
+		got = append(got, p.Name)
+	}
+	if want := []string{"b", "a", "c"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("order after bucket flip = %v, want %v", got, want)
+	}
+}
+
 // TestRuntimeListPoliciesStableAcrossAPIs pins the
 // cross-API order is alphabetical-by-API, not Go-map-iteration. A
 // diff-based control-plane client should never see policies "move"

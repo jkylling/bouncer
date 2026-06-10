@@ -139,7 +139,11 @@ func bootstrap(dir string, opts Options, w io.Writer) error {
 	if err := os.MkdirAll(filepath.Join(abs, datadir.PoliciesDir), 0o755); err != nil {
 		return fmt.Errorf("mkdir policies: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Join(abs, datadir.StoreDir), 0o755); err != nil {
+	// store/ gets 0700: store.db holds recorded request/response
+	// bodies and the full policy set — same sensitivity tier as the
+	// 0600 credential files, and the dir mode also covers sqlite's
+	// -wal/-shm siblings regardless of the driver's file mode.
+	if err := os.MkdirAll(filepath.Join(abs, datadir.StoreDir), 0o700); err != nil {
 		return fmt.Errorf("mkdir store: %w", err)
 	}
 

@@ -404,6 +404,62 @@ func TestLoadConfigAdminPasswordRequiresInit(t *testing.T) {
 	}
 }
 
+// TestApplyDataDirRespectsEnvOverrides pins the flag/env parity
+// promise in the serve help text: a BOUNCER_* env value must survive
+// data-dir defaulting exactly like the equivalent command-line flag,
+// not get silently clobbered because fs.Changed is false for env.
+func TestApplyDataDirRespectsEnvOverrides(t *testing.T) {
+	dir := t.TempDir()
+	if err := initcmd.Bootstrap(dir, initcmd.Options{AdminPassword: "pw"}); err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+	custom := t.TempDir()
+	t.Setenv("BOUNCER_TRAFFIC_STORE", "memory")
+	t.Setenv("BOUNCER_POLICIES_DIR", custom)
+
+	cfg, err := loadConfig([]string{"--data-dir", dir})
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if cfg.TrafficStore != TrafficStoreMemory {
+		t.Errorf("TrafficStore = %q, want memory (env must win over the data-dir default)", cfg.TrafficStore)
+	}
+	if cfg.PoliciesDir != custom {
+		t.Errorf("PoliciesDir = %q, want %q (env must win over the data-dir default)", cfg.PoliciesDir, custom)
+	}
+}
+
+// TestStoreDirCreated0700 pins the store/ permissions on both
+// creation paths: store.db holds recorded bodies and the policy set,
+// so the dir gets the credential tier (0700), not the default 0755.
+func TestStoreDirCreated0700(t *testing.T) {
+	dir := t.TempDir()
+	if err := initcmd.Bootstrap(dir, initcmd.Options{AdminPassword: "pw"}); err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+	store := filepath.Join(dir, datadir.StoreDir)
+	assertMode := func(when string) {
+		t.Helper()
+		info, err := os.Stat(store)
+		if err != nil {
+			t.Fatalf("%s: stat store/: %v", when, err)
+		}
+		if got := info.Mode().Perm(); got != 0o700 {
+			t.Errorf("%s: store/ mode = %o, want 0700", when, got)
+		}
+	}
+	assertMode("after init")
+
+	// applyDataDir recreates the dir lazily when missing.
+	if err := os.RemoveAll(store); err != nil {
+		t.Fatalf("remove store/: %v", err)
+	}
+	if _, err := loadConfig([]string{"--data-dir", dir}); err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	assertMode("after applyDataDir")
+}
+
 // chdirForTest swaps cwd for the duration of t. Lets the cwd-default
 // branch in loadConfig be exercised from a deterministic dir (the
 // alternative — running tests *inside* a real data dir — would be

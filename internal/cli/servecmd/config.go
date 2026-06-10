@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -338,13 +339,13 @@ func installRequestedBundles(cfg *config) error {
 }
 
 // resolveMITMDefault is the "default-on" softening. When the
-// operator didn't set --mitm explicitly and no MITM CA is wired up
-// (no --mitm-ca-cert / no auto-derived files in --data-dir), we drop
-// MITM rather than failing validation. An explicit --mitm=true with
-// missing files still errors — that's a misconfiguration the
-// operator asked for.
+// operator didn't set --mitm explicitly (flag or BOUNCER_MITM) and no
+// MITM CA is wired up (no --mitm-ca-cert / no auto-derived files in
+// --data-dir), we drop MITM rather than failing validation. An
+// explicit --mitm=true with missing files still errors — that's a
+// misconfiguration the operator asked for.
 func resolveMITMDefault(cfg *config, fs *pflag.FlagSet) {
-	if fs.Changed("mitm") {
+	if flagOrEnvSet(fs, "mitm") {
 		return
 	}
 	if cfg.MITMCAPath == "" || cfg.MITMCAKey == "" {
@@ -376,29 +377,30 @@ func defaultDataDirFromCwd(cfg *config) {
 	}
 }
 
-// applyDataDir resolves --data-dir into the per-file flags. Any flag
-// the operator explicitly set (`fs.Changed`) wins; everything else
-// pulls from the layout written by `bouncer init`. Missing files
-// are tolerated — a half-populated dir still serves what it can.
+// applyDataDir resolves --data-dir into the per-file flags. Anything
+// the operator supplied explicitly — flag or BOUNCER_* env — wins;
+// everything else pulls from the layout written by `bouncer init`.
+// Missing files are tolerated — a half-populated dir still serves
+// what it can.
 func applyDataDir(cfg *config, fs *pflag.FlagSet) error {
 	if cfg.DataDir == "" {
 		return nil
 	}
 	l := datadir.Layout{Dir: cfg.DataDir}
-	if !fs.Changed("secret-hex") && cfg.SecretHex == "" {
+	if !flagOrEnvSet(fs, "secret-hex") && cfg.SecretHex == "" {
 		if v, err := l.ReadSecret(); err == nil {
 			cfg.SecretHex = v
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("data-dir secret.hex: %w", err)
 		}
 	}
-	if !fs.Changed("apis-dir") && datadir.Exists(l.APIs()) {
+	if !flagOrEnvSet(fs, "apis-dir") && datadir.Exists(l.APIs()) {
 		cfg.ApisDir = l.APIs()
 	}
-	if !fs.Changed("policies-dir") && datadir.Exists(l.Policies()) {
+	if !flagOrEnvSet(fs, "policies-dir") && datadir.Exists(l.Policies()) {
 		cfg.PoliciesDir = l.Policies()
 	}
-	if !fs.Changed("admin-password-hash") && cfg.AdminPasswordHash == "" {
+	if !flagOrEnvSet(fs, "admin-password-hash") && cfg.AdminPasswordHash == "" {
 		if v, err := l.ReadAdminHash(); err == nil {
 			cfg.AdminPasswordHash = v
 		} else if !errors.Is(err, os.ErrNotExist) {
@@ -408,29 +410,45 @@ func applyDataDir(cfg *config, fs *pflag.FlagSet) error {
 	// store/store.db: pull into --store-db so any domain left at its
 	// default (memory/none) gets implicitly upgraded to sqlite. The
 	// store/ subdir is created lazily — sqlite refuses to open a
-	// file under a missing parent directory.
-	if !fs.Changed("store-db") && cfg.StoreDB == "" {
-		if err := os.MkdirAll(l.Store(), 0o755); err != nil {
+	// file under a missing parent directory. 0700 because store.db
+	// holds recorded bodies and the policy set — same sensitivity
+	// tier as the 0600 credential files.
+	if !flagOrEnvSet(fs, "store-db") && cfg.StoreDB == "" {
+		if err := os.MkdirAll(l.Store(), 0o700); err != nil {
 			return fmt.Errorf("data-dir store/: %w", err)
 		}
 		cfg.StoreDB = l.StoreDB()
-		if !fs.Changed("traffic-store") {
+		if !flagOrEnvSet(fs, "traffic-store") {
 			cfg.TrafficStore = TrafficStoreSqlite
 		}
-		if !fs.Changed("policies-store") {
+		if !flagOrEnvSet(fs, "policies-store") {
 			cfg.PoliciesStore = PoliciesStoreSqlite
 		}
-		if !fs.Changed("proposals-store") {
+		if !flagOrEnvSet(fs, "proposals-store") {
 			cfg.ProposalsStore = ProposalsStoreSqlite
 		}
 	}
-	if !fs.Changed("mitm-ca-cert") && datadir.Exists(l.MITMCert()) {
+	if !flagOrEnvSet(fs, "mitm-ca-cert") && datadir.Exists(l.MITMCert()) {
 		cfg.MITMCAPath = l.MITMCert()
 	}
-	if !fs.Changed("mitm-ca-key") && datadir.Exists(l.MITMKey()) {
+	if !flagOrEnvSet(fs, "mitm-ca-key") && datadir.Exists(l.MITMKey()) {
 		cfg.MITMCAKey = l.MITMKey()
 	}
 	return nil
+}
+
+// flagOrEnvSet reports whether the operator supplied the flag
+// explicitly — on the command line (fs.Changed) or via its
+// BOUNCER_<UPPER_SNAKE> env equivalent. The serve help text promises
+// flag/env parity, so the data-dir defaulting must treat both as "the
+// operator said so"; fs.Changed alone silently clobbers env values.
+func flagOrEnvSet(fs *pflag.FlagSet, name string) bool {
+	if fs.Changed(name) {
+		return true
+	}
+	env := cliconfig.EnvPrefix + "_" + strings.ToUpper(strings.ReplaceAll(name, "-", "_"))
+	_, ok := os.LookupEnv(env)
+	return ok
 }
 
 // validate enforces cross-field invariants viper's per-key getters

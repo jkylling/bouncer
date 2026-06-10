@@ -86,6 +86,7 @@ var reservedTopLevelCEL = map[string]struct{}{
 	"match":     {},
 	"input":     {},
 	"response":  {},
+	"now":       {},
 }
 
 // Build compiles every registered API in two passes (metas first, then
@@ -188,8 +189,11 @@ func (r *Runtime) AddPolicy(policy *models.Policy) error {
 }
 
 // ReplacePolicy upserts a policy: if a policy with the same (api, name)
-// already exists, its compiled form is swapped in place; otherwise the
-// policy is appended. Compile errors leave the runtime untouched.
+// already exists, its compiled form is swapped in place — evaluation
+// and ListPolicies order are stable across edits unless the edit flips
+// the result (deny ↔ permit), which moves the policy to the end of its
+// new bucket. A new policy is appended. Compile errors leave the
+// runtime untouched.
 //
 // The returned bool reports whether a previous policy was replaced —
 // callers that distinguish create from update (e.g. CRUD endpoints
@@ -413,6 +417,12 @@ func buildPrefixRoutes(pending []pendingAPI) ([]prefixRoute, error) {
 		for _, raw := range p.spec.PathPrefixes {
 			if raw == "" || !strings.HasPrefix(raw, "/") {
 				return nil, fmt.Errorf("api %q: path_prefix %q must start with %q", p.spec.Name, raw, "/")
+			}
+			// A trailing slash produces an empty final segment, which
+			// would require the request's matching segment to be empty
+			// too — silently unroutable. Fail loud at load instead.
+			if strings.HasSuffix(raw, "/") {
+				return nil, fmt.Errorf("api %q: path_prefix %q must not end with %q", p.spec.Name, raw, "/")
 			}
 			segs := compiled.SplitPath(raw)
 			if len(segs) == 0 {
