@@ -8,23 +8,32 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jkylling/bouncer/internal/control/traffic"
 )
 
 // captureRecorder is a tiny in-process Recorder that lets tests
-// inspect the events the server hands to the recorder hook. Channel-
-// less so a single Record-then-assert in a test stays linear without
-// goroutine bookkeeping.
+// inspect the events the server hands to the recorder hook. Record
+// signals recorded so tests can block on the commit itself: the proxy
+// flushes the response to the client before the handler's deferred
+// commit runs, so request-completion does not imply the event has
+// been recorded yet.
 type captureRecorder struct {
-	mu     sync.Mutex
-	events []traffic.Event
+	mu       sync.Mutex
+	events   []traffic.Event
+	recorded chan struct{}
+}
+
+func newCaptureRecorder() *captureRecorder {
+	return &captureRecorder{recorded: make(chan struct{}, 16)}
 }
 
 func (c *captureRecorder) Record(_ context.Context, ev traffic.Event) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.events = append(c.events, ev)
+	c.mu.Unlock()
+	c.recorded <- struct{}{}
 }
 
 func (c *captureRecorder) snapshot() []traffic.Event {
@@ -33,6 +42,26 @@ func (c *captureRecorder) snapshot() []traffic.Event {
 	out := make([]traffic.Event, len(c.events))
 	copy(out, c.events)
 	return out
+}
+
+// wait blocks until want events have been recorded and returns them.
+// The timeout is a failure guard, not a poll interval — the happy
+// path wakes on the Record signal itself.
+func (c *captureRecorder) wait(t *testing.T, want int) []traffic.Event {
+	t.Helper()
+	guard := time.After(5 * time.Second)
+	for range want {
+		select {
+		case <-c.recorded:
+		case <-guard:
+			t.Fatalf("recorded %d events, want %d", len(c.snapshot()), want)
+		}
+	}
+	events := c.snapshot()
+	if len(events) != want {
+		t.Fatalf("recorded %d events, want exactly %d", len(events), want)
+	}
+	return events
 }
 
 func TestRecorderCapturesPermitForwardedRequest(t *testing.T) {
@@ -44,7 +73,7 @@ func TestRecorderCapturesPermitForwardedRequest(t *testing.T) {
 
 	rt := loadGmailRuntime(t, upstream.URL)
 	keys := mustKeys(t)
-	rec := &captureRecorder{}
+	rec := newCaptureRecorder()
 	srv := NewServer(Dependencies{Runtime: rt, Keys: keys, HTTPClient: upstream.Client(), APIFactory: gmailFactory, Recorder: rec})
 	proxy := httptest.NewServer(srv.Router())
 	defer proxy.Close()
@@ -58,10 +87,7 @@ func TestRecorderCapturesPermitForwardedRequest(t *testing.T) {
 	}
 	resp.Body.Close()
 
-	events := rec.snapshot()
-	if len(events) != 1 {
-		t.Fatalf("captured %d events, want 1", len(events))
-	}
+	events := rec.wait(t, 1)
 	ev := events[0]
 	if ev.Method != "GET" || ev.API != "google.gmail" {
 		t.Errorf("event = %+v, want method GET / api gmail", ev)
@@ -89,7 +115,7 @@ func TestRecorderCapturesPermitForwardedRequest(t *testing.T) {
 func TestRecorderCapturesUnauthorized(t *testing.T) {
 	rt := loadGmailRuntime(t, "")
 	keys := mustKeys(t)
-	rec := &captureRecorder{}
+	rec := newCaptureRecorder()
 	srv := NewServer(Dependencies{Runtime: rt, Keys: keys, APIFactory: gmailFactory, Recorder: rec})
 	proxy := httptest.NewServer(srv.Router())
 	defer proxy.Close()
@@ -100,10 +126,7 @@ func TestRecorderCapturesUnauthorized(t *testing.T) {
 	}
 	resp.Body.Close()
 
-	events := rec.snapshot()
-	if len(events) != 1 {
-		t.Fatalf("captured %d events, want 1", len(events))
-	}
+	events := rec.wait(t, 1)
 	ev := events[0]
 	if ev.Decision != traffic.DecisionError {
 		t.Errorf("decision = %q, want %q", ev.Decision, traffic.DecisionError)
@@ -133,7 +156,7 @@ func TestRecorderCapturesPolicyEvaluations(t *testing.T) {
 
 	rt := loadGmailRuntime(t, upstream.URL)
 	keys := mustKeys(t)
-	rec := &captureRecorder{}
+	rec := newCaptureRecorder()
 	srv := NewServer(Dependencies{Runtime: rt, Keys: keys, HTTPClient: upstream.Client(), APIFactory: gmailFactory, Recorder: rec})
 	proxy := httptest.NewServer(srv.Router())
 	defer proxy.Close()
@@ -147,10 +170,7 @@ func TestRecorderCapturesPolicyEvaluations(t *testing.T) {
 	}
 	resp.Body.Close()
 
-	events := rec.snapshot()
-	if len(events) != 1 {
-		t.Fatalf("captured %d events, want 1", len(events))
-	}
+	events := rec.wait(t, 1)
 	ev := events[0]
 	if ev.Decision != traffic.DecisionPermit {
 		t.Fatalf("decision = %q, want permit", ev.Decision)

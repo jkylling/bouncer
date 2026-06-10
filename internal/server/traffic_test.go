@@ -27,25 +27,34 @@ func adminBearer(t *testing.T, keys *auth.ServerKeys) string {
 	return "Bearer " + tok
 }
 
-// waitForRows polls the store until it holds want rows or a deadline
-// passes. The proxy flushes the response to the client before the
-// deferred recorder commit runs, so request-completion does not imply
-// the event has landed in the store.
-func waitForRows(t *testing.T, s traffic.Store, want int) []traffic.Summary {
+// notifyingRecorder wraps a Recorder and signals every Record call.
+// The proxy flushes the response to the client before the handler's
+// deferred recorder commit runs, so a test can't treat
+// request-completion as commit-completion; blocking on the Record
+// signal and then draining the inner AsyncRecorder via Close() makes
+// the store contents deterministic without polling.
+type notifyingRecorder struct {
+	inner    Recorder
+	recorded chan struct{}
+}
+
+func newNotifyingRecorder(inner Recorder) *notifyingRecorder {
+	return &notifyingRecorder{inner: inner, recorded: make(chan struct{}, 16)}
+}
+
+func (n *notifyingRecorder) Record(ctx context.Context, ev traffic.Event) {
+	n.inner.Record(ctx, ev)
+	n.recorded <- struct{}{}
+}
+
+// wait blocks until one Record call has happened. The timeout is a
+// failure guard, not a poll interval.
+func (n *notifyingRecorder) wait(t *testing.T) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		rows, _, err := s.List(context.Background(), traffic.ListOpts{})
-		if err != nil {
-			t.Fatalf("list: %v", err)
-		}
-		if len(rows) == want {
-			return rows
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("rows = %d, want %d (gave up after 5s)", len(rows), want)
-		}
-		time.Sleep(5 * time.Millisecond)
+	select {
+	case <-n.recorded:
+	case <-time.After(5 * time.Second):
+		t.Fatal("recorder was never invoked")
 	}
 }
 
@@ -66,13 +75,14 @@ func TestTrafficEndToEndCaptureAndQuery(t *testing.T) {
 	defer s.Close()
 	rec := traffic.NewAsyncRecorder(s, traffic.RecorderOptions{})
 	defer rec.Close()
+	nrec := newNotifyingRecorder(rec)
 
 	srv := NewServer(Dependencies{
 		Runtime:      rt,
 		Keys:         keys,
 		HTTPClient:   upstream.Client(),
 		APIFactory:   gmailFactory,
-		Recorder:     rec,
+		Recorder:     nrec,
 		TrafficStore: s,
 	})
 
@@ -89,9 +99,12 @@ func TestTrafficEndToEndCaptureAndQuery(t *testing.T) {
 	}
 	resp.Body.Close()
 
-	// AsyncRecorder runs on its own goroutine; wait for the event to
-	// land before asserting on the query surface.
-	waitForRows(t, s, 1)
+	// Wait for the deferred commit to hand the event to the
+	// AsyncRecorder, then drain its writer goroutine into the store.
+	nrec.wait(t)
+	if err := rec.Close(); err != nil {
+		t.Fatalf("rec close: %v", err)
+	}
 
 	// List rows via the admin endpoint.
 	listReq, _ := http.NewRequest(http.MethodGet, proxy.URL+admin.TrafficListPath, nil)
@@ -217,12 +230,13 @@ func TestTrafficCaptureLatency(t *testing.T) {
 	s := traffic.NewMemoryStore(traffic.Options{})
 	defer s.Close()
 	rec := traffic.NewAsyncRecorder(s, traffic.RecorderOptions{})
+	nrec := newNotifyingRecorder(rec)
 	srv := NewServer(Dependencies{
 		Runtime:    rt,
 		Keys:       keys,
 		HTTPClient: upstream.Client(),
 		APIFactory: gmailFactory,
-		Recorder:   rec,
+		Recorder:   nrec,
 	})
 
 	proxy := httptest.NewServer(srv.Router())
@@ -233,8 +247,13 @@ func TestTrafficCaptureLatency(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+jwt)
 	resp, _ := http.DefaultClient.Do(req)
 	resp.Body.Close()
+	nrec.wait(t)
+	rec.Close()
 
-	rows := waitForRows(t, s, 1)
+	rows, _, _ := s.List(context.Background(), traffic.ListOpts{})
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rows))
+	}
 	if rows[0].LatencyMS < 1 {
 		t.Errorf("LatencyMS = %d, want >= 1 (upstream slept 2ms)", rows[0].LatencyMS)
 	}
