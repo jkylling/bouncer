@@ -2,6 +2,7 @@ package compiled
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 
 	pb "github.com/jkylling/bouncer/internal/pb"
@@ -33,9 +34,10 @@ import (
 //     as `values:batchGet` (literal) and bare `messages:send`. An empty
 //     literal segment in the template only matches an empty segment in
 //     the request.
-//   - Captured values are the *decoded* bytes that `net/http` already
-//     produced from `r.URL.Path`. So a segment encoded as `al%2Fice`
-//     arrives as `al/ice` in the capture.
+//   - Captured values are decoded per segment (see SplitEscapedPath):
+//     the server splits the *escaped* path first and then decodes each
+//     segment, so a segment encoded as `al%2Fice` arrives as `al/ice`
+//     in the capture — one segment with a literal slash, not two.
 //
 // Mixed segments like `{id}:enable` are intentionally not supported in
 // this version — actions targeting those continue to use a `filter:`
@@ -118,11 +120,33 @@ func (t *PathTemplate) Match(req *pb.Request) (map[string]string, bool) {
 	return params, true
 }
 
+// SplitEscapedPath splits a percent-encoded URL path (as returned by
+// url.URL.EscapedPath) into decoded segments. Splitting happens
+// *before* decoding, so an encoded slash stays inside its segment —
+// `/users/al%2Fice` → ["users", "al/ice"] — instead of becoming a
+// separator the way it already has in the pre-decoded r.URL.Path.
+// Empty segments are preserved, mirroring SplitPath.
+//
+// A segment that fails to decode (a malformed escape) returns an
+// error; the caller should fail the request rather than match
+// policies against bytes the upstream may interpret differently.
+func SplitEscapedPath(escaped string) ([]string, error) {
+	segs := SplitPath(escaped)
+	for i, s := range segs {
+		dec, err := url.PathUnescape(s)
+		if err != nil {
+			return nil, fmt.Errorf("path segment %d: %w", i, err)
+		}
+		segs[i] = dec
+	}
+	return segs, nil
+}
+
 // SplitPath splits a URL path on `/` after stripping a single leading
-// `/`, preserving empty segments. Used by both path-template parsing
-// and request-side `path_segments` building so policies see exactly the
-// segments the matcher uses, and the proxy's view of the path mirrors
-// what the upstream sees byte-for-byte.
+// `/`, preserving empty segments. Used for path-template parsing and
+// route-prefix parsing (config-side strings, never percent-encoded).
+// Request paths go through SplitEscapedPath instead, so an encoded
+// slash cannot change the segment count.
 //
 // Examples:
 //

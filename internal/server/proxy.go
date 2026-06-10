@@ -48,11 +48,23 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	hook := s.newRecorderHook(r)
 	defer hook.commit(ctx)
 
+	// Split the *escaped* path once and reuse the segments for both
+	// routing and the policy request: decoding per segment keeps an
+	// encoded slash (%2F) inside its segment, so it cannot change the
+	// segment count anywhere matching happens. A malformed escape
+	// fails the request before any matching runs.
+	pathSegs, err := compiled.SplitEscapedPath(r.URL.EscapedPath())
+	if err != nil {
+		hook.errMsg = err.Error()
+		failRequest(ctx, w, r, http.StatusBadRequest, "bad request", "parse path", err)
+		return
+	}
+
 	// Route the path → API up front so a per-API access_denied_status
 	// override applies even on the 401 path (where Evaluate hasn't
 	// run yet). Empty apiName means no API claimed the prefix —
 	// 401/404 fall through to natural defaults in that case.
-	matchedAPI := s.runtime.APIForPath(r.URL.Path)
+	matchedAPI := s.runtime.APIForSegments(pathSegs)
 
 	tok, anonymous, err := s.authenticateOrAnonymous(ctx, r, matchedAPI)
 	if err != nil {
@@ -103,7 +115,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = r.Body.Close()
 
-	policyReq, err := buildPolicyRequest(r, bodyBytes)
+	policyReq, err := buildPolicyRequest(r, pathSegs, bodyBytes)
 	if err != nil {
 		hook.errMsg = err.Error()
 		failRequest(ctx, w, r, http.StatusBadRequest, "bad request", "parse body", err)
@@ -386,8 +398,13 @@ func buildPrincipal(subject string, anonymous bool) *pb.Principal {
 	}
 }
 
-func buildPolicyRequest(r *http.Request, body []byte) (*pb.Request, error) {
-	segs := compiled.SplitPath(r.URL.Path)
+// buildPolicyRequest assembles the pb.Request policies evaluate
+// against. pathSegs carries the per-segment-decoded path (see
+// compiled.SplitEscapedPath) so templates and `path_segments` are
+// %2F-safe; the flat `path` field stays the fully decoded string —
+// fine for prefix checks, but slash-in-segment matching belongs on
+// the segments.
+func buildPolicyRequest(r *http.Request, pathSegs []string, body []byte) (*pb.Request, error) {
 	values := r.URL.Query()
 	keys := make([]string, 0, len(values))
 	for k := range values {
@@ -407,7 +424,7 @@ func buildPolicyRequest(r *http.Request, body []byte) (*pb.Request, error) {
 	return &pb.Request{
 		Method:       strings.ToUpper(r.Method),
 		Path:         r.URL.Path,
-		PathSegments: segs,
+		PathSegments: pathSegs,
 		Query:        q,
 		Body:         pbBody,
 	}, nil
@@ -575,7 +592,11 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, r *http.Req
 	ctx, span := otel.Tracer(tracerName).Start(ctx, "proxy.forward")
 	defer span.End()
 
-	target, err := apiclient.JoinPath(baseURL, r.URL.Path)
+	// EscapedPath, not Path: the upstream must receive the client's
+	// original bytes. The decoded Path would turn an encoded slash
+	// (%2F in a Drive file ID, a GCS object name) into a real
+	// separator. JoinPath preserves the escapes via RawPath.
+	target, err := apiclient.JoinPath(baseURL, r.URL.EscapedPath())
 	if err != nil {
 		return err
 	}

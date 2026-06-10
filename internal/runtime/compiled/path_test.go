@@ -154,3 +154,40 @@ func contains(s, sub string) bool {
 	}
 	return false
 }
+
+// TestSplitEscapedPath pins the %2F contract: splitting happens on
+// the escaped bytes, decoding per segment, so an encoded slash stays
+// inside its segment instead of becoming a separator.
+func TestSplitEscapedPath(t *testing.T) {
+	cases := []struct {
+		escaped string
+		want    []string
+	}{
+		{"/users/me", []string{"users", "me"}},
+		{"/users/al%2Fice", []string{"users", "al/ice"}},
+		{"/files/a%2Fb%2Fc", []string{"files", "a/b/c"}},
+		{"/users//me", []string{"users", "", "me"}},
+		{"/sp%20ace", []string{"sp ace"}},
+		{"/", nil},
+		{"", nil},
+	}
+	for _, tc := range cases {
+		got, err := SplitEscapedPath(tc.escaped)
+		if err != nil {
+			t.Errorf("SplitEscapedPath(%q): %v", tc.escaped, err)
+			continue
+		}
+		if !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("SplitEscapedPath(%q) = %v, want %v", tc.escaped, got, tc.want)
+		}
+	}
+}
+
+// TestSplitEscapedPathRejectsBadEscape pins the fail-loud branch: a
+// malformed escape must error rather than silently match policies
+// against bytes the upstream may decode differently.
+func TestSplitEscapedPathRejectsBadEscape(t *testing.T) {
+	if _, err := SplitEscapedPath("/users/a%zz"); err == nil {
+		t.Fatal("expected error for malformed escape")
+	}
+}

@@ -323,6 +323,14 @@ func (r *Runtime) APIForPath(path string) string {
 	return r.routeRequest(&pb.Request{PathSegments: compiled.SplitPath(path)})
 }
 
+// APIForSegments is APIForPath for callers that already hold the
+// request's decoded path segments (the data plane builds them once
+// via compiled.SplitEscapedPath and reuses them for routing and the
+// policy request, so both see identical segment boundaries).
+func (r *Runtime) APIForSegments(segs []string) string {
+	return r.routeRequest(&pb.Request{PathSegments: segs})
+}
+
 // MatchedActions reports which action names fire on req, scoped to
 // the API its path-prefix routes to. Returns "" / nil when no API
 // claims the path. Used by the data plane to enrich a deny body
