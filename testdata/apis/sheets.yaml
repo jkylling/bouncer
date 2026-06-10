@@ -74,8 +74,6 @@ meta:
   - name: range
   request: get('/v4/spreadsheets/' + string(input.spreadsheet) + '/values/' + string(input.range))
   output:
-  - name: range
-    expr: response.body.range
   - name: majorDimension
     expr: response.body.?majorDimension
   - name: values
