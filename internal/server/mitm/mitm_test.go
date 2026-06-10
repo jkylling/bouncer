@@ -1,9 +1,11 @@
 package mitm
 
 import (
+	"bufio"
 	"crypto/tls"
 	"crypto/x509"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -303,48 +305,82 @@ func TestConnectInnerErrorPropagates(t *testing.T) {
 	}
 }
 
-// TestTunnelClosesBeforeCertExpiry: a long-lived CONNECT tunnel must be
-// torn down before the leaf cert expires. Without this, a keep-alive
-// tunnel outlasts the 24h leaf and reconnecting clients see an expired
-// cert from the stale TLS session.
+// TestTunnelClosesBeforeCertExpiry: a long-lived CONNECT tunnel must
+// be torn down before the leaf cert expires. Without this, a
+// keep-alive tunnel outlasts the 24h leaf and reconnecting clients
+// see an expired cert from the stale TLS session.
+//
+// The expiry timer is injected (Handler.newTimer) so the test drives
+// the teardown event-style: establish a tunnel, prove it serves, fire
+// the timer, and observe the server closing the connection via a
+// blocked Read — no real TTL is slept out. The deadline arithmetic
+// (LeafTTL - ExpiryMargin) is pinned separately by asserting the
+// duration handed to the timer.
 func TestTunnelClosesBeforeCertExpiry(t *testing.T) {
 	ca, caCertPEM := mustCA(t)
-	ca.LeafTTL = 3 * time.Second
-	ca.ExpiryMargin = 1 * time.Second
+	ca.LeafTTL = time.Hour
+	ca.ExpiryMargin = 10 * time.Minute
 
 	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(204)
 	})
-	proxy := httptest.NewServer(New(ca, inner, Options{}))
+	h := New(ca, inner, Options{})
+	expire := make(chan time.Time)
+	var timerDelay atomic.Int64
+	h.newTimer = func(d time.Duration) (<-chan time.Time, func() bool) {
+		timerDelay.Store(int64(d))
+		return expire, func() bool { return true }
+	}
+	proxy := httptest.NewServer(h)
 	defer proxy.Close()
 
-	client := proxyClient(t, proxy.URL, caCertPEM)
-	var handshakes atomic.Int32
-	tr := client.Transport.(*http.Transport).Clone()
-	tr.TLSClientConfig.VerifyPeerCertificate = func(_ [][]byte, _ [][]*x509.Certificate) error {
-		handshakes.Add(1)
-		return nil
-	}
-	client.Transport = tr
-
-	resp, err := client.Get("https://example.com/1")
+	// Raw CONNECT + TLS so the test owns the tunnel connection and
+	// can watch it close.
+	conn, err := net.Dial("tcp", strings.TrimPrefix(proxy.URL, "http://"))
 	if err != nil {
-		t.Fatalf("request 1: %v", err)
+		t.Fatalf("dial proxy: %v", err)
 	}
-	resp.Body.Close()
-	if got := handshakes.Load(); got != 1 {
-		t.Fatalf("handshakes after req 1 = %d, want 1", got)
+	defer conn.Close()
+	if _, err := io.WriteString(conn, "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n"); err != nil {
+		t.Fatalf("write CONNECT: %v", err)
+	}
+	br := bufio.NewReader(conn)
+	ack, err := http.ReadResponse(br, &http.Request{Method: http.MethodConnect})
+	if err != nil || ack.StatusCode != 200 {
+		t.Fatalf("CONNECT ack: status=%v err=%v", ack, err)
 	}
 
-	// Deadline is LeafTTL - ExpiryMargin = 2s. Sleep well past it.
-	time.Sleep(3 * time.Second)
-
-	resp, err = client.Get("https://example.com/2")
-	if err != nil {
-		t.Fatalf("request 2: %v", err)
+	pool := x509.NewCertPool()
+	pool.AppendCertsFromPEM(caCertPEM)
+	tlsConn := tls.Client(conn, &tls.Config{ServerName: "example.com", RootCAs: pool})
+	if err := tlsConn.Handshake(); err != nil {
+		t.Fatalf("tls handshake: %v", err)
 	}
-	resp.Body.Close()
-	if got := handshakes.Load(); got < 2 {
-		t.Errorf("handshakes after req 2 = %d, want >= 2 (tunnel should have been closed)", got)
+
+	// The tunnel serves before the expiry fires.
+	if _, err := io.WriteString(tlsConn, "GET /1 HTTP/1.1\r\nHost: example.com\r\n\r\n"); err != nil {
+		t.Fatalf("write request: %v", err)
+	}
+	tbr := bufio.NewReader(tlsConn)
+	resp, err := http.ReadResponse(tbr, nil)
+	if err != nil || resp.StatusCode != 204 {
+		t.Fatalf("tunnel request: status=%v err=%v", resp, err)
+	}
+
+	// The teardown deadline handed to the timer is TTL minus margin
+	// (give or take the issuance instant).
+	if d := time.Duration(timerDelay.Load()); d <= 40*time.Minute || d > 50*time.Minute {
+		t.Errorf("timer delay = %v, want ~LeafTTL-ExpiryMargin (50m)", d)
+	}
+
+	// Fire the expiry. The server must close the tunnel; the blocked
+	// Read observes it. The read deadline is a failure guard, not a
+	// poll interval.
+	expire <- time.Time{}
+	_ = tlsConn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if _, err := tbr.ReadByte(); err == nil {
+		t.Fatal("tunnel still serving after expiry fired; want server-side close")
+	} else if ne, ok := err.(net.Error); ok && ne.Timeout() {
+		t.Fatal("read timed out: tunnel was not closed when the expiry timer fired")
 	}
 }

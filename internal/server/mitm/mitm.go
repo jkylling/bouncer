@@ -39,6 +39,12 @@ type Handler struct {
 	inner             http.Handler
 	idleTimeout       time.Duration
 	readHeaderTimeout time.Duration
+
+	// newTimer returns a channel that fires after d plus a stop
+	// function. Defaults to time.NewTimer; tests swap it so the
+	// leaf-expiry tunnel teardown can be driven event-style instead
+	// of sleeping out a real TTL.
+	newTimer func(d time.Duration) (<-chan time.Time, func() bool)
 }
 
 // Options carry per-listener knobs for New. Zero values pick defaults.
@@ -59,6 +65,10 @@ func New(ca *CA, inner http.Handler, opts Options) *Handler {
 		inner:             inner,
 		idleTimeout:       opts.IdleTimeout,
 		readHeaderTimeout: opts.ReadHeaderTimeout,
+		newTimer: func(d time.Duration) (<-chan time.Time, func() bool) {
+			t := time.NewTimer(d)
+			return t.C, t.Stop
+		},
 	}
 }
 
@@ -172,14 +182,14 @@ func (h *Handler) serveConnect(w http.ResponseWriter, r *http.Request) {
 	if !leafNotAfter.IsZero() {
 		remaining := time.Until(leafNotAfter.Add(-h.ca.effectiveMargin()))
 		if remaining > 0 {
-			timer := time.NewTimer(remaining)
+			fire, stop := h.newTimer(remaining)
 			go func() {
 				select {
-				case <-timer.C:
+				case <-fire:
 					slog.DebugContext(tunnelCtx, "mitm tunnel closing: leaf cert approaching expiry", "host", host)
 					conn.Close()
 				case <-tunnelDone:
-					timer.Stop()
+					stop()
 				}
 			}()
 		}
