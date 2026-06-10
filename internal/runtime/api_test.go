@@ -37,12 +37,13 @@ func loadAPIs(t *testing.T) []models.API {
 	return apis
 }
 
-// loadCrossApiRuntime builds a multi-API Runtime with every bundled API
-// loaded into a shared registry, so cross-API binds (e.g. a sheets
+// buildCrossApiRuntime compiles every bundled API into one Runtime
+// (shared registry, no policies), so cross-API binds (e.g. a sheets
 // action that constructs `drive.file{...}`) resolve at compile time.
-// Returns the APIRuntime for the named API with the given policies
-// registered.
-func loadCrossApiRuntime(t *testing.T, apiName string, policies []models.Policy) *APIRuntime {
+// The build is the expensive part — full CEL env + program
+// compilation across five APIs — so tests that loop over many
+// samples build once and vary the policy set via the hot-reload API.
+func buildCrossApiRuntime(t *testing.T) *Runtime {
 	t.Helper()
 	b := NewBuilder()
 	apis := loadAPIs(t)
@@ -55,6 +56,14 @@ func loadCrossApiRuntime(t *testing.T, apiName string, policies []models.Policy)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
+	return rt
+}
+
+// loadCrossApiRuntime is buildCrossApiRuntime plus the given policies,
+// returning the APIRuntime view for the named API.
+func loadCrossApiRuntime(t *testing.T, apiName string, policies []models.Policy) *APIRuntime {
+	t.Helper()
+	rt := buildCrossApiRuntime(t)
 	for i := range policies {
 		if err := rt.AddPolicy(&policies[i]); err != nil {
 			t.Fatalf("AddPolicy %q: %v", policies[i].Name, err)

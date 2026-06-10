@@ -332,11 +332,28 @@ func TestEveryDeclaredActionHasASample(t *testing.T) {
 }
 
 func TestEverySampleRoutesAndPermits(t *testing.T) {
+	// One shared runtime for every sample; the per-sample state is
+	// the single permit policy, added and removed through the public
+	// hot-reload API. Rebuilding the full five-API CEL runtime per
+	// sample (~200×) used to dominate the unit suite's wall clock.
+	rt := buildCrossApiRuntime(t)
 	for _, group := range allSamples() {
+		api := rt.API(group.api)
+		if api == nil {
+			t.Fatalf("api %q not found", group.api)
+		}
 		for _, s := range group.samples {
 			t.Run(group.api+"/"+s.action, func(t *testing.T) {
-				rt := loadCrossApiRuntime(t, group.api, []models.Policy{permitAll(group.api, s.action)})
-				got, err := rt.Evaluate(t.Context(), constantResolver(unusedAPI{}), sampleRequest(s), stubPrincipal())
+				p := permitAll(group.api, s.action)
+				if err := rt.AddPolicy(&p); err != nil {
+					t.Fatalf("AddPolicy %q: %v", p.Name, err)
+				}
+				defer func() {
+					if _, err := rt.RemovePolicy(group.api, p.Name); err != nil {
+						t.Fatalf("RemovePolicy %q: %v", p.Name, err)
+					}
+				}()
+				got, err := api.Evaluate(t.Context(), constantResolver(unusedAPI{}), sampleRequest(s), stubPrincipal())
 				if err != nil {
 					t.Fatalf("evaluate %s::%s (%s %s): %v", group.api, s.action, s.method, s.path, err)
 				}
@@ -349,10 +366,16 @@ func TestEverySampleRoutesAndPermits(t *testing.T) {
 }
 
 func TestEverySampleDeniesWhenNoPolicy(t *testing.T) {
+	// Policy-less evaluation is read-only, so a single runtime
+	// serves every sample.
+	rt := buildCrossApiRuntime(t)
 	for _, group := range allSamples() {
+		api := rt.API(group.api)
+		if api == nil {
+			t.Fatalf("api %q not found", group.api)
+		}
 		for _, s := range group.samples {
-			rt := loadCrossApiRuntime(t, group.api, nil)
-			got, err := rt.Evaluate(t.Context(), constantResolver(unusedAPI{}), sampleRequest(s), stubPrincipal())
+			got, err := api.Evaluate(t.Context(), constantResolver(unusedAPI{}), sampleRequest(s), stubPrincipal())
 			if err != nil {
 				t.Fatalf("evaluate %s::%s (%s %s): %v", group.api, s.action, s.method, s.path, err)
 			}
