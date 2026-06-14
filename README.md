@@ -1,13 +1,8 @@
 # bouncer
 
-Bouncer is an access control proxy for AI agents using APIs. It is a drop-in proxy that lets you grant agents narrow, policy controlled access to APIs without modifying the API or the agent. For example, you can let an agent only read or send emails with a specific label to a specific sender, or call a payments API only for amounts under $100, without modifying Gmail or Stripe. Bouncer constrains AI agents so they can be used more freely:
-- The policy language is [Common Expression Language (CEL)](https://cel.dev/) reviewable by humans and easy to one-shot for AI agents. The policy language doubles as an API modeling language, and allows for looking up additional metadata when evaluating access control. See [here for an example API model](https://github.com/jkylling/bouncer-gws/blob/main/apis/gmail.yaml) and [here for an example policy](https://github.com/jkylling/bouncer-gws/blob/main/policies/agent-owned-mail.yaml). Both policy and API models are declarative and fail closed on modelling errors or evaluation errors. You can vibe configure and trust that you don't give excessive access.
-- Instead of giving your access token or API key to your AI-agent you give it a bouncer proxy token/key, which works transparently with most clients. This makes it impossible to bypass the proxy, and your policies limit the blast radius of what the agent can do.
-
-## Motivation
-
-I've been wanting to give Claude Code access to my gmail inbox for a long time. I don't want the agent to be able to read and write all my email, that's only for me (and Google), but a subset is okay. So I don't grant access. I've pasted too many API keys into Claude Code while praying for my prompting to be strict enough. When I talk to friends, they complain about the same problems. In the tech news I read about Meta's director of AI Alignment who had [her inbox deleted by OpenClaw](https://x.com/summeryue0/status/2025774069124399363). Or how Vercel was hacked, starting with an [AI integration with access to an employee's Google Workspace account](https://vercel.com/kb/bulletin/vercel-april-2026-security-incident). People either YOLO it, or they don't give agents access. The elephant in the room is that existing access control is too coarse. This is never going to be fixed API by API, company by company. People are suffering so much pain because of this. Bouncer is a fix for this.
-
+Bouncer is an access control proxy for AI agents using APIs. It is an HTTP proxy that grants agents narrow, policy controlled access to HTTP APIs without modifying the API or the agent.
+- Bouncers policy language is based on [Common Expression Language (CEL)](https://cel.dev/). CEL is reviewable by humans and easy to one-shot for AI agents. CEL is also used as an API modeling language. This allows to create an ergonomic API model (including additional metadata lookups, or response post-processing) to be used by access control. See [here for an example API model](https://github.com/jkylling/bouncer-gws/blob/main/apis/gmail.yaml) and [here for an example policy](https://github.com/jkylling/bouncer-gws/blob/main/policies/agent-owned-mail.yaml). Both policy and API models are declarative and fail closed on modelling errors or evaluation errors.
+- Bouncer issues encrypted tokens or API keys, which can be safely shared with AI-agents. The encrypted token works transparently with most clients. This scheme makes it impossible to bypass the proxy and its policies.
 
 ## Quickstart
 
@@ -16,7 +11,7 @@ wraps. Install + boot the proxy, issue a JWT for the service you want
 to use, then point the upstream client at the proxy.
 
 ```sh
-# 1. Install + boot the proxy (host this on your laptop or a server).
+# 1. Install + boot the proxy (host this isolated from the AI agent).
 curl -fsSL https://raw.githubusercontent.com/jkylling/bouncer/main/install.sh | sh
 
 bouncer serve --init \
@@ -27,9 +22,15 @@ bouncer serve --init \
 # 2. Issue a JWT carrying your upstream credential. Two equivalent
 #    paths:
 #    - CLI: bouncer issue-token --subject my-agent --access-token ya29...
-#    - UI : GET /_admin/tokens — pick a service + variant, fill the
+#    - UI : GET localhost:8080/_admin/tokens — pick a service + variant, fill the
 #           form, copy the JWT.
+```
 
+To have clients use the proxy, either instruct them to use the proxy as their base endpoint,
+or use the proxy as an MITM proxy.
+
+To use the proxy as a MITM proxy:
+```
 # 3. Trust the proxy's CA and route the client via HTTPS_PROXY.
 curl -fsS http://localhost:8080/_api/ca.crt -o ca.crt \
   && export SSL_CERT_FILE=$PWD/ca.crt HTTPS_PROXY=http://localhost:8080
@@ -101,20 +102,7 @@ data directory:
   bouncer.yaml          (optional) constrains which `apis add` refs the operator allows.
 ```
 
-`bouncer serve --data-dir <dir>` reads each file in place; passing
-`--secret-hex`, `--apis-dir`, etc. overrides any individual derived
-default. With no `--data-dir`, `serve` defaults to cwd — either an
-already-initialized cwd (`cd ./bouncer-data && bouncer serve`) or,
-under `--init`, a fresh cwd to bootstrap into.
-
-The CLI prompts for an admin password on first init; pipe via
-`BOUNCER_ADMIN_PASSWORD` or `--admin-password` for scripted
-deployments.
-
 ## Bouncer CLI commands
-
-All subcommands print a full help banner with examples on `--help`.
-The headline surface:
 
 | Command                       | Purpose                                                                              |
 |-------------------------------|--------------------------------------------------------------------------------------|
@@ -128,10 +116,9 @@ The headline surface:
 
 ### Issuing tokens
 
-Three equivalent paths for ad-hoc access tokens:
+There are two interfaces for issugin tokens:
 
 - **CLI** — `bouncer issue-token --subject demo --access-token "$ACCESS"`. No running proxy needed.
-- **HTTP API** — `POST /_api/tokens/issue` (admin-only). Same JSON body as the CLI flags.
 - **HTML UI** — `GET /_admin/`, browser form.
 
 For long-lived OAuth2 credentials with transparent refresh, pass
@@ -147,7 +134,7 @@ one proxy can serve multiple providers.
 
 ### APIs, metas, actions, policies
 
-The runtime is built around four concepts that compose into a single
+The CEL policy runtime is built around four concepts that compose into a single
 decision per request.
 
 - **APIs.** Each upstream is one YAML spec — identity (`name`,
@@ -204,14 +191,13 @@ refresh_token`, the refresh JWT, and the upstream `client_id` /
 `client_secret` — the same wire shape as a direct upstream refresh.
 The proxy unwraps the refresh JWT, exchanges the embedded upstream
 refresh token at the real upstream `/token`, and returns a fresh
-access JWT. The upstream refresh token never leaves the proxy.
+encrypted access JWT.
 
 **API keys / custom auth headers.** Upstreams that don't use
 `Authorization: Bearer` (Slack browser sessions, `X-Api-Key`,
 cookie auth) carry the headers on the JWT itself: `bouncer
 issue-token --header 'X-Api-Key=…'`. The proxy stamps them on every
-forwarded request. Headers ride on refresh JWTs too, so rotation
-preserves them.
+forwarded request.
 
 
 ### MITM mode (`HTTPS_PROXY` for unmodified clients)
@@ -222,8 +208,6 @@ MITM mode lets bouncer sit in front of these clients without code
 changes: point them at the proxy via `HTTPS_PROXY`, trust bouncer's
 CA, and the client transparently calls bouncer thinking it's the
 upstream.
-
-It's on by default. Disable with `--mitm=false`.
 
 A localhost-bound proxy serves its public CA so the agent can
 bootstrap without manual cert-copying:
@@ -251,13 +235,6 @@ throughout. Switch the trace exporter with `--otel-exporter
 `api.name`, `policy.decision`, `policy.name`, `action.name`, and
 `proxy.subject`, so a log line, a traffic-viewer row, and the otel
 span describing the same request all join on `trace_id`.
-
-### Status
-
-The proxy hot path (auth → policy eval → forward) and the OAuth2
-refresh flow are complete. The control plane (`/_api/...`) exposes
-the token-issue endpoints, the services view, policy CRUD, and the
-traffic viewer behind the admin UI / admin JWTs.
 
 ## Development
 
